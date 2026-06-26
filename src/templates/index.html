@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🎯 Polymarket Paper Trading Bot</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #fff;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        /* Header */
+        .header {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 30px;
+            margin-bottom: 30px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 20px;
+            border-radius: 50px;
+            font-weight: bold;
+            font-size: 1.1em;
+        }
+        
+        .status-running {
+            background: linear-gradient(135deg, #11998e, #38ef7d);
+            box-shadow: 0 0 20px rgba(56, 239, 125, 0.5);
+            animation: pulse 2s infinite;
+        }
+        
+        .status-stopped {
+            background: linear-gradient(135deg, #eb3349, #f45c43);
+            box-shadow: 0 0 20px rgba(235, 51, 73, 0.5);
+        }
+        
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #fff;
+            animation: blink 1.5s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+        
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+        
+        /* Stats Cards */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .stat-card {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 25px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            transition: transform 0.3s;
+        }
+        
+        .stat-card:hover {
+            transform: translateY(-5px);
+        }
+        
+        .stat-icon {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        
+        .stat-label {
+            font-size: 0.9em;
+            opacity: 0.8;
+            margin-bottom: 5px;
+        }
+        
+        .stat-value {
+            font-size: 2em;
+            font-weight: bold;
+        }
+        
+        .stat-change {
+            font-size: 0.9em;
+            margin-top: 5px;
+        }
+        
+        .positive { color: #38ef7d; }
+        .negative { color: #eb3349; }
+        .neutral { color: #ffd700; }
+        
+        /* Sections */
+        .section {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        .section-title {
+            font-size: 1.5em;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        /* Wallet Grid */
+        .wallet-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 15px;
+        }
+        
+        .wallet-card {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 10px;
+            padding: 15px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .wallet-name {
+            font-size: 1.2em;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        
+        .wallet-address {
+            font-size: 0.8em;
+            opacity: 0.6;
+            font-family: monospace;
+            margin-bottom: 10px;
+        }
+        
+        .wallet-stats {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 10px;
+        }
+        
+        .wallet-stat {
+            text-align: center;
+        }
+        
+        .wallet-stat-label {
+            font-size: 0.8em;
+            opacity: 0.7;
+        }
+        
+        .wallet-stat-value {
+            font-size: 1.2em;
+            font-weight: bold;
+        }
+        
+        /* Trades List */
+        .trade-item {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 10px;
+            border-left: 4px solid #38ef7d;
+        }
+        
+        .trade-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        
+        .trade-time {
+            font-size: 0.85em;
+            opacity: 0.7;
+        }
+        
+        .trade-market {
+            font-size: 1.1em;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        
+        .trade-details {
+            display: flex;
+            gap: 20px;
+            font-size: 0.9em;
+            opacity: 0.9;
+        }
+        
+        /* Table */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        th {
+            text-align: left;
+            padding: 12px;
+            background: rgba(255, 255, 255, 0.05);
+            font-weight: bold;
+        }
+        
+        td {
+            padding: 12px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            opacity: 0.5;
+        }
+        
+        .empty-state-icon {
+            font-size: 4em;
+            margin-bottom: 10px;
+        }
+        
+        /* Footer */
+        .footer {
+            text-align: center;
+            padding: 20px;
+            opacity: 0.6;
+            font-size: 0.9em;
+        }
+        
+        /* Refresh indicator */
+        .refresh-indicator {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(56, 239, 125, 0.9);
+            padding: 10px 20px;
+            border-radius: 50px;
+            font-weight: bold;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        
+        .refresh-indicator.active {
+            opacity: 1;
+        }
+    </style>
+</head>
+<body>
+    <div class="refresh-indicator" id="refreshIndicator">🔄 Aggiornamento...</div>
+    
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>🎯 Polymarket Paper Trading Bot</h1>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 15px;">
+                <div>
+                    <div style="opacity: 0.8;">📅 Ultimo aggiornamento: <span id="lastUpdate">-</span></div>
+                    <div style="opacity: 0.8; margin-top: 5px;">💰 Budget: $300.00</div>
+                    <div style="opacity: 0.8; margin-top: 5px;">🧭 Strategia: <span id="strategyMode">-</span></div>
+                </div>
+                <div id="botStatus" class="status-badge status-stopped">
+                    <span class="status-dot"></span>
+                    <span>STOPPED</span>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Stats Grid -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-icon">💵</div>
+                <div class="stat-label">Capitale Iniziale</div>
+                <div class="stat-value" id="initialCapital">$300.00</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-icon">💎</div>
+                <div class="stat-label">Valore Attuale</div>
+                <div class="stat-value" id="currentValue">$300.00</div>
+                <div class="stat-change neutral" id="currentValueChange">In attesa...</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-icon">📈</div>
+                <div class="stat-label">Profitto/Perdita</div>
+                <div class="stat-value neutral" id="totalPnl">$0.00</div>
+                <div class="stat-change neutral" id="totalPnlPct">(0.00%)</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-icon">🔒</div>
+                <div class="stat-label">P&L Realizzato</div>
+                <div class="stat-value neutral" id="realizedPnl">$0.00</div>
+                <div class="stat-change neutral">da posizioni chiuse</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-icon">🌊</div>
+                <div class="stat-label">P&L Non Realizzato</div>
+                <div class="stat-value neutral" id="unrealizedPnl">$0.00</div>
+                <div class="stat-change neutral">posizioni aperte</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-icon">🎯</div>
+                <div class="stat-label">Posizioni Aperte</div>
+                <div class="stat-value" id="openPositions">0</div>
+                <div class="stat-change neutral">Max: 10</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-icon">✅</div>
+                <div class="stat-label">Trade Chiusi</div>
+                <div class="stat-value" id="closedPositions">0</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-icon">🏆</div>
+                <div class="stat-label">Win Rate</div>
+                <div class="stat-value" id="winRate">0%</div>
+                <div class="stat-change neutral" id="winLossDetail">0W / 0L</div>
+            </div>
+        </div>
+        
+        <!-- Posizioni Aperte -->
+        <div class="section">
+            <div class="section-title">
+                <span>📊</span>
+                <span>Posizioni Aperte</span>
+                <span style="margin-left: auto; opacity: 0.7; font-size: 0.9em;" id="positionCount">0 posizioni</span>
+            </div>
+            <div id="positionsContainer">
+                <div class="empty-state">
+                    <div class="empty-state-icon">📭</div>
+                    <div>Nessuna posizione aperta</div>
+                    <div style="font-size: 0.9em; margin-top: 5px;">Il bot sta monitorando i wallet...</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Wallet Monitorati -->
+        <div class="section">
+            <div class="section-title">
+                <span>👛</span>
+                <span>Wallet Monitorati</span>
+                <span style="margin-left: auto; opacity: 0.7; font-size: 0.9em;" id="walletCount">0 wallet</span>
+            </div>
+            <div class="wallet-grid" id="walletsContainer"></div>
+        </div>
+        
+        <!-- Trade Recenti -->
+        <div class="section">
+            <div class="section-title">
+                <span>📝</span>
+                <span>Trade Recenti</span>
+                <span style="margin-left: auto; opacity: 0.7; font-size: 0.9em;" id="tradeCount">0 trade</span>
+            </div>
+            <div id="tradesContainer">
+                <div class="empty-state">
+                    <div class="empty-state-icon">📜</div>
+                    <div>Nessun trade recente</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Footer -->
+        <div class="footer">
+            🤖 Polymarket Paper Trading Bot • Aggiornamento automatico ogni 10s • Budget: $300
+        </div>
+    </div>
+    
+    <script>
+        const API_URL = '/api/status';
+        const REFRESH_INTERVAL = 10000;
+        
+        function formatMoney(value) {
+            const num = parseFloat(value) || 0;
+            const sign = num >= 0 ? '' : '-';
+            return sign + '$' + Math.abs(num).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+        }
+        
+        function formatPercent(value) {
+            const num = parseFloat(value) || 0;
+            const sign = num >= 0 ? '+' : '';
+            return sign + num.toFixed(2) + '%';
+        }
+        
+        function getColorClass(value) {
+            if (value > 0) return 'positive';
+            if (value < 0) return 'negative';
+            return 'neutral';
+        }
+        
+        function updateDashboard(data) {
+            // Update timestamp
+            const now = new Date(data.timestamp || new Date());
+            document.getElementById('lastUpdate').textContent = now.toLocaleTimeString('it-IT');
+            
+            // Update bot status
+            const statusEl = document.getElementById('botStatus');
+            const status = data.bot_status || 'unknown';
+            if (status === 'running') {
+                statusEl.className = 'status-badge status-running';
+                statusEl.innerHTML = '<span class="status-dot"></span><span>RUNNING</span>';
+            } else {
+                statusEl.className = 'status-badge status-stopped';
+                statusEl.innerHTML = '<span class="status-dot"></span><span>STOPPED</span>';
+            }
+            
+            // Update stats
+            const summary = data.summary || {};
+            document.getElementById('initialCapital').textContent = formatMoney(summary.initial_capital);
+            document.getElementById('currentValue').textContent = formatMoney(summary.current_value);
+            
+            const pnl = summary.total_pnl || 0;
+            const pnlPct = summary.total_pnl_pct || 0;
+            const pnlEl = document.getElementById('totalPnl');
+            const pnlPctEl = document.getElementById('totalPnlPct');
+            
+            pnlEl.textContent = formatMoney(pnl);
+            pnlEl.className = 'stat-value ' + getColorClass(pnl);
+            pnlPctEl.textContent = '(' + formatPercent(pnlPct) + ')';
+            pnlPctEl.className = 'stat-change ' + getColorClass(pnlPct);
+            
+            document.getElementById('openPositions').textContent = summary.open_positions || 0;
+            document.getElementById('closedPositions').textContent = summary.closed_positions || 0;
+            document.getElementById('winRate').textContent = (summary.win_rate || 0).toFixed(1) + '%';
+
+            document.getElementById('strategyMode').textContent = (summary.strategy_mode || '-').toUpperCase();
+
+            const realized = summary.realized_pnl || 0;
+            const unrealized = summary.unrealized_pnl || 0;
+            const realizedEl = document.getElementById('realizedPnl');
+            const unrealizedEl = document.getElementById('unrealizedPnl');
+            realizedEl.textContent = formatMoney(realized);
+            realizedEl.className = 'stat-value ' + getColorClass(realized);
+            unrealizedEl.textContent = formatMoney(unrealized);
+            unrealizedEl.className = 'stat-value ' + getColorClass(unrealized);
+
+            document.getElementById('winLossDetail').textContent =
+                (summary.winning_trades || 0) + 'W / ' + (summary.losing_trades || 0) + 'L';
+            
+            // Update positions
+            const positions = data.positions || [];
+            const positionsContainer = document.getElementById('positionsContainer');
+            document.getElementById('positionCount').textContent = positions.length + ' posizioni';
+            
+            if (positions.length === 0) {
+                positionsContainer.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📭</div><div>Nessuna posizione aperta</div><div style="font-size: 0.9em; margin-top: 5px;">Il bot sta monitorando i wallet...</div></div>';
+            } else {
+                let html = '<table><thead><tr><th>Mercato</th><th>Esito</th><th>Entry</th><th>Current</th><th>Size</th><th>P&L</th></tr></thead><tbody>';
+                positions.forEach(p => {
+                    const pnlClass = getColorClass(p.pnl);
+                    html += `<tr>
+                        <td>${p.market}</td>
+                        <td><span class="${p.outcome === 'Yes' ? 'positive' : 'negative'}">${p.outcome}</span></td>
+                        <td>$${p.entry_price.toFixed(3)}</td>
+                        <td>$${p.current_price.toFixed(3)}</td>
+                        <td>$${p.size.toFixed(2)}</td>
+                        <td class="${pnlClass}">${formatMoney(p.pnl)} (${formatPercent(p.pnl_pct)})</td>
+                    </tr>`;
+                });
+                html += '</tbody></table>';
+                positionsContainer.innerHTML = html;
+            }
+            
+            // Update wallets
+            const wallets = data.monitored_wallets || [];
+            const walletsContainer = document.getElementById('walletsContainer');
+            document.getElementById('walletCount').textContent = wallets.length + ' wallet';
+            
+            if (wallets.length === 0) {
+                walletsContainer.innerHTML = '<div class="empty-state"><div class="empty-state-icon">👛</div><div>Nessun wallet monitorato</div></div>';
+            } else {
+                let html = '';
+                wallets.forEach(w => {
+                    const roiClass = getColorClass(w.roi);
+                    const profit = (w.volume * w.roi / 100) || 0;
+                    html += `<div class="wallet-card">
+                        <div class="wallet-name">${w.name || 'Anonymous'}</div>
+                        <div class="wallet-address">${w.address}</div>
+                        <div class="wallet-stats">
+                            <div class="wallet-stat">
+                                <div class="wallet-stat-label">ROI</div>
+                                <div class="wallet-stat-value ${roiClass}">${w.roi.toFixed(1)}%</div>
+                            </div>
+                            <div class="wallet-stat">
+                                <div class="wallet-stat-label">PnL</div>
+                                <div class="wallet-stat-value ${roiClass}">${formatMoney(profit)}</div>
+                            </div>
+                            <div class="wallet-stat">
+                                <div class="wallet-stat-label">Trades</div>
+                                <div class="wallet-stat-value">${w.trades}</div>
+                            </div>
+                        </div>
+                    </div>`;
+                });
+                walletsContainer.innerHTML = html;
+            }
+            
+            // Update trades
+            const trades = data.recent_trades || [];
+            const tradesContainer = document.getElementById('tradesContainer');
+            document.getElementById('tradeCount').textContent = trades.length + ' trade';
+            
+            if (trades.length === 0) {
+                tradesContainer.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📜</div><div>Nessun trade recente</div></div>';
+            } else {
+                let html = '';
+                trades.slice(0, 20).forEach(t => {
+                    const sideClass = t.side === 'BUY' ? 'positive' : 'negative';
+                    const date = new Date(t.timestamp).toLocaleString('it-IT');
+                    const price = t.entry_price || t.price || 0;
+                    html += `<div class="trade-item">
+                        <div class="trade-header">
+                            <div class="trade-market">${t.market}</div>
+                            <div class="trade-time">${date}</div>
+                        </div>
+                        <div class="trade-details">
+                            <span class="${sideClass}">${t.side}</span>
+                            <span>${t.outcome}</span>
+                            <span>Size: ${formatMoney(t.size)}</span>
+                            <span>Price: $${parseFloat(price).toFixed(3)}</span>
+                        </div>
+                    </div>`;
+                });
+                tradesContainer.innerHTML = html;
+            }
+        }
+        
+        async function refreshData() {
+            try {
+                const indicator = document.getElementById('refreshIndicator');
+                indicator.classList.add('active');
+                
+                const response = await fetch(API_URL);
+                const data = await response.json();
+                updateDashboard(data);
+                
+                setTimeout(() => indicator.classList.remove('active'), 500);
+            } catch (error) {
+                console.error('Error fetching data:', error);
+            }
+        }
+        
+        // Initial load
+        refreshData();
+        
+        // Auto-refresh
+        setInterval(refreshData, REFRESH_INTERVAL);
+    </script>
+</body>
+</html>
