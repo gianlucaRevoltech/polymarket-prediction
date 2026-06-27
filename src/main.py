@@ -10,7 +10,7 @@ import json
 import signal
 import os
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 # Force UTF-8 encoding for Windows console
 if sys.platform.startswith('win'):
@@ -21,7 +21,7 @@ from analyzer import WalletAnalyzer
 from portfolio_sync import PolymarketPositionFetcher
 from simulator import PaperTradingSimulator
 from models import WalletAnalysis
-from config import BUDGET, STRATEGY, TRACKING, DATA_DIR, BASE_DIR
+from config import BUDGET, STRATEGY, TRACKING, SCANNER, DATA_DIR, BASE_DIR
 
 
 class PolymarketPaperTradingBot:
@@ -68,6 +68,68 @@ class PolymarketPaperTradingBot:
         except Exception:
             return []
 
+    def _scan_age_sec(self) -> Optional[float]:
+        """Eta' dell'ultimo scan in secondi, o None se file assente/illeggibile."""
+        results_file = DATA_DIR / "scan_results.json"
+        if not results_file.exists():
+            return None
+        try:
+            with open(results_file, "r") as f:
+                data = json.load(f)
+            scan_time = data.get("scan_time")
+            if not scan_time:
+                return None
+            scanned_at = datetime.fromisoformat(scan_time)
+            return (datetime.now() - scanned_at).total_seconds()
+        except Exception:
+            return None
+
+    def _is_scan_stale(self) -> bool:
+        if not SCANNER.get("auto_rescan_enabled", True):
+            return False
+        age = self._scan_age_sec()
+        if age is None:
+            return True
+        return age >= SCANNER["auto_rescan_interval_sec"]
+
+    def _run_wallet_scan(self) -> bool:
+        """Riscopre wallet specialisti per categoria e salva scan_results.json."""
+        print("[BOT] Scan wallet specialisti (categorie)...")
+        try:
+            wallets = self.scanner.scan_categories(top_n=STRATEGY["top_wallets"])
+            if wallets:
+                return True
+            print("[BOT] Scan completato senza wallet qualificati.")
+            return False
+        except Exception as e:
+            print(f"[BOT] Scan fallito: {e}")
+            return False
+
+    def _reload_monitored_wallets(self) -> bool:
+        new_addrs = self.load_monitored_from_file()
+        if not new_addrs:
+            return False
+        old = set(self.monitored_addresses)
+        new_set = set(new_addrs)
+        added = new_set - old
+        removed = old - new_set
+        self.monitored_addresses = new_addrs
+        if added or removed:
+            print(
+                f"[BOT] Lista wallet aggiornata: {len(new_addrs)} attivi "
+                f"(+{len(added)} nuovi, -{len(removed)} usciti)"
+            )
+        return True
+
+    def _maybe_auto_rescan(self) -> None:
+        """Durante il loop, aggiorna la lista wallet se lo scan e' obsoleto."""
+        if not self._is_scan_stale():
+            return
+        age_h = (self._scan_age_sec() or 0) / 3600
+        print(f"\n[BOT] Scan obsoleto ({age_h:.1f}h) — aggiornamento automatico...")
+        if self._run_wallet_scan():
+            self._reload_monitored_wallets()
+
     def run_initial_scan(self, top_n: int = 20) -> bool:
         """Scansione leaderboard + analisi per trovare wallet profittevoli."""
         print(f"\n{'='*60}")
@@ -112,13 +174,27 @@ class PolymarketPaperTradingBot:
         return True
 
     def ensure_monitored_wallets(self) -> bool:
-        """Garantisce di avere wallet da monitorare (da file o via scan)."""
+        """Garantisce wallet da monitorare; scan automatico se assenti o obsoleti."""
         addresses = self.load_monitored_from_file()
-        if addresses:
-            self.monitored_addresses = addresses
-            print(f"[BOT] Caricati {len(addresses)} wallet da scan_results.json")
-            return True
-        return self.run_initial_scan(top_n=20)
+        if not addresses:
+            print("[BOT] scan_results.json assente — scan iniziale automatico...")
+            if not self._run_wallet_scan():
+                print("[BOT] Fallback scan legacy leaderboard...")
+                return self.run_initial_scan(top_n=STRATEGY["top_wallets"])
+            addresses = self.load_monitored_from_file()
+
+        self.monitored_addresses = addresses
+        print(f"[BOT] {len(addresses)} wallet caricati da scan_results.json")
+
+        if self._is_scan_stale():
+            age_h = (self._scan_age_sec() or 0) / 3600
+            print(f"[BOT] Lista datata ({age_h:.1f}h) — refresh automatico all'avvio...")
+            if self._run_wallet_scan():
+                self._reload_monitored_wallets()
+
+        next_h = SCANNER["auto_rescan_interval_sec"] / 3600
+        print(f"[BOT] Auto-rescan ogni {next_h:.0f}h (nessun intervento manuale richiesto)")
+        return bool(self.monitored_addresses)
 
     # ------------------------------------------------------------------
     # Loop principale di mirroring
@@ -145,6 +221,8 @@ class PolymarketPaperTradingBot:
         self.running = True
         try:
             while self.running:
+                self._maybe_auto_rescan()
+
                 cycle_start = datetime.now().strftime('%H:%M:%S')
                 print(f"\n[{cycle_start}] Snapshot posizioni...")
 

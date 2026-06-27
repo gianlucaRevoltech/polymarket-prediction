@@ -75,7 +75,9 @@ SCANNER = {
     "min_volume": 10000,  # Volume minimo $10K (non whale)
     "min_trades": 10,     # Minimo 10 trade
     "max_age_days": 90,   # Wallet attivi negli ultimi 90 giorni
-    "check_interval": 300  # Controlla ogni 5 minuti
+    # Auto-refresh lista wallet (nessun intervento manuale dopo il deploy)
+    "auto_rescan_enabled": True,
+    "auto_rescan_interval_sec": 6 * 3600,  # ogni 6h riscopre specialisti su mercati attuali
 }
 
 # Analyzer - Filtri qualità wallet

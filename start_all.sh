@@ -18,6 +18,10 @@
 #
 #   Env: SCAN=1 forza scan | RESET=1 azzera storico senza prompt
 #
+#   Deploy VPS (dopo git pull / copia file):
+#     ./start_all.sh restart reset scan
+#   Poi il bot aggiorna da solo la lista wallet ogni 6h — niente cron manuale.
+#
 set -euo pipefail
 cd "$(dirname "$0")"
 
