@@ -39,12 +39,34 @@ FEES = {
 STRATEGY = {
     # "copy": rispecchia le posizioni dei top wallet (soglia consenso = 1)
     # "consensus": apre solo su asset detenuti da >= min_wallets_consensus wallet
-    "mode": "consensus",
+    "mode": "copy",
     "min_wallets_consensus": 2,
-    "top_wallets": 15,          # Quanti wallet monitorare (piu wallet = piu chance di consenso)
-    # All'avvio registra le posizioni gia esistenti come baseline (non le copia),
-    # cosi simuliamo solo gli ingressi NUOVI a prezzo "live" evitando entrate tardive
-    "prime_baseline_on_start": True
+    "top_wallets": 20,          # Quanti wallet monitorare (mix tra categorie)
+    # Banda di prezzo d'ingresso ammessa (profilo copy bilanciato 0.10-0.90):
+    # il backtest mostra che <0.10 (longshot) ha ROI mediano -100% e >0.90
+    # (favoriti) rende quasi nulla. Entriamo solo nella fascia con edge reale.
+    "entry_price_min": 0.10,
+    "entry_price_max": 0.90,
+    # Anti entrata tardiva: non inseguire una posizione gia corsa. Se il prezzo
+    # corrente e' salito oltre questa frazione rispetto al prezzo medio del wallet
+    # sorgente, NON copiamo (entreremmo molto peggio del wallet).
+    "max_entry_drift": 0.15,
+    # Disattivato: la vecchia baseline escludeva TUTTE le posizioni preesistenti,
+    # tagliando proprio i trade buoni gia in corso. Ora a filtrare le entrate
+    # tardive/care sono banda prezzo + max_entry_drift.
+    "prime_baseline_on_start": False
+}
+
+# Selezione wallet per categoria di mercato (specialisti)
+CATEGORIES = {
+    # Categorie attive e quanti specialisti tenere per ciascuna
+    "active": ["sport", "crypto", "politics", "weather"],
+    "specialists_per_category": 5,
+    "markets_to_scan": 200,       # mercati popolari da categorizzare
+    "holders_per_market": 25,
+    "min_overlap": 2,             # overlap minimo entro la categoria
+    "min_realized_roi": 0.10,     # ROI realizzato storico minimo
+    "min_decided": 3              # posizioni decise minime (anti-fortuna)
 }
 
 # Wallet Scanner

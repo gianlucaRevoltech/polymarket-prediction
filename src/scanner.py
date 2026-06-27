@@ -20,7 +20,8 @@ from datetime import datetime
 from models import Wallet
 from portfolio_sync import PolymarketPositionFetcher
 from backtester import Backtester
-from config import POLYMARKET_API, SCANNER, DATA_DIR
+from categories import categorize_market
+from config import POLYMARKET_API, SCANNER, CATEGORIES, DATA_DIR
 
 
 class PolymarketScanner:
@@ -271,10 +272,10 @@ class PolymarketScanner:
     # ==================================================================
     def get_popular_markets(self, n_markets: int = 60) -> List[Dict]:
         """
-        Mercati piu attivi/popolari (gamma, ordinati per volume).
+        Mercati piu attivi/popolari (gamma, ordinati per volume), categorizzati.
 
         Returns:
-            Lista di {condition_id, question, volume}
+            Lista di {condition_id, question, slug, volume, category}
         """
         try:
             url = f"{self.gamma_api}/markets"
@@ -283,7 +284,7 @@ class PolymarketScanner:
                 "order": "volumeNum", "ascending": "false",
                 "limit": n_markets,
             }
-            r = requests.get(url, params=params, timeout=20,
+            r = requests.get(url, params=params, timeout=25,
                              headers={"User-Agent": "Mozilla/5.0"})
             r.raise_for_status()
             out = []
@@ -291,10 +292,21 @@ class PolymarketScanner:
                 cond = m.get("conditionId", "")
                 if not cond:
                     continue
+                events = m.get("events") or []
+                event_ticker = events[0].get("ticker", "") if events else ""
+                event_slug = events[0].get("slug", "") if events else ""
+                category = categorize_market(
+                    question=m.get("question", ""),
+                    event_ticker=event_ticker,
+                    event_slug=event_slug,
+                    fee_type=m.get("feeType", ""),
+                )
                 out.append({
                     "condition_id": cond,
                     "question": m.get("question", ""),
+                    "slug": m.get("slug", ""),
                     "volume": float(m.get("volumeNum", 0) or 0),
+                    "category": category,
                 })
             return out
         except requests.RequestException as e:
@@ -355,6 +367,147 @@ class PolymarketScanner:
         roi = (pnl / bought) if bought > 0 else 0.0
         return {"roi": roi, "pnl": pnl, "bought": bought,
                 "decided": n, "win_rate": (wins / n if n else 0.0)}
+
+    # ------------------------------------------------------------------
+    #  Helper riusabili: overlap holder -> candidati -> qualificazione ROI
+    # ------------------------------------------------------------------
+    def _collect_overlap(self, markets: List[Dict], holders_per_market: int):
+        """Mappa wallet -> set(mercati co-detenuti) + metadati, sui mercati dati."""
+        wallet_markets: Dict[str, set] = defaultdict(set)
+        wallet_meta: Dict[str, Dict] = {}
+        for i, m in enumerate(markets, 1):
+            for h in self.get_market_holders(m["condition_id"], limit=holders_per_market):
+                if not self._looks_like_retail(h["name"], h["pseudonym"]):
+                    continue
+                addr = h["address"]
+                wallet_markets[addr].add(m["condition_id"])
+                if addr not in wallet_meta:
+                    wallet_meta[addr] = {"name": h["name"] or h["pseudonym"],
+                                         "pseudonym": h["pseudonym"]}
+            if i % 10 == 0:
+                print(f"    {i}/{len(markets)} mercati ({len(wallet_markets)} wallet)...")
+            time.sleep(0.2)
+        return wallet_markets, wallet_meta
+
+    def _qualify_wallets(self, wallet_markets: Dict[str, set], wallet_meta: Dict[str, Dict],
+                         min_overlap: int, min_realized_roi: float, min_decided: int,
+                         candidate_cap: int = 60) -> List[Dict]:
+        """Filtra per overlap, poi qualifica per ROI realizzato storico."""
+        candidates = [(a, len(ms)) for a, ms in wallet_markets.items() if len(ms) >= min_overlap]
+        candidates.sort(key=lambda x: x[1], reverse=True)
+        candidates = candidates[:candidate_cap]
+        print(f"    {len(candidates)} candidati con overlap >= {min_overlap}")
+
+        qualified: List[Dict] = []
+        for i, (addr, overlap) in enumerate(candidates, 1):
+            perf = self._wallet_realized_performance(addr)
+            if perf["decided"] >= min_decided and perf["roi"] >= min_realized_roi:
+                qualified.append({
+                    "address": addr,
+                    "name": wallet_meta[addr]["name"],
+                    "pseudonym": wallet_meta[addr]["pseudonym"],
+                    "overlap": overlap,
+                    "pnl": perf["pnl"],
+                    "invested": perf["bought"],
+                    "roi": perf["roi"],
+                    "decided": perf["decided"],
+                    "win_rate": perf["win_rate"],
+                })
+            if i % 10 == 0:
+                print(f"    verificati {i}/{len(candidates)} ({len(qualified)} ok)...")
+            time.sleep(0.3)
+        qualified.sort(key=lambda x: (x["roi"], x["overlap"]), reverse=True)
+        return qualified
+
+    def scan_categories(self, top_n: int = 20) -> List[Wallet]:
+        """
+        Seleziona wallet SPECIALISTI per categoria di mercato.
+
+        Per ogni categoria attiva (sport/crypto/politics/weather) trova gli holder
+        che co-detengono i mercati popolari di QUELLA categoria e li qualifica per
+        ROI realizzato storico. Il risultato e' un mix bilanciato tra categorie,
+        cosi seguiamo i wallet giusti per ciascun tipo di mercato.
+        """
+        cfg = CATEGORIES
+        print(f"\n{'*'*64}")
+        print(f"  SCANNER PER CATEGORIA - specialisti per tipo di mercato")
+        print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"{'*'*64}\n")
+
+        print(f"[1/3] Mercati popolari (top {cfg['markets_to_scan']}) e categorizzazione...")
+        markets = self.get_popular_markets(n_markets=cfg["markets_to_scan"])
+        by_cat: Dict[str, List[Dict]] = defaultdict(list)
+        for m in markets:
+            by_cat[m["category"]].append(m)
+        for cat in cfg["active"]:
+            print(f"  {cat:9}: {len(by_cat.get(cat, []))} mercati")
+
+        per_cat = cfg["specialists_per_category"]
+        results_by_cat: Dict[str, List[Dict]] = {}
+
+        for cat in cfg["active"]:
+            cat_markets = by_cat.get(cat, [])
+            if not cat_markets:
+                print(f"\n[{cat}] nessun mercato in questa categoria, salto.")
+                continue
+            print(f"\n[2/3] Categoria '{cat}' - holder e qualificazione...")
+            wallet_markets, wallet_meta = self._collect_overlap(
+                cat_markets, cfg["holders_per_market"])
+            qualified = self._qualify_wallets(
+                wallet_markets, wallet_meta,
+                min_overlap=cfg["min_overlap"],
+                min_realized_roi=cfg["min_realized_roi"],
+                min_decided=cfg["min_decided"])
+            results_by_cat[cat] = qualified[:per_cat]
+            print(f"  -> {len(results_by_cat[cat])} specialisti '{cat}'")
+
+        # Interleaving bilanciato tra categorie (round-robin) fino a top_n,
+        # deduplicando per indirizzo (un wallet puo' essere specialista in piu
+        # categorie: lo teniamo una sola volta, nella prima in cui emerge).
+        print(f"\n[3/3] Composizione mix bilanciato (max {top_n})...")
+        interleaved: List[Dict] = []
+        seen_addr = set()
+        idx = 0
+        max_len = max((len(v) for v in results_by_cat.values()), default=0)
+        while len(interleaved) < top_n and idx < max_len:
+            for cat in cfg["active"]:
+                lst = results_by_cat.get(cat, [])
+                if idx < len(lst):
+                    w = dict(lst[idx])
+                    if w["address"] in seen_addr:
+                        continue
+                    w["category"] = cat
+                    seen_addr.add(w["address"])
+                    interleaved.append(w)
+                    if len(interleaved) >= top_n:
+                        break
+            idx += 1
+
+        print(f"\n{'='*70}")
+        print(f"  WALLET SELEZIONATI: {len(interleaved)}")
+        print(f"{'='*70}")
+        print(f"  {'wallet':22} | {'cat':9} | {'mkt':>3} | {'ROI st.':>7} | {'WR':>4} | {'pos':>3}")
+        print(f"  {'-'*22}-+-{'-'*9}-+-{'-'*3}-+-{'-'*7}-+-{'-'*4}-+-{'-'*3}")
+        for w in interleaved:
+            print(f"  {w['name'][:22]:22} | {w['category']:9} | {w['overlap']:3} | "
+                  f"{w['roi']:6.1%} | {w['win_rate']:4.0%} | {w['decided']:3}")
+        print(f"{'='*70}")
+
+        result = []
+        for rank, w in enumerate(interleaved, 1):
+            wallet = Wallet(
+                address=w["address"], name=w["name"],
+                profit=w["pnl"], volume=w["invested"],
+                rank=rank, pseudonym=w["pseudonym"],
+            )
+            wallet.roi = w["roi"] * 100
+            wallet.num_trades = w["decided"]
+            wallet.win_rate = w["win_rate"]
+            result.append(wallet)
+
+        extra = {w["address"]: w for w in interleaved}
+        self._save_scan_results(result, extra=extra)
+        return result
 
     def scan_consensus(self, top_n: int = 20,
                        n_markets: int = 60, holders_per_market: int = 25,
@@ -541,6 +694,7 @@ class PolymarketScanner:
                 "markets_overlap": e.get("overlap", w.num_trades),
                 "win_rate": e.get("win_rate", w.win_rate),
                 "decided_positions": e.get("decided", w.num_trades),
+                "category": e.get("category", ""),
             })
 
         data = {
@@ -562,8 +716,8 @@ if __name__ == "__main__":
 
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["consensus", "legacy"], default="consensus",
-                        help="consensus: wallet sugli stessi mercati; legacy: leaderboard")
+    parser.add_argument("--mode", choices=["categories", "consensus", "legacy"], default="categories",
+                        help="categories: specialisti per categoria; consensus: stessi mercati; legacy: leaderboard")
     parser.add_argument("--top", type=int, default=20)
     parser.add_argument("--markets", type=int, default=60)
     parser.add_argument("--min-overlap", type=int, default=3)
@@ -572,7 +726,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     scanner = PolymarketScanner()
-    if args.mode == "consensus":
+    if args.mode == "categories":
+        scanner.scan_categories(top_n=args.top)
+    elif args.mode == "consensus":
         scanner.scan_consensus(top_n=args.top, n_markets=args.markets,
                                min_overlap=args.min_overlap,
                                min_realized_roi=args.min_roi,

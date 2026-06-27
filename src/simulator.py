@@ -14,6 +14,7 @@ import uuid
 from datetime import datetime
 from typing import Dict, Optional, List, Set
 from models import Trade, Position, Portfolio
+from categories import categorize_market, taker_fee_fraction
 from config import BUDGET, FEES, SIMULATOR, STRATEGY, DATA_DIR
 
 
@@ -125,6 +126,23 @@ class PaperTradingSimulator:
         if price <= 0 or price >= 1:
             return False
 
+        # Guardrail 1 - banda di prezzo: niente longshot (<min) ne favoriti (>max)
+        price_min = STRATEGY.get("entry_price_min", 0.0)
+        price_max = STRATEGY.get("entry_price_max", 1.0)
+        if price < price_min or price > price_max:
+            print(f"[SKIP] Prezzo {price:.3f} fuori banda [{price_min:.2f},{price_max:.2f}]: "
+                  f"{info['title'][:45]}")
+            return False
+
+        # Guardrail 2 - anti entrata tardiva: non inseguire una posizione gia corsa
+        # rispetto al prezzo medio del wallet sorgente.
+        avg_price = info.get("avg_price", 0.0)
+        max_drift = STRATEGY.get("max_entry_drift", 1.0)
+        if avg_price > 0 and price > avg_price * (1 + max_drift):
+            print(f"[SKIP] Entrata tardiva: prezzo {price:.3f} > avg wallet {avg_price:.3f} "
+                  f"+{max_drift:.0%}: {info['title'][:40]}")
+            return False
+
         if self.portfolio.open_positions_count >= BUDGET["max_open_positions"]:
             return False
 
@@ -138,10 +156,14 @@ class PaperTradingSimulator:
                   f"${self._available_cash():.2f} < ${size:.2f}")
             return False
 
-        # Slippage in ingresso: paghiamo un prezzo leggermente peggiore
+        # Categoria (per fee) e costo d'ingresso: slippage + taker fee per categoria
+        category = info.get("category") or categorize_market(info["title"], event_slug=info.get("slug", ""))
         slippage = SIMULATOR["entry_slippage"]
         eff_price = min(0.999, price * (1 + slippage))
-        shares = size / eff_price
+        fee_frac = taker_fee_fraction(category, eff_price)
+        # Prezzo effettivo pagato includendo la fee taker (sport ~ rate*min(p,1-p))
+        eff_price_with_fee = min(0.999, eff_price * (1 + fee_frac))
+        shares = size / eff_price_with_fee
 
         position_id = str(uuid.uuid4())
         position = Position(
@@ -150,22 +172,24 @@ class PaperTradingSimulator:
             market_slug=info["slug"],
             condition_id=info["condition_id"],
             outcome=info["outcome"],
-            entry_price=eff_price,
+            entry_price=eff_price_with_fee,
             size_usdc=size,
             shares=shares,
             entry_time=datetime.now(),
             source_wallet=source_wallet,
             asset=asset,
+            category=category,
             current_price=price,
         )
 
         self.portfolio.add_position(position)
         self._log_trade(source_wallet, position, num_holders)
 
-        print(f"\n[POSIZIONE APERTA] ({self.strategy_mode}, holders={num_holders})")
+        print(f"\n[POSIZIONE APERTA] ({self.strategy_mode}, holders={num_holders}, cat={category})")
         print(f"  Mercato: {info['title'][:50]}")
         print(f"  Outcome: {info['outcome']}")
-        print(f"  Size: ${size:.2f} | Prezzo: ${eff_price:.3f} (mkt ${price:.3f})")
+        print(f"  Size: ${size:.2f} | Pagato: ${eff_price_with_fee:.3f} "
+              f"(mkt ${price:.3f}, slip+fee {((eff_price_with_fee/price)-1)*100:.1f}%)")
         print(f"  Shares: {shares:.2f}")
         print(f"  Cash rimanente: ${self.portfolio.cash:.2f} | "
               f"Posizioni: {self.portfolio.open_positions_count}/{BUDGET['max_open_positions']}")
@@ -260,10 +284,23 @@ class PaperTradingSimulator:
                 else:
                     self.close_by_asset(asset, price, "exit")
 
-        # 2) Apri nuove posizioni target (escludendo baseline e gia possedute)
-        for asset in qualifying:
-            if asset in self.baseline_assets or self.has_asset(asset):
-                continue
+        # 2) Apri nuove posizioni target (escludendo baseline e gia possedute).
+        # Ordina per priorita: piu consenso (holders) prima, poi ingressi piu
+        # "freschi" (prezzo corrente vicino al prezzo medio del wallet), cosi con
+        # piu candidati che cash riempiamo il portafoglio con i segnali migliori.
+        def _candidate_key(asset: str):
+            entry = aggregate[asset]
+            info = entry["info"]
+            avg = info.get("avg_price", 0.0)
+            cur = info.get("cur_price", 0.0)
+            drift = (cur / avg - 1) if avg > 0 else 0.0
+            return (-len(entry["holders"]), drift)
+
+        candidates = [
+            a for a in qualifying
+            if a not in self.baseline_assets and not self.has_asset(a)
+        ]
+        for asset in sorted(candidates, key=_candidate_key):
             entry = aggregate[asset]
             source = sorted(entry["holders"])[0]
             self.open_position(source, entry["info"], num_holders=len(entry["holders"]))
@@ -455,6 +492,7 @@ class PaperTradingSimulator:
             "market_slug": pos.market_slug,
             "condition_id": pos.condition_id,
             "asset": pos.asset,
+            "category": pos.category,
             "outcome": pos.outcome,
             "entry_price": pos.entry_price,
             "size_usdc": pos.size_usdc,
@@ -481,6 +519,7 @@ class PaperTradingSimulator:
             entry_time=datetime.fromisoformat(data["entry_time"]),
             source_wallet=data["source_wallet"],
             asset=data.get("asset", ""),
+            category=data.get("category", ""),
             current_price=data.get("current_price", data["entry_price"]),
             exit_price=data.get("exit_price"),
             exit_time=datetime.fromisoformat(data["exit_time"]) if data.get("exit_time") else None,

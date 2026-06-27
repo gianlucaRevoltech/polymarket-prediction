@@ -30,11 +30,20 @@ import requests
 if sys.platform.startswith('win'):
     sys.stdout.reconfigure(encoding='utf-8')
 
-from config import POLYMARKET_API, BUDGET, STRATEGY, DATA_DIR
+from config import POLYMARKET_API, BUDGET, STRATEGY, SIMULATOR, DATA_DIR
 from portfolio_sync import PolymarketPositionFetcher
+from categories import categorize_market, taker_fee_fraction
 
 RESOLVED_LOW = 0.02
 RESOLVED_HIGH = 0.98
+
+
+def _median(values: List[float]) -> float:
+    if not values:
+        return 0.0
+    s = sorted(values)
+    n = len(s)
+    return s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2
 
 
 class Backtester:
@@ -88,6 +97,7 @@ class Backtester:
                     "realized_pnl": 0.0,
                     "shares": 0.0,
                     "cost": 0.0,
+                    "first_buy_ts": None,  # timestamp del primo BUY (ordine consenso)
                 }
             return state[asset]
 
@@ -108,6 +118,8 @@ class Backtester:
                     s["cost"] += usdc
                     s["bought"] += usdc
                     s["shares_bought"] += shares
+                    if s["first_buy_ts"] is None:
+                        s["first_buy_ts"] = ev.get("timestamp", 0)
                 elif side == "SELL" and s["shares"] > 1e-9:
                     frac = min(1.0, shares / s["shares"])
                     cost_sold = s["cost"] * frac
@@ -168,8 +180,71 @@ class Backtester:
         )
 
     # ------------------------------------------------------------------
+    # Modello "entrata tardiva": un copiatore retail NON entra al prezzo del
+    # wallet, ma piu tardi (e con slippage + fee). Stimiamo:
+    #   - valore a risoluzione per share: res = entry_price * (1 + roi_del_wallet)
+    #   - prezzo che PAGHEREMMO noi: prezzo di mercato tardivo * (1+slippage) * (1+fee)
+    #   - ROI realistico = res / prezzo_pagato - 1
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _effective_buy(market_price: float, category: str) -> float:
+        slip = SIMULATOR.get("entry_slippage", 0.0)
+        eff = market_price * (1 + slip)
+        fee = taker_fee_fraction(category, eff)
+        return eff * (1 + fee)
+
+    def _late_copy_position(self, p: Dict) -> Dict:
+        """Trasforma una posizione copy nel suo equivalente a entrata tardiva."""
+        entry = p.get("entry_price", 0.0)
+        if entry <= 0:
+            return p
+        category = categorize_market(p.get("title", ""))
+        res = entry * (1 + p["roi"])                 # valore a risoluzione per share
+        paid = self._effective_buy(entry, category)  # noi paghiamo entry + slip + fee
+        roi_late = (res / paid - 1) if paid > 0 else 0.0
+        q = dict(p)
+        q["roi"] = roi_late
+        q["entry_price"] = entry          # banda sul prezzo di mercato
+        q["realized_pnl"] = (res - paid) * (p["bought"] / entry if entry > 0 else 0.0)
+        q["category"] = category
+        return q
+
+    def _build_consensus_position(self, plist: List[Dict], late_entry: bool) -> Dict:
+        title = plist[0]["title"]
+        category = categorize_market(title)
+        if not late_entry:
+            avg_roi = sum(p["roi"] for p in plist) / len(plist)
+            return {
+                "roi": avg_roi,
+                "realized_pnl": sum(p["realized_pnl"] for p in plist) / len(plist),
+                "bought": sum(p["bought"] for p in plist) / len(plist),
+                "entry_price": sum(p.get("entry_price", 0.0) for p in plist) / len(plist),
+                "title": title, "outcome": plist[0]["outcome"],
+                "holders": len(plist), "category": category,
+            }
+        # Entrata tardiva: il consenso si forma quando il K-esimo wallet entra.
+        # Ordiniamo per timestamp del primo acquisto e prendiamo il prezzo di
+        # mercato a quel punto = entry_price del wallet che completa il consenso.
+        ordered = sorted(plist, key=lambda p: (p.get("first_buy_ts") or 0))
+        k_idx = min(len(ordered) - 1, max(0, STRATEGY.get("min_wallets_consensus", 2) - 1))
+        late_market_price = ordered[k_idx].get("entry_price", 0.0)
+        res = _median([p.get("entry_price", 0.0) * (1 + p["roi"]) for p in plist])
+        paid = self._effective_buy(late_market_price, category)
+        roi_late = (res / paid - 1) if paid > 0 else 0.0
+        avg_bought = sum(p["bought"] for p in plist) / len(plist)
+        return {
+            "roi": roi_late,
+            "realized_pnl": (res - paid) * (avg_bought / late_market_price if late_market_price > 0 else 0.0),
+            "bought": avg_bought,
+            "entry_price": late_market_price,
+            "title": title, "outcome": plist[0]["outcome"],
+            "holders": len(plist), "category": category,
+        }
+
+    # ------------------------------------------------------------------
     def run(self, wallets: List[Dict], min_consensus: int = 2,
-            min_price: float = 0.0, max_price: float = 1.0) -> Dict:
+            min_price: float = 0.0, max_price: float = 1.0,
+            late_entry: bool = False) -> Dict:
         print(f"\n{'='*70}")
         print(f"  BACKTEST STORICO - copy vs consenso (valutazione fino a risoluzione)")
         print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | finestra ~{self.activity_limit} attivita/wallet")
@@ -208,6 +283,8 @@ class Backtester:
 
         # COPY: tutte le posizioni decise (equal-weight = nostra size fissa)
         copy_positions = [p for plist in asset_positions.values() for p in plist]
+        if late_entry:
+            copy_positions = [self._late_copy_position(p) for p in copy_positions]
         copy_stats = self._aggregate(copy_positions)
 
         # CONSENSO: asset detenuti da >= K wallet diversi
@@ -215,15 +292,7 @@ class Backtester:
         for a, plist in asset_positions.items():
             if len(plist) < min_consensus:
                 continue
-            avg_roi = sum(p["roi"] for p in plist) / len(plist)
-            consensus_positions.append({
-                "roi": avg_roi,
-                "realized_pnl": sum(p["realized_pnl"] for p in plist) / len(plist),
-                "bought": sum(p["bought"] for p in plist) / len(plist),
-                "entry_price": sum(p.get("entry_price", 0.0) for p in plist) / len(plist),
-                "title": plist[0]["title"], "outcome": plist[0]["outcome"],
-                "holders": len(plist),
-            })
+            consensus_positions.append(self._build_consensus_position(plist, late_entry))
 
         # --- Analisi per fascia di prezzo d'ingresso (prima di applicare il filtro) ---
         self._print_price_bands("COPY", copy_positions)
@@ -243,8 +312,9 @@ class Backtester:
 
         capital = BUDGET["initial_capital"]
         band_lbl = f" | filtro prezzo {min_price:.2f}-{max_price:.2f}" if (min_price > 0 or max_price < 1) else ""
-        self._print_strategy(f"COPY (tutte le posizioni, equal-weight){band_lbl}", copy_stats, capital)
-        self._print_strategy(f"CONSENSO (>= {min_consensus} wallet sullo stesso asset){band_lbl}", consensus_stats, capital)
+        mode_lbl = " | ENTRATA TARDIVA (slippage+fee)" if late_entry else " | ottimistico (prezzo del wallet)"
+        self._print_strategy(f"COPY (tutte le posizioni, equal-weight){band_lbl}{mode_lbl}", copy_stats, capital)
+        self._print_strategy(f"CONSENSO (>= {min_consensus} wallet sullo stesso asset){band_lbl}{mode_lbl}", consensus_stats, capital)
 
         if consensus_positions:
             print("\n  Posizioni di consenso:")
@@ -260,6 +330,7 @@ class Backtester:
             "generated_at": datetime.now().isoformat(),
             "activity_limit": self.activity_limit,
             "min_consensus": min_consensus,
+            "late_entry": late_entry,
             "price_filter": {"min": min_price, "max": max_price},
             "per_wallet": per_wallet,
             "copy": copy_stats,
@@ -349,8 +420,11 @@ if __name__ == "__main__":
     parser.add_argument("--consensus", type=int, default=STRATEGY.get("min_wallets_consensus", 2))
     parser.add_argument("--min-price", type=float, default=0.0, help="prezzo minimo d'ingresso")
     parser.add_argument("--max-price", type=float, default=1.0, help="prezzo massimo d'ingresso")
+    parser.add_argument("--late-entry", action="store_true",
+                        help="simula entrata tardiva (slippage+fee, prezzo del K-esimo wallet)")
     args = parser.parse_args()
 
     bt = Backtester(activity_limit=args.limit)
     bt.run(wallets[:args.top], min_consensus=args.consensus,
-           min_price=args.min_price, max_price=args.max_price)
+           min_price=args.min_price, max_price=args.max_price,
+           late_entry=args.late_entry)

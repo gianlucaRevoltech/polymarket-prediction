@@ -82,6 +82,9 @@ class Position:
     # Identificativo univoco del token (asset / ERC1155 token id Polymarket)
     asset: str = ""
     
+    # Categoria di mercato (sport/crypto/politics/weather/other) per fee e analisi
+    category: str = ""
+    
     # Stato
     current_price: float = 0.0
     exit_price: Optional[float] = None

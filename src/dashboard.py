@@ -139,6 +139,30 @@ def get_bot_status():
         return "unknown"
 
 
+@app.route("/api/equity")
+def api_equity():
+    """Endpoint readonly: storico equity curve dal file generato dal bot"""
+    equity_file = DATA_DIR / "equity_curve.json"
+    if not equity_file.exists():
+        return jsonify([])
+    try:
+        with open(equity_file, "r") as f:
+            data = json.load(f)
+        # Ritorna punti essenziali (utile per il frontend)
+        points = []
+        for d in data:
+            points.append({
+                "timestamp": d.get("timestamp"),
+                "equity": d.get("equity", 0),
+                "cash": d.get("cash", 0),
+                "unrealized_pnl": d.get("unrealized_pnl", 0),
+                "realized_pnl": d.get("realized_pnl", 0),
+            })
+        return jsonify(points)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/")
 def index():
     """Pagina principale dashboard"""

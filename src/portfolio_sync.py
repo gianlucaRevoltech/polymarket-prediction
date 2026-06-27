@@ -12,6 +12,7 @@ posizioni simulate in modo fedele.
 import requests
 from typing import Dict, List, Optional
 from config import POLYMARKET_API
+from categories import categorize_market
 
 
 class PolymarketPositionFetcher:
@@ -56,11 +57,14 @@ class PolymarketPositionFetcher:
         """Normalizza la posizione raw del data-api in un formato stabile."""
         size = float(p.get("size", 0.0) or 0.0)
         avg_price = float(p.get("avgPrice", 0.0) or 0.0)
+        title = p.get("title", "Unknown Market")
+        slug = p.get("slug", "")
         return {
             "asset": str(p.get("asset", "")),
             "condition_id": p.get("conditionId", ""),
-            "title": p.get("title", "Unknown Market"),
-            "slug": p.get("slug", ""),
+            "title": title,
+            "slug": slug,
+            "category": categorize_market(title, event_slug=slug),
             "outcome": p.get("outcome", ""),
             "outcome_index": p.get("outcomeIndex", 0),
             "size": size,
