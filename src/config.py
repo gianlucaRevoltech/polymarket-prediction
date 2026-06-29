@@ -19,10 +19,12 @@ POLYMARKET_API = {
 # Budget e Risk Management
 BUDGET = {
     "initial_capital": 300.0,  # Euro
-    "max_position_size": 0.10,  # 10% del budget per trade
+    "max_position_size": 0.05,  # 5% del budget per trade (era 10%)
     "min_position_size": 5.0,   # Minimo Polymarket
-    "max_open_positions": 10,
-    "reserve_ratio": 0.20  # 20% riserva per opportunità
+    "max_open_positions": 6,    # Max 6 posizioni (era 10, concentriamo capitale)
+    "reserve_ratio": 0.15,      # 15% riserva (era 20%, più capitale deployabile)
+    "stop_loss_pct": -0.30,     # Stop loss: chiudi se P&L < -30%
+    "take_profit_pct": 0.50,    # Take profit: chiudi se P&L > +50%
 }
 
 # Fee Polymarket
@@ -42,19 +44,21 @@ STRATEGY = {
     "mode": "copy",
     "min_wallets_consensus": 2,
     "top_wallets": 20,          # Quanti wallet monitorare (mix tra categorie)
-    # Banda di prezzo d'ingresso ammessa (profilo copy bilanciato 0.10-0.90):
-    # il backtest mostra che <0.10 (longshot) ha ROI mediano -100% e >0.90
+    # Banda di prezzo d'ingresso ammessa (profilo copy bilanciato 0.25-0.85):
+    # il backtest mostra che <0.25 (longshot) ha ROI mediano -100% e >0.85
     # (favoriti) rende quasi nulla. Entriamo solo nella fascia con edge reale.
-    "entry_price_min": 0.10,
-    "entry_price_max": 0.90,
+    "entry_price_min": 0.25,
+    "entry_price_max": 0.85,
     # Anti entrata tardiva: non inseguire una posizione gia corsa. Se il prezzo
     # corrente e' salito oltre questa frazione rispetto al prezzo medio del wallet
     # sorgente, NON copiamo (entreremmo molto peggio del wallet).
-    "max_entry_drift": 0.15,
+    "max_entry_drift": 0.12,
     # Disattivato: la vecchia baseline escludeva TUTTE le posizioni preesistenti,
     # tagliando proprio i trade buoni gia in corso. Ora a filtrare le entrate
     # tardive/care sono banda prezzo + max_entry_drift.
-    "prime_baseline_on_start": False
+    "prime_baseline_on_start": False,
+    # Win rate minimo del wallet sorgente per copiare il trade
+    "min_wallet_win_rate": 0.55,
 }
 
 # Selezione wallet per categoria di mercato (specialisti)
@@ -65,8 +69,9 @@ CATEGORIES = {
     "markets_to_scan": 200,       # mercati popolari da categorizzare
     "holders_per_market": 25,
     "min_overlap": 2,             # overlap minimo entro la categoria
-    "min_realized_roi": 0.10,     # ROI realizzato storico minimo
-    "min_decided": 3              # posizioni decise minime (anti-fortuna)
+    "min_realized_roi": 0.20,     # ROI realizzato storico minimo 20% (era 10%)
+    "min_decided": 10,            # posizioni decise minime (era 3, anti-fortuna)
+    "min_win_rate": 0.55,         # Win rate minimo 55%
 }
 
 # Wallet Scanner
@@ -82,14 +87,14 @@ SCANNER = {
 
 # Analyzer - Filtri qualità wallet
 ANALYZER = {
-    "min_roi": 0.10,           # ROI minimo 10%
-    "min_win_rate": 0.50,      # Win rate minimo 50%
-    "max_drawdown": 0.30,      # Drawdown massimo 30%
-    "min_sharpe": 1.0,         # Sharpe ratio minimo
-    "min_consistency": 0.60,   # 60% trade profittevoli
-    "min_avg_trade_size": 10,  # Trade medio minimo $10 (compatibile budget 300€)
+    "min_roi": 0.20,             # ROI minimo 20% (era 10%)
+    "min_win_rate": 0.55,        # Win rate minimo 55% (era 50%)
+    "max_drawdown": 0.25,        # Drawdown massimo 25% (era 30%)
+    "min_sharpe": 1.0,           # Sharpe ratio minimo
+    "min_consistency": 0.60,     # 60% trade profittevoli
+    "min_avg_trade_size": 10,    # Trade medio minimo $10 (compatibile budget 300€)
     "max_avg_trade_size": 1000000,  # Rimosso limite max - whale wallet sono profittevoli
-    "prefer_diversified": True # Preferisci wallet diversificati
+    "prefer_diversified": True   # Preferisci wallet diversificati
 }
 
 # Simulator

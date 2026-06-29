@@ -11,6 +11,9 @@ il nostro portafoglio simulato e:
 """
 import json
 import uuid
+import os
+import tempfile
+import shutil
 from datetime import datetime
 from typing import Dict, Optional, List, Set
 from models import Trade, Position, Portfolio
@@ -81,20 +84,20 @@ class PaperTradingSimulator:
     # ------------------------------------------------------------------
     def _calculate_position_size(self, target_wallet_size: float) -> float:
         """
-        Calcola la size della posizione in base al budget e al notional del wallet.
+        Calcola la size della posizione in base al budget e al notional del wallet target.
         Strategia: percentuale del portafoglio scalata sulla size del wallet target,
         limitata da max_position_size e min_position_size.
         """
         max_size = self.portfolio.total_value * BUDGET["max_position_size"]
 
         if target_wallet_size < 1000:
-            size = self.portfolio.total_value * 0.10
+            size = self.portfolio.total_value * BUDGET["max_position_size"]
         elif target_wallet_size < 10000:
-            size = self.portfolio.total_value * 0.08
+            size = self.portfolio.total_value * (BUDGET["max_position_size"] * 0.8)
         elif target_wallet_size < 100000:
-            size = self.portfolio.total_value * 0.05
+            size = self.portfolio.total_value * (BUDGET["max_position_size"] * 0.6)
         else:
-            size = self.portfolio.total_value * 0.03
+            size = self.portfolio.total_value * (BUDGET["max_position_size"] * 0.4)
 
         size = min(size, max_size)
         size = max(size, BUDGET["min_position_size"])
@@ -218,7 +221,12 @@ class PaperTradingSimulator:
 
         self.portfolio.close_position(pid, exit_price, datetime.now())
 
-        label = "RISOLTA" if reason == "resolved" else "CHIUSA (wallet uscito)"
+        label = {
+            "resolved": "RISOLTA",
+            "exit": "CHIUSA (wallet uscito)",
+            "stop_loss": "STOP LOSS",
+            "take_profit": "TAKE PROFIT",
+        }.get(reason, f"CHIUSA ({reason})")
         outcome_label = "PROFIT" if pnl > 0 else "LOSS"
         print(f"\n[POSIZIONE {label}] {outcome_label}")
         print(f"  Mercato: {pos.market_title[:50]} ({pos.outcome})")
@@ -255,6 +263,9 @@ class PaperTradingSimulator:
             self.baseline_assets &= qualifying
 
         # 1) Gestisci le posizioni gia aperte: realizza / chiudi / aggiorna prezzo
+        stop_loss = BUDGET.get("stop_loss_pct", -0.30)
+        take_profit = BUDGET.get("take_profit_pct", 0.50)
+
         for asset, pos in list(self.get_open_assets().items()):
             entry = aggregate.get(asset)
             if entry is not None:
@@ -267,6 +278,13 @@ class PaperTradingSimulator:
                     self.close_by_asset(asset, cur, "exit")
                 else:
                     self.update_price_by_asset(asset, cur)
+                    pnl_pct = (cur - pos.entry_price) / pos.entry_price if pos.entry_price > 0 else 0
+                    if pnl_pct <= stop_loss:
+                        print(f"[STOP LOSS] {pos.market_title[:40]} P&L {pnl_pct:.1%} <= {stop_loss:.0%}")
+                        self.close_by_asset(asset, cur, "stop_loss")
+                    elif pnl_pct >= take_profit:
+                        print(f"[TAKE PROFIT] {pos.market_title[:40]} P&L {pnl_pct:.1%} >= {take_profit:.0%}")
+                        self.close_by_asset(asset, cur, "take_profit")
             else:
                 # Nessun wallet monitorato detiene piu l'asset: prezzo dal CLOB
                 price = fetcher.get_price(asset)
@@ -479,10 +497,38 @@ class PaperTradingSimulator:
                 "closed_count": len(self.portfolio.closed_positions),
                 "saved_at": datetime.now().isoformat()
             }
-            with open(self.state_file, 'w') as f:
-                json.dump(state, f, indent=2)
+            self._atomic_write_json(self.state_file, state)
         except Exception as e:
             print(f"[ERRORE] Salvataggio stato: {e}")
+
+    def _atomic_write_json(self, filepath, data):
+        """Scrittura atomica: scrive su temp file, poi rinomina. Crea backup."""
+        filepath = str(filepath)
+        backup_path = filepath + ".bak"
+        dir_name = os.path.dirname(filepath) or "."
+
+        try:
+            fd, tmp_path = tempfile.mkstemp(suffix=".tmp", dir=dir_name)
+            try:
+                with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, indent=2)
+                    f.flush()
+                    os.fsync(f.fileno())
+
+                if os.path.exists(filepath):
+                    shutil.copy2(filepath, backup_path)
+
+                if os.path.exists(filepath):
+                    os.replace(tmp_path, filepath)
+                else:
+                    os.rename(tmp_path, filepath)
+            except Exception:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+                raise
+        except Exception as e:
+            print(f"[ERRORE] Scrittura atomica fallita: {e}")
+            raise
 
     @staticmethod
     def _serialize_position(pos: Position) -> Dict:
@@ -531,14 +577,33 @@ class PaperTradingSimulator:
         if not self.state_file.exists():
             return
 
-        try:
-            with open(self.state_file, 'r') as f:
-                state = json.load(f)
+        state = None
 
+        try:
+            with open(self.state_file, 'r', encoding='utf-8') as f:
+                raw = f.read()
+            state = json.loads(raw)
+            if not isinstance(state, dict) or "cash" not in state:
+                raise ValueError("Stato corrotto: struttura invalida")
+        except (json.JSONDecodeError, ValueError) as e:
+            print(f"[WARNING] Stato principale corrotto ({e}), provo backup...")
+            backup_path = str(self.state_file) + ".bak"
+            if os.path.exists(backup_path):
+                try:
+                    with open(backup_path, 'r', encoding='utf-8') as f:
+                        state = json.load(f)
+                    print(f"[OK] Stato ripristinato da backup ({len(state.get('closed_positions', []))} chiuse)")
+                except Exception as e2:
+                    print(f"[ERRORE] Anche il backup e' corrotto: {e2}")
+                    return
+            else:
+                print("[ERRORE] Nessun backup disponibile, parto da zero")
+                return
+
+        try:
             self.portfolio.cash = state["cash"]
             self.baseline_done = state.get("baseline_done", False)
             self.baseline_assets = set(state.get("baseline_assets", []))
-            # strategy_mode resta quello del config (run corrente), non sovrascritto
 
             for pid, pos_data in state.get("positions", {}).items():
                 self.portfolio.positions[pid] = self._deserialize_position(pos_data)

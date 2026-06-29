@@ -391,8 +391,9 @@ class PolymarketScanner:
 
     def _qualify_wallets(self, wallet_markets: Dict[str, set], wallet_meta: Dict[str, Dict],
                          min_overlap: int, min_realized_roi: float, min_decided: int,
+                         min_win_rate: float = 0.55,
                          candidate_cap: int = 60) -> List[Dict]:
-        """Filtra per overlap, poi qualifica per ROI realizzato storico."""
+        """Filtra per overlap, poi qualifica per ROI realizzato storico e win rate."""
         candidates = [(a, len(ms)) for a, ms in wallet_markets.items() if len(ms) >= min_overlap]
         candidates.sort(key=lambda x: x[1], reverse=True)
         candidates = candidates[:candidate_cap]
@@ -401,7 +402,9 @@ class PolymarketScanner:
         qualified: List[Dict] = []
         for i, (addr, overlap) in enumerate(candidates, 1):
             perf = self._wallet_realized_performance(addr)
-            if perf["decided"] >= min_decided and perf["roi"] >= min_realized_roi:
+            if (perf["decided"] >= min_decided
+                    and perf["roi"] >= min_realized_roi
+                    and perf["win_rate"] >= min_win_rate):
                 qualified.append({
                     "address": addr,
                     "name": wallet_meta[addr]["name"],
@@ -416,7 +419,7 @@ class PolymarketScanner:
             if i % 10 == 0:
                 print(f"    verificati {i}/{len(candidates)} ({len(qualified)} ok)...")
             time.sleep(0.3)
-        qualified.sort(key=lambda x: (x["roi"], x["overlap"]), reverse=True)
+        qualified.sort(key=lambda x: (x["roi"], x["win_rate"], x["overlap"]), reverse=True)
         return qualified
 
     def scan_categories(self, top_n: int = 20) -> List[Wallet]:
@@ -457,7 +460,8 @@ class PolymarketScanner:
                 wallet_markets, wallet_meta,
                 min_overlap=cfg["min_overlap"],
                 min_realized_roi=cfg["min_realized_roi"],
-                min_decided=cfg["min_decided"])
+                min_decided=cfg["min_decided"],
+                min_win_rate=cfg.get("min_win_rate", 0.55))
             results_by_cat[cat] = qualified[:per_cat]
             print(f"  -> {len(results_by_cat[cat])} specialisti '{cat}'")
 
@@ -512,7 +516,8 @@ class PolymarketScanner:
     def scan_consensus(self, top_n: int = 20,
                        n_markets: int = 60, holders_per_market: int = 25,
                        min_overlap: int = 3, candidate_cap: int = 80,
-                       min_realized_roi: float = 0.10, min_decided: int = 3) -> List[Wallet]:
+                       min_realized_roi: float = 0.20, min_decided: int = 10,
+                       min_win_rate: float = 0.55) -> List[Wallet]:
         """
         Qualifica wallet che co-detengono gli stessi mercati popolari e sono
         profittevoli, per dare basi reali alla strategia di consenso.
@@ -550,11 +555,13 @@ class PolymarketScanner:
         print(f"  {len(candidates)} candidati con overlap >= {min_overlap} mercati")
 
         print(f"[3/4] ROI realizzato storico dei candidati (soglia >= {min_realized_roi:.0%}, "
-              f"min {min_decided} posizioni)...")
+              f"min {min_decided} posizioni, WR >= {min_win_rate:.0%})...")
         qualified: List[Dict] = []
         for i, (addr, overlap) in enumerate(candidates, 1):
             perf = self._wallet_realized_performance(addr)
-            if perf["decided"] >= min_decided and perf["roi"] >= min_realized_roi:
+            if (perf["decided"] >= min_decided
+                    and perf["roi"] >= min_realized_roi
+                    and perf["win_rate"] >= min_win_rate):
                 qualified.append({
                     "address": addr,
                     "name": wallet_meta[addr]["name"],
@@ -570,8 +577,8 @@ class PolymarketScanner:
                 print(f"  Verificati {i}/{len(candidates)} ({len(qualified)} qualificati)...")
             time.sleep(0.3)
 
-        # Ranking: per qualita reale (ROI storico), poi overlap come tie-break
-        qualified.sort(key=lambda x: (x["roi"], x["overlap"]), reverse=True)
+        # Ranking: per qualita reale (ROI storico, win rate), poi overlap come tie-break
+        qualified.sort(key=lambda x: (x["roi"], x["win_rate"], x["overlap"]), reverse=True)
         top = qualified[:top_n]
 
         print(f"\n{'='*70}")
