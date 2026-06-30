@@ -45,6 +45,8 @@ class PaperTradingSimulator:
 
         self._load_state()
         self._cleanup_legacy_positions()
+        self.wallet_quality: Dict[str, Dict] = {}
+        self._load_wallet_quality()
 
     # ------------------------------------------------------------------
     # Lookup
@@ -72,6 +74,50 @@ class PaperTradingSimulator:
             self.portfolio.cash += pos.size_usdc
             del self.portfolio.positions[pos.position_id]
         self._save_state()
+
+    # ------------------------------------------------------------------
+    # Phase B: qualita wallet (soft-disable, non rimozione)
+    # ------------------------------------------------------------------
+    def _load_wallet_quality(self):
+        """Carica win_rate/decided per indirizzo da data/scan_results.json."""
+        scan_file = DATA_DIR / "scan_results.json"
+        if not scan_file.exists():
+            return
+        try:
+            with open(scan_file) as f:
+                data = json.load(f)
+            for w in data.get("wallets", []):
+                addr = (w.get("address") or "").lower()
+                if addr:
+                    self.wallet_quality[addr] = {
+                        "win_rate": float(w.get("win_rate", 0.0) or 0.0),
+                        "decided": int(w.get("decided_positions", 0) or 0),
+                        "name": w.get("name", ""),
+                    }
+        except Exception as e:
+            print(f"[SIMULATOR] load wallet_quality fallito: {e}")
+
+    def _wallet_size_factor(self, source_wallet: str) -> float:
+        """Phase B: size factor (1.0 o soft_disable_size_factor) per wallet."""
+        q = self.wallet_quality.get((source_wallet or "").lower())
+        if not q:
+            return 1.0  # wallet non in scan: non penalizzare (sconosciuto)
+        thr = STRATEGY.get("soft_disable_wr_threshold", 0.55)
+        if q["win_rate"] < thr:
+            return STRATEGY.get("soft_disable_size_factor", 0.5)
+        return 1.0
+
+    def _positions_for_wallet(self, source_wallet: str) -> int:
+        return sum(
+            1 for p in self.portfolio.positions.values()
+            if (p.source_wallet or "").lower() == (source_wallet or "").lower()
+        )
+
+    def _positions_for_category(self, category: str) -> int:
+        return sum(
+            1 for p in self.portfolio.positions.values()
+            if (p.category or "") == category
+        )
 
     def _find_position_by_asset(self, asset: str):
         for pid, p in self.portfolio.positions.items():
@@ -111,14 +157,15 @@ class PaperTradingSimulator:
     # ------------------------------------------------------------------
     # Apertura posizioni
     # ------------------------------------------------------------------
-    def open_position(self, source_wallet: str, info: Dict, num_holders: int = 1) -> bool:
+    def open_position(self, source_wallet: str, info: Dict, num_holders: int = 1,
+                      fetcher=None) -> bool:
         """
-        Apre una posizione simulata a partire dallo snapshot di un wallet.
+        Apre una posizione simulata da uno snapshot di wallet.
 
-        Args:
-            source_wallet: wallet sorgente (per logging)
-            info: posizione normalizzata (vedi portfolio_sync._normalize)
-            num_holders: quanti wallet monitorati detengono l'asset (consenso)
+        Phase D: filtra per scadenza (max_days_to_expiry) e liquidita (book size/spread).
+        Phase E: caps per wallet sorgente e per categoria (anti-correlazione).
+        Phase B: soft-disable (size dimezzata) per wallet con win-rate basso.
+        Phase C: chiamata solo per asset NUOVI (delta-snapshot), vedi reconcile.
         """
         asset = info["asset"]
         price = info["cur_price"]
@@ -129,7 +176,7 @@ class PaperTradingSimulator:
         if price <= 0 or price >= 1:
             return False
 
-        # Guardrail 1 - banda di prezzo: niente longshot (<min) ne favoriti (>max)
+        # Guardrail 1 - banda di prezzo (Phase D): 0.30-0.70
         price_min = STRATEGY.get("entry_price_min", 0.0)
         price_max = STRATEGY.get("entry_price_max", 1.0)
         if price < price_min or price > price_max:
@@ -137,8 +184,7 @@ class PaperTradingSimulator:
                   f"{info['title'][:45]}")
             return False
 
-        # Guardrail 2 - anti entrata tardiva: non inseguire una posizione gia corsa
-        # rispetto al prezzo medio del wallet sorgente.
+        # Guardrail 2 - anti entrata tardiva (Phase C: drift 5%)
         avg_price = info.get("avg_price", 0.0)
         max_drift = STRATEGY.get("max_entry_drift", 1.0)
         if avg_price > 0 and price > avg_price * (1 + max_drift):
@@ -146,10 +192,64 @@ class PaperTradingSimulator:
                   f"+{max_drift:.0%}: {info['title'][:40]}")
             return False
 
+        # Phase D: filtro scadenza (no capital-lock > 60gg tipo 2028 elections,
+        # nè coin-flip 5-min crypto < 24h: scartiamo mercati troppo brevi
+        # dove i wallet fanno market-making con rebate NON copiabile dal retail).
+        max_days = STRATEGY.get("max_days_to_expiry")
+        min_days = STRATEGY.get("min_days_to_expiry", 0.0)
+        if max_days is not None or min_days > 0:
+            end_iso = info.get("end_date_iso") or info.get("end_date", "")
+            if end_iso:
+                days = None
+                if fetcher is not None:
+                    days = fetcher.days_to_expiry(end_iso)
+                if days is not None:
+                    if max_days is not None and days > max_days:
+                        print(f"[SKIP] Scadenza {days:.0f}gg > {max_days}gg: "
+                              f"{info['title'][:40]}")
+                        return False
+                    if min_days > 0 and days < min_days:
+                        print(f"[SKIP] Scadenza {days:.1f}gg < {min_days}gg (coin-flip/MM): "
+                              f"{info['title'][:40]}")
+                        return False
+
+        # Phase D: filtro liquidita (book size + spread)
+        if fetcher is not None and STRATEGY.get("min_book_size_usdc"):
+            book = fetcher.get_book(asset)
+            ok = fetcher.passes_liquidity(
+                book, side_size_min=STRATEGY["min_book_size_usdc"],
+                max_spread_ticks=STRATEGY.get("max_spread_ticks", 3))
+            if not ok:
+                print(f"[SKIP] Liquidita insufficiente: {info['title'][:40]}")
+                return False
+
         if self.portfolio.open_positions_count >= BUDGET["max_open_positions"]:
             return False
 
+        # Phase E: cap per wallet sorgente (max 1 posizione aperta per wallet)
+        max_per_wallet = BUDGET.get("max_positions_per_wallet", 1)
+        if self._positions_for_wallet(source_wallet) >= max_per_wallet:
+            print(f"[SKIP] Cap wallet raggiunto ({max_per_wallet}) per "
+                  f"{source_wallet[:10]}: {info['title'][:40]}")
+            return False
+
+        # Phase E: cap per categoria (anti-correlazione, es. 2 bet politica 2028)
+        max_per_cat = BUDGET.get("max_positions_per_category", 99)
+        category = info.get("category") or categorize_market(
+            info["title"], event_slug=info.get("slug", ""))
+        if max_per_cat < 99 and self._positions_for_category(category) >= max_per_cat:
+            print(f"[SKIP] Cap categoria '{category}' raggiunto ({max_per_cat}): "
+                  f"{info['title'][:40]}")
+            return False
+
         size = self._calculate_position_size(info.get("notional_usdc", 0.0))
+
+        # Phase B: soft-disable wallet win-rate basso (NON rimosso, size dimezzata)
+        factor = self._wallet_size_factor(source_wallet)
+        if factor < 1.0:
+            size *= factor
+            print(f"[SOFT-DISABLE] wallet {source_wallet[:10]} WR basso: "
+                  f"size x{factor:.2f} -> ${size:.2f}")
 
         if size < BUDGET["min_position_size"]:
             return False
@@ -239,14 +339,20 @@ class PaperTradingSimulator:
     # ------------------------------------------------------------------
     # Riconciliazione: cuore del mirroring
     # ------------------------------------------------------------------
-    def reconcile(self, aggregate: Dict[str, Dict], min_wallets: int, fetcher) -> None:
+    def reconcile(self, aggregate: Dict[str, Dict], min_wallets: int, fetcher,
+                  new_assets: Optional[set] = None) -> None:
         """
         Allinea il portafoglio simulato allo snapshot dei wallet.
 
+        Phase C: copy-trade PUNTOLE via delta-snapshot. Si aprono SOLO gli asset
+        in `new_assets` (comparsi dall'ultimo ciclo), non il bag intero.
+
         Args:
-            aggregate: asset -> {"info", "holders", "max_notional"} (da snapshot_wallets)
+            aggregate: asset -> {"info", "holders", "max_notional"}
             min_wallets: soglia di consenso (1 = copy puro)
-            fetcher: PolymarketPositionFetcher per il prezzo di fallback
+            fetcher: PolymarketPositionFetcher per fallback + filtri D
+            new_assets: set di asset NUOVI rilevati dal main loop (delta). Se e'
+                None e delta_copy e attivo, NON si apre nulla (safety).
         """
         # Asset che soddisfano la strategia (consenso)
         qualifying = {a for a, e in aggregate.items() if len(e["holders"]) >= min_wallets}
@@ -314,14 +420,30 @@ class PaperTradingSimulator:
             drift = (cur / avg - 1) if avg > 0 else 0.0
             return (-len(entry["holders"]), drift)
 
-        candidates = [
-            a for a in qualifying
-            if a not in self.baseline_assets and not self.has_asset(a)
-        ]
+        # Phase C:候选 = qualifying intersecato con gli asset NUOVI (delta).
+        # Se delta_copy attivo e new_assets non passato, NON aprire (safety):
+        # evita di riversare il bag intero se il main non sta tracciando il delta.
+        delta_on = STRATEGY.get("delta_copy", False)
+        if delta_on and new_assets is None:
+            candidates = []
+        elif delta_on and new_assets is not None:
+            candidates = [
+                a for a in qualifying
+                if a in new_assets
+                and a not in self.baseline_assets
+                and not self.has_asset(a)
+            ]
+        else:
+            # Fallback legacy (mirror intero, disattivato di default)
+            candidates = [
+                a for a in qualifying
+                if a not in self.baseline_assets and not self.has_asset(a)
+            ]
         for asset in sorted(candidates, key=_candidate_key):
             entry = aggregate[asset]
             source = sorted(entry["holders"])[0]
-            self.open_position(source, entry["info"], num_holders=len(entry["holders"]))
+            self.open_position(source, entry["info"], num_holders=len(entry["holders"]),
+                              fetcher=fetcher)
 
         # 3) Registra equity e salva
         self.record_equity()

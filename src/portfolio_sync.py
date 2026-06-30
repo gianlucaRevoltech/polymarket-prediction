@@ -11,7 +11,7 @@ posizioni simulate in modo fedele.
 """
 import requests
 from typing import Dict, List, Optional
-from config import POLYMARKET_API
+from config import POLYMARKET_API, STRATEGY
 from categories import categorize_market
 
 
@@ -75,9 +75,84 @@ class PolymarketPositionFetcher:
             "realized_pnl": float(p.get("realizedPnl", 0.0) or 0.0),
             "redeemable": bool(p.get("redeemable", False)),
             "end_date": p.get("endDate", ""),
+            # Phase D: data di scadenza ISO per filtro capital-lock
+            "end_date_iso": p.get("endDate", ""),
             # Notional in USDC che il wallet ha investito nella posizione
             "notional_usdc": size * avg_price,
         }
+
+    # ----------------------------------------------------------------
+    # Phase D: filtro liquidita / scadenza
+    # ----------------------------------------------------------------
+    def get_book(self, token_id: str) -> Optional[Dict]:
+        """
+        Order book del token via CLOB. Returns best bid/ask con size, o None.
+        Usato dal filtro liquidita in ingresso (Phase D).
+        """
+        try:
+            url = f"{self.clob}/book"
+            r = self.session.get(url, params={"token_id": token_id}, timeout=10)
+            if not r.ok:
+                return None
+            data = r.json()
+            # FIX: il CLOB /book di Polymarket restituisce bids in ASC (best = MAX
+            # price) e asks in DESC (best = MIN price). Prendere bids[0]/asks[0]
+            # era ERRATO (selezionava il peggior prezzo -> spread ~0.98 finto).
+            bids = data.get("bids") or []
+            asks = data.get("asks") or []
+            best_bid = None; best_ask = None
+            bid_size = 0.0; ask_size = 0.0
+            for b in bids:
+                pr = float(b["price"])
+                if best_bid is None or pr > best_bid:
+                    best_bid = pr; bid_size = float(b["size"])
+            for a in asks:
+                pr = float(a["price"])
+                if best_ask is None or pr < best_ask:
+                    best_ask = pr; ask_size = float(a["size"])
+            return {
+                "best_bid": best_bid,
+                "best_ask": best_ask,
+                "bid_size": bid_size,
+                "ask_size": ask_size,
+                "mid": ((best_bid + best_ask) / 2) if (best_bid is not None and best_ask is not None) else None,
+                "spread": ((best_ask - best_bid) if (best_bid is not None and best_ask is not None) else None),
+            }
+        except Exception:
+            return None
+
+    @staticmethod
+    def passes_liquidity(book: Optional[Dict], side_size_min: float,
+                         max_spread_ticks: float = 3.0) -> bool:
+        """Phase D: check liquidita su book (size + spread)."""
+        if book is None:
+            return False  # niente book = non entri su mercato illiquido/sconosciuto
+        bs = book.get("bid_size", 0.0)
+        asz = book.get("ask_size", 0.0)
+        spread = book.get("spread")
+        if max(bs, asz) < side_size_min:
+            return False
+        if spread is None or spread > (max_spread_ticks * 0.01):
+            return False
+        return True
+
+    @staticmethod
+    def days_to_expiry(end_date_iso: str) -> Optional[float]:
+        """Phase D: giorni alla scadenza mercato; None se non parseable."""
+        if not end_date_iso:
+            return None
+        try:
+            from datetime import datetime, timezone
+            # Gestisce Z e offset
+            s = end_date_iso.replace("Z", "+00:00")
+            dt = datetime.fromisoformat(s)
+            if dt.tzinfo is None:
+                from datetime import timezone as tz
+                dt = dt.replace(tzinfo=tz.utc)
+            now = datetime.now(timezone.utc)
+            return (dt - now).total_seconds() / 86400.0
+        except Exception:
+            return None
 
     def get_price(self, token_id: str) -> Optional[float]:
         """

@@ -667,18 +667,43 @@ class PolymarketScanner:
         
         # 5. Ordina per ROI
         active_wallets.sort(key=lambda w: w.roi, reverse=True)
-        
+
+        # Phase B: enforce qualita (win-rate + posizioni decise) anche sul path
+        # legacy. Ricostruisce le metriche realizzate storiche per wallet e
+        # scarta quelli che non superano le soglie di CATEGORIES/SCANNER.
+        # Senza questo passo scan_all salva wallet con WR<0.55 (bug P5).
+        min_wr = SCANNER.get("min_win_rate", CATEGORIES["min_win_rate"])
+        min_decided = SCANNER.get("min_decided", CATEGORIES["min_decided"])
+        min_roi = CATEGORIES["min_realized_roi"]
+        print(f"\n[ANALYSIS] Phase B: enforce qualita (WR>= {min_wr:.0%}, "
+              f"decided>= {min_decided}, ROI>= {min_roi:.0%})...")
+        qualified_legacy: List[Wallet] = []
+        for i, w in enumerate(active_wallets, 1):
+            perf = self._wallet_realized_performance(w.address)
+            w.num_trades = perf["decided"]
+            w.win_rate = perf["win_rate"]
+            w.roi = perf["roi"] * 100  # sovrascrive ROI leaderboard con ROI realizzato
+            if (perf["decided"] >= min_decided
+                    and perf["win_rate"] >= min_wr
+                    and perf["roi"] >= min_roi):
+                qualified_legacy.append(w)
+            if i % 5 == 0:
+                print(f"  verificati {i}/{len(active_wallets)} "
+                      f"({len(qualified_legacy)} ok)...")
+            time.sleep(0.3)
+        active_wallets = qualified_legacy
+
         # 6. Re-number rank
         for i, w in enumerate(active_wallets, 1):
             w.rank = i
-        
+
         print(f"\n{'*'*60}")
-        print(f"  RISULTATO FINALE: {len(active_wallets)} wallet attivi e profittevoli")
+        print(f"  RISULTATO FINALE: {len(active_wallets)} wallet attivi e qualificati")
         print(f"{'*'*60}")
-        
+
         # Salva risultati su file
         self._save_scan_results(active_wallets)
-        
+
         return active_wallets[:top_n]
     
     def _save_scan_results(self, wallets: List[Wallet], extra: Optional[Dict] = None):

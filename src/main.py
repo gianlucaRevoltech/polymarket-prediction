@@ -36,6 +36,9 @@ class PolymarketPaperTradingBot:
         self.qualified_wallets: List[WalletAnalysis] = []
         self.monitored_addresses: List[str] = []
         self.running = False
+        # Phase C: tracking asset gia' visti per copy-trade puntuale (delta-snapshot)
+        # None = primo ciclo (baseline), dopo: set di asset visti al ciclo precedente
+        self.prev_assets: Optional[set] = None
 
         pid_file = BASE_DIR / "data" / "bot.pid"
         pid_file.parent.mkdir(parents=True, exist_ok=True)
@@ -119,6 +122,8 @@ class PolymarketPaperTradingBot:
                 f"[BOT] Lista wallet aggiornata: {len(new_addrs)} attivi "
                 f"(+{len(added)} nuovi, -{len(removed)} usciti)"
             )
+            # Phase B: ricarica le metriche qualita (win-rate) per il soft-disable
+            self.simulator._load_wallet_quality()
         return True
 
     def _maybe_auto_rescan(self) -> None:
@@ -192,8 +197,11 @@ class PolymarketPaperTradingBot:
             if self._run_wallet_scan():
                 self._reload_monitored_wallets()
 
-        next_h = SCANNER["auto_rescan_interval_sec"] / 3600
-        print(f"[BOT] Auto-rescan ogni {next_h:.0f}h (nessun intervento manuale richiesto)")
+        if SCANNER.get("auto_rescan_enabled", False):
+            next_h = SCANNER["auto_rescan_interval_sec"] / 3600
+            print(f"[BOT] Auto-rescan ogni {next_h:.0f}h (nessun intervento manuale richiesto)")
+        else:
+            print("[BOT] Auto-rescan DISABILITATO - lista wallet curata stabile (soft-disable gestisce WR bassi)")
         return bool(self.monitored_addresses)
 
     # ------------------------------------------------------------------
@@ -229,7 +237,22 @@ class PolymarketPaperTradingBot:
                 aggregate = self.fetcher.snapshot_wallets(self.monitored_addresses)
                 print(f"  {len(aggregate)} asset distinti rilevati tra i wallet")
 
-                self.simulator.reconcile(aggregate, min_wallets, self.fetcher)
+                # Phase C: copy-trade puntuale via delta-snapshot
+                if self.prev_assets is None:
+                    # Primo ciclo: baseline = asset attualmente detenuti, NON copiamo
+                    # il bag preesistente (fix entrate tardive croniche).
+                    self.prev_assets = set(aggregate.keys())
+                    new_assets = set()
+                    print(f"  [BASELINE] {len(self.prev_assets)} asset preesistenti "
+                          f"-> nessuna apertura (zero-dump)")
+                else:
+                    new_assets = set(aggregate.keys()) - self.prev_assets
+                    self.prev_assets = set(aggregate.keys())
+                    if new_assets:
+                        print(f"  {len(new_assets)} NUOVI asset (delta) rilevati")
+
+                self.simulator.reconcile(
+                    aggregate, min_wallets, self.fetcher, new_assets=new_assets)
 
                 summary = self.simulator.get_portfolio_summary()
                 print(f"  Equity: ${summary['current_value']:.2f} "

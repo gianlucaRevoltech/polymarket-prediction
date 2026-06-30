@@ -418,8 +418,12 @@ if __name__ == "__main__":
     parser.add_argument("--top", type=int, default=len(wallets))
     parser.add_argument("--limit", type=int, default=1000)
     parser.add_argument("--consensus", type=int, default=STRATEGY.get("min_wallets_consensus", 2))
-    parser.add_argument("--min-price", type=float, default=0.0, help="prezzo minimo d'ingresso")
-    parser.add_argument("--max-price", type=float, default=1.0, help="prezzo massimo d'ingresso")
+    parser.add_argument("--min-price", type=float,
+                        default=STRATEGY.get("entry_price_min", 0.0),
+                        help="prezzo minimo d'ingresso (default config)")
+    parser.add_argument("--max-price", type=float,
+                        default=STRATEGY.get("entry_price_max", 1.0),
+                        help="prezzo massimo d'ingresso (default config)")
     parser.add_argument("--late-entry", action="store_true",
                         help="simula entrata tardiva (slippage+fee, prezzo del K-esimo wallet)")
     args = parser.parse_args()

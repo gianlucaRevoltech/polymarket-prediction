@@ -1,134 +1,115 @@
-# Findings & Decisions
+# Findings & Decisions — Polymarket Copy Bot (debug perdita)
 
 ## Requirements
-- Studiare e analizzare Polymarket come piattaforma
-- Analizzare wallet profittevoli per capire le strategie
-- Sviluppare un bot che fa copy-trading di wallet di successo
-- Identificare opportunità di arbitraggio
-- Calcolare profitto potenziale
+- Analizzare perche il bot e in perdita (-2.09%, WR 40%)
+- Pianificare una strategia corretta e profittevole
+- NON stravolgere la lista wallet monitorati (vincolo utente)
+- Gestire wallet con ROI "troppo basso"
 
-## Research Findings
+## Diagnosi — Cosa stiamo sbagliando
 
-### Polymarket Overview (COMPLETATO)
-- Piattaforma di prediction market basata su Polygon (L2 Ethereum)
-- Usa USDC come valuta di scambio
-- CLOB (Central Limit Order Book) per matching ordini
-- Mercati binari Yes/No: prezzo $0-$1 (probabilità implicita)
-- Settlement: mercato risolve a $1 (win) o $0 (lose)
-- Fee: 5% taker-only, rebate 25% per maker
-- Tick size: $0.01, Min order: $5
+### Sintesi stato (screenshot 2026-06-30 07:40)
+- Equity $293.73 / $300 -> -$6.27 (-2.09%)
+- Realizzato -$4.10 | Unrealizzato -$2.17
+- 6 aperte, 25 chiuse, WR 40% (10W / 15L)
 
-### Architettura Tecnica (VERIFICATO)
-- Smart contracts: Conditional Token Framework (CTF) su Polygon
-- CLOB off-chain matching, settlement on-chain
-- API endpoints funzionanti:
-  - Gamma API: https://gamma-api.polymarket.com/markets
-  - CLOB API: https://clob.polymarket.com/book?token_id={id}
-  - Leaderboard: Embeddato in HTML pagina (no API pubblica diretta)
+### P1 — Mirroring copia lo snapshot, non il trade (entrate tardive)
+Il bot NON replica l'istante di ingresso del wallet: legge `/positions` ed entra
+al prezzo CORRENTE del mercato, spesso settimane dopo l'ingresso reale del wallet.
+- Esempio dashboard: "France World Cup No" entry $0.778 -> $0.711 (-8.7%)
+- "Argentina World Cup No" entry $0.818 -> $0.806 (-1.4%)
+- Il guardrail max_entry_drift (12%) confronta cur vs avg_price del wallet, ma
+  avg_price aggregato e poco affidabile e comunque entrare a 0.78 su esito che paga
+  $1 max = upside $0.22 (28%) vs downside $0.78 (-77%) -> attesa negativa.
 
-### Order Book Structure (VERIFICATO)
-Esempio mercato "New Rihanna Album before GTA VI":
-- Best bid: $0.51 (size: 254)
-- Best ask: $0.54 (size: 31.09)
-- Spread: $0.03 (3 cents)
-- Liquidità profonda: ordini da $0.01 a $0.99
-- Last trade: $0.51
+### P2 — Dump intero portafoglio al primo snapshot
+portfolio_state.json: TUTTE 10 posizioni aperte allo STESSO secondo
+(2026-06-27 15:22:33). Copiamo il bag intero del wallet in un colpo, non i singoli
+trade nel tempo. Risultato: esposizione a 10 mercati slegati, molti a scadenza
+lunghissima (Newsom 2028, Rubio 2028, Bolsonaro 2026, Djokovic Wimbledon) che
+immobilizzano capitale per mesi/anni. Su budget $300 e deleterio.
 
-### Leaderboard & Wallet Tracking (COMPLETATO)
-**Top 10 Trader per Profitto (30 giorni):**
-1. mintblade: $9,238,344 PnL | $17,759,922 volume
-2. fishalive: $9,063,378 PnL | $13,281,460 volume
-3. frostrizz: $8,928,561 PnL | $23,091,318 volume
-4. sparklingwater123: $8,474,966 PnL | $19,001,698 volume
-5. GRIMDRIP: $7,602,742 PnL | $13,603,969 volume
-6. endlessFate: $7,409,836 PnL | $26,282,164 volume
-7. swisstony: $5,652,377 PnL | $370,232,331 volume (alto volume!)
-8. BAREFLUX: $4,761,593 PnL | $21,662,777 volume
-9. BreakTheBank: $4,261,885 PnL | $77,800,799 volume
-10. Inaccuratestake: $3,947,667 PnL | $19,153,226 volume
+### P3 — Posizioni correlate, nessun filtro direzionale
+Stesso wallet copia Newsom-nomination (Yes@0.21) E Newsom-presidenza (Yes@0.21):
+rischio concentrato, finta diversificazione. Inoltre copiamo Yes su longshot
+politiche 0.10-0.22 (lungo la banda longshot che il backtest del config definiva
+ROI mediano -100%).
 
-**Top 10 per Volume (30 giorni):**
-1. swisstony: $370M volume | $5.6M PnL
-2. 0x2c33...0563: $285M volume | $2.5M PnL
-3. suntori: $222M volume | -$2.5M PnL (LOSS!)
-4. asjabaasj: $209M volume | $547 PnL
-5. ferrariChampions2026: $173M volume | -$1.7M PnL
+### P4 — SL/TP asimmetrici -> attesa negativa su random walk
+Config: SL -30% / TP +50%. Con WR 40% serve vincite > 1.5x perdite perpareggiare.
+Invece TP +50% taglia i vincenti presto, SL -30% lascia correre i perdenti.
+Realizzato -$4.10 = conferma empirica. Il vero segnale informato (exit quando il
+wallet sorgente esce) viene eclissato dalle soglie meccaniche.
 
-**Biggest Wins (30 giorni) - FIFA World Cup 2026:**
-1. GRIMDRIP: $7.6M profit (Czechia vs South Africa)
-2. mintblade: $7.3M profit (IR Iran vs New Zealand)
-3. frostrizz: $5.8M profit (Türkiye vs Paraguay)
-4. endlessFate: $5.6M profit (Saudi Arabia vs Uruguay)
-5. fishalive: $4.7M profit (Spain vs Cabo Verde)
+### P5 — Filtro win-rate NON enforceato (bug)
+scan_results.json contiene wallet con win_rate SOTTO la soglia 0.55 del config:
+- Q96s3kwo: 0.428
+- Logan: 0.444
+- yupiiiiiiiii: 0.444
+Ipotesi causa: `main.run_initial_scan` usa `scan_all` (legacy leaderboard) come
+fallback quando scan_results manca. scan_all filtra solo per ROI leaderboard e
+min_trades, NON per win_rate ne min_decided. Salva scan_results senza filtro
+qualita -> e per questo che copiamo wallet con bassa frequenza di vittoria.
+DRILL DOWN: quando il bot parte a freddo e scan_results assente, assicurarsi
+che il path sia scan_categories (che ha _qualify_wallets con min_win_rate) e
+NON scan_all.
 
-**Wallet Address Esempio:**
-- mintblade: 0x96cfcb0c30942cfcd1cdf76c7d408794d66b1acb
-- fishalive: 0xed64a7bf029040aa331abc87902434d815ef217d
-- swisstony: 0x204f72f35326db932158cba6adff0b9a1da95e14
-- frostrizz: 0xbc11a64ab34a03a043fbe80598fa065ee87eeec6
+### P6 — ROI "troppo basso" e un problema di WIN-RATE e campione, non di ROI
+ROI leaderboard = PnL / volume aggregato, NON per-trade. Wallet con ROI 24% ma
+WR 44% e 34 trade e statisticamente negativo (perdite frequenti, una vincente
+fortunata sostiene il ROI aggregato). Per copy con 6 posizioni e budget $300,
+contano win-rate e consistenza recenti, non il ROI-whale lifetime.Panelelow ROI
+non va "tolto" (vincolo utente) ma soft-penalizzato.
 
-### Opportunità di Arbitraggio Identificate
-1. **Arbitraggio intra-mercato**: Yes + No ≠ $1 (raro, mercati efficienti)
-2. **Arbitraggio cross-mercato**: Mercati correlati con pricing inconsistente
-3. **Arbitraggio temporale**: Reazione lenta a notizie (news trading)
-4. **Copy-trading**: Replicare mosse wallet profittevoli (FATTIBILE!)
-5. **Market making**: Fornire liquidità e catturare spread
+### P7 — Sizing/allocazione subottimale
+max_position 5% = $15, max 6 pos -> <= $90 deployato, $210+ cash a rendimento zero
+mentre le 6 aperte perdono. Con $300 e spread Polymarket $0.01-0.03 ogni trade
+paga ~1-3% slippage round-trip: margine minuscolo, ogni errore di timing e
+insuperabile (P1 amplifica).
 
-### Strategia Sportiva (OSSERVAZIONE CHIAVE)
-- FIFA World Cup 2026 domina i profitti
-- Trader specializzati in sport fanno $4-9M in 30 giorni
-- Pattern: entrano prima delle partite, escono dopo risultati
-- Mercati sportivi hanno alta liquidità e volatilità
+### P8 — Mercati a lunga scadenza immobili
+Newsom/Rubio/Vance 2028, Bolsonaro 2026, Wimbledon: capital-lock 6-24 mesi.
+Mark-to-market mostra solo -1% (drift lungo) ma capitale bloccato. Per budget
+ridotto sono inutili. Nella dashboard corrente: France WC, Argentina WC,
+Messini top-scorer, Iran enrichment, Hormuz: alcuni prox-scadenza (buoni), altri
+lunghi (pessimi).
 
-### Categorie Mercato
-- Sports: 2651 eventi attivi
-- Politics: 1397 eventi attivi
-- Crypto: 3507 eventi attivi
-- Geopolitics: 383 eventi attivi
-- Economy: 150 eventi attivi
-- Tech: 252 eventi attivi
+### P9 — Nessun filtro liquidita all'ingresso
+Si entra a cur_price senza controllare depth del book. Su longshot illiquidi lo
+slippage reale >> 1% modellato. Servono best bid/ask size e spread.
 
-### Polymarket Overview
-- Piattaforma di prediction market basata su Polygon (L2 Ethereum)
-- Usa USDC come valuta di scambio
-- Ha un CLOB (Central Limit Order Book) per il matching degli ordini
-- I mercati sono basati su eventi binari (Yes/No): politica, sport, crypto, etc.
-- Le quote vanno da $0 a $1 (rappresentano la probabilità percepita)
-- Settlement: il mercato risolve a $1 (win) o $0 (lose)
-- Fondata nel 2020, cresciuta enormemente nel 2024 (elezioni USA)
-
-### Architettura Tecnica
-- Smart contracts su Polygon (CTF - Conditional Token Framework)
-- CLOB off-chain matching, settlement on-chain
-- API REST per trading e data
-- WebSocket per real-time data
-- Gamma Markets API per dati di mercato
-
-### Opportunità di Arbitraggio
-1. **Arbitraggio intra-mercato**: Se Yes + No < $1 o > $1 (raro su mercati liquidi)
-2. **Arbitraggio cross-mercato**: Mercati correlati con pricing inconsistente
-3. **Arbitraggio temporale**: Reazione lenta del mercato a notizie
-4. **Copy-trading**: Replicare le mosse di wallet profittevoli
-
-### Wallet Tracking
-- Tutti i dati on-chain sono pubblici su Polygon
-- Polygonscan permette di tracciare transazioni
-- Polymarket ha un leaderboard pubblico
-- Strumenti terzi: Polymarket tracker, Dune Analytics dashboards
+## Verify-still-true (controllare o confermare con dati)
+- [ ] Path esatto che scrive scan_results con wallet WR<0.55
+- [ ] Presenza timestamp ingresso nel feed /positions (serve /activity per delta)
+- [ ] Quante delle 6 posizioni aperte hanno scadenza >60gg
+- [ ] Spread reale CLOB sui token entryPrice >0.70 del portafoglio
 
 ## Technical Decisions
 | Decision | Rationale |
 |----------|-----------|
-| Python | Ecosistema ricco per trading/crypto |
-| py-clob-client (SDK ufficiale) | Client Python ufficiale per Polymarket |
-| Web3.py | Interazione diretta con smart contracts Polygon |
-| Polygon RPC | Per leggere transazioni on-chain |
+| Copy-trade puntuale via delta-snapshot | Mirroring snap = entrate tardive croniche |
+| Soft-disable (non remove) wallet WR<0.55 | Rispetta vincolo "non stravolgere lista" |
+| Banda 0.30-0.70 | Backtest config: <0.25 ROI mediano -100%, >0.85 ~0 |
+| SL -8% / TP +20% (simmetrico+) | Asimmetria -30/+50 + WR40% = attesa negativa |
+| Filtro scadenza 60gg | Evita capital-lock 2028 elections |
+| Max 1 pos / wallet sorgente | Vera diversificazione, non same-wallet multi-pos |
+| Sizing 3% + reserve 25% | Con WR<50% dimezza rischio capitale |
+
+## Issues Encountered
+| Issue | Resolution |
+|-------|------------|
+| Win-rate filtro non enforceato su path legacy | TBD Phase A/B |
+| avg_price aggregato unreliable per drift check | Usarlo solo come guardrail molle |
 
 ## Resources
-- Polymarket Docs: https://docs.polymarket.com
-- CLOB API: https://docs.polymarket.com/#introduction
-- Polymarket GitHub: https://github.com/Polymarket
-- py-clob-client: https://github.com/Polymarket/py-clob-client
-- Polygon Scan: https://polygonscan.com
-- CTF Contract: Conditional Token Framework
-- Polymarket Leaderboard: https://polymarket.com/leaderboard
+- Codice: src/main.py (orchestrator), src/simulator.py (reconcile/sizing),
+  src/scanner.py (scan_all legacy vs scan_categories), src/portfolio_sync.py
+  (snapshot), src/config.py (BUDGET/STRATEGY/CATEGORIES/ANALYZER)
+- Dati: data/portfolio_state.json, data/trades_log.json, data/scan_results.json,
+  data/equity_curve.json
+- API: gamma (markets), data-api /positions, /holders, /activity, clob /midpoint /book
+
+## Visual/Browser Findings
+- Screenshot dashboard 2026-06-30 07:40 mostra 6 posizioni e 9 wallet
+- Posizioni aperte tutte "No" su favorite WC + Yes su geopolitici prox-scadenza
+- Wallet ROI range 24%-93% (Baosen0412 min, tugator max)
