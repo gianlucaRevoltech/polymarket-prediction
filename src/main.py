@@ -20,8 +20,9 @@ from scanner import PolymarketScanner
 from analyzer import WalletAnalyzer
 from portfolio_sync import PolymarketPositionFetcher
 from simulator import PaperTradingSimulator
+from strategies import ArbBinaryStrategy, HarvestStrategy, ArbCrossStrategy
 from models import WalletAnalysis
-from config import BUDGET, STRATEGY, TRACKING, SCANNER, DATA_DIR, BASE_DIR
+from config import BUDGET, STRATEGY, STRATEGIES, TRACKING, SCANNER, MONITOR, DATA_DIR, BASE_DIR
 
 
 class PolymarketPaperTradingBot:
@@ -36,9 +37,14 @@ class PolymarketPaperTradingBot:
         self.qualified_wallets: List[WalletAnalysis] = []
         self.monitored_addresses: List[str] = []
         self.running = False
-        # Phase C: tracking asset gia' visti per copy-trade puntuale (delta-snapshot)
-        # None = primo ciclo (baseline), dopo: set di asset visti al ciclo precedente
-        self.prev_assets: Optional[set] = None
+        # Phase I: tracking PER-WALLET holdings per copy-trade puntuale.
+        # None = primo ciclo (baseline), dopo: dict wallet -> set(asset) visti al ciclo precedente
+        self.prev_holdings: Optional[Dict[str, set]] = None
+        # Phase M: istanze strategie complementari (arb/harvest/cross) — scan cadenzato
+        self.arb_binary = ArbBinaryStrategy()
+        self.harvest = HarvestStrategy()
+        self.arb_cross = ArbCrossStrategy()
+        self._cycle_count = 0
 
         pid_file = BASE_DIR / "data" / "bot.pid"
         pid_file.parent.mkdir(parents=True, exist_ok=True)
@@ -212,6 +218,44 @@ class PolymarketPaperTradingBot:
             return max(1, STRATEGY["min_wallets_consensus"])
         return 1  # copy puro
 
+    # ------------------------------------------------------------------
+    # Phase M: router strategie complementari
+    # ------------------------------------------------------------------
+    def _should_scan(self, strategy_name: str) -> bool:
+        cfg = STRATEGIES.get(strategy_name, {})
+        every = cfg.get("scan_every_cycles", 1)
+        return (self._cycle_count % every) == 1
+
+    def _run_strategy_opps(self, strategy_name: str, opps: list) -> int:
+        if not opps:
+            print(f"  [{strategy_name}] scan: 0 opportunità")
+            return 0
+        print(f"  [{strategy_name}] {len(opps)} opportunità trovate, esecuzione...")
+        n = 0
+        for opp in opps:
+            if self.simulator.execute_opportunity(opp, self.fetcher):
+                n += 1
+            # limita a 1 trade x strategia per ciclo (no flooding)
+            if n >= 2:
+                break
+        if n:
+            print(f"  [{strategy_name}] {n} trade aperti")
+        return n
+
+    # Phase L: monitoraggio balance + alert
+    def _monitor_alerts(self, summary: dict):
+        try:
+            now_val = summary["current_value"]
+            init = summary["initial_capital"]
+            pnlpct = (now_val - init) / init
+            if pnlpct <= MONITOR.get("ruin_pct", -0.20):
+                self.simulator._alert(f"RUIN pnl {pnlpct:.1%} -> BOT STOP nuove aperture")
+            # target settimanale: confronta equity di 7gg fa (ultimo point equity)
+            # approssimato: se pnl > 0 e non raggiunge 20% settimana, solo info log
+            # (versione semplice; dati storico richiederebbe equity_curve parsing)
+        except Exception:
+            pass
+
     def run_mirror_loop(self):
         if not self.monitored_addresses:
             print("[ERRORE] Nessun wallet da monitorare.")
@@ -237,29 +281,65 @@ class PolymarketPaperTradingBot:
                 aggregate = self.fetcher.snapshot_wallets(self.monitored_addresses)
                 print(f"  {len(aggregate)} asset distinti rilevati tra i wallet")
 
-                # Phase C: copy-trade puntuale via delta-snapshot
-                if self.prev_assets is None:
-                    # Primo ciclo: baseline = asset attualmente detenuti, NON copiamo
-                    # il bag preesistente (fix entrate tardive croniche).
-                    self.prev_assets = set(aggregate.keys())
-                    new_assets = set()
-                    print(f"  [BASELINE] {len(self.prev_assets)} asset preesistenti "
+                # Phase I: copy-trade puntuale via DELTA per-WALLET
+                # Holdings correnti: wallet -> set(asset)
+                current_holdings: Dict[str, set] = {addr: set() for addr in self.monitored_addresses}
+                for asset, entry in aggregate.items():
+                    for w in entry.get("holders", set()):
+                        if w in current_holdings:
+                            current_holdings[w].add(asset)
+
+                if self.prev_holdings is None:
+                    # Primo ciclo: baseline = holdings attuali, NON copiamo bag preesistente
+                    self.prev_holdings = current_holdings
+                    new_holdings = set()
+                    n_base = sum(len(s) for s in current_holdings.values())
+                    print(f"  [BASELINE] {n_base} (wallet,asset) preesistenti "
                           f"-> nessuna apertura (zero-dump)")
                 else:
-                    new_assets = set(aggregate.keys()) - self.prev_assets
-                    self.prev_assets = set(aggregate.keys())
-                    if new_assets:
-                        print(f"  {len(new_assets)} NUOVI asset (delta) rilevati")
+                    # Delta per-wallet: (wallet, asset) NUOVI rispetto al ciclo precedente
+                    new_holdings = set()
+                    for w, assets in current_holdings.items():
+                        old = self.prev_holdings.get(w, set())
+                        for a in assets - old:
+                            new_holdings.add((w, a))
+                    self.prev_holdings = current_holdings
+                    if new_holdings:
+                        print(f"  {len(new_holdings)} NUOVI (wallet,asset) delta rilevati")
+
+                # Phase M: STRATEGIE COMPLEMENTARI (arb/harvest/cross) cadenzate
+                self._cycle_count += 1
+                opps_tried = 0
+                if self._should_scan("arb_binary"):
+                    opps = self.arb_binary.scan(self.fetcher)
+                    opps_tried += self._run_strategy_opps("arb_binary", opps)
+                if self._should_scan("harvest"):
+                    opps = self.harvest.scan(self.fetcher)
+                    opps_tried += self._run_strategy_opps("harvest", opps)
+                if self._should_scan("arb_cross"):
+                    opps = self.arb_cross.scan(self.fetcher)
+                    opps_tried += self._run_strategy_opps("arb_cross", opps)
+                # Gestione posizioni non-copy (resolution + SL harvest)
+                self.simulator.manage_strategy_positions(self.fetcher)
 
                 self.simulator.reconcile(
-                    aggregate, min_wallets, self.fetcher, new_assets=new_assets)
+                    aggregate, min_wallets, self.fetcher, new_holdings=new_holdings)
 
                 summary = self.simulator.get_portfolio_summary()
                 print(f"  Equity: ${summary['current_value']:.2f} "
                       f"({summary['total_pnl_pct']:+.2f}%) | "
                       f"Aperte: {summary['open_positions']} | "
                       f"Chiuse: {summary['closed_positions']} "
-                      f"(WR {summary['win_rate']:.0f}%)")
+                      f"(WR {summary['win_rate']:.0f}%) | "
+                      f"tier {summary['sizing_tier']['frac']*100:.0f}% "
+                      f"dd {summary['drawdown_pct']*100:.1f}%")
+                bys = summary.get('by_strategy', {})
+                if len(bys) > 1 or any(v['open'] for v in bys.values() if v):
+                    parts = [f"{k}={v['open']}ap/{v['closed']}cl {v['realized_pnl']:+.2f}"
+                             for k, v in bys.items() if v['open'] or v['closed']]
+                    print("  P&L per strategia: " + " | ".join(parts))
+                # Phase L: alert weekly target / equity floor
+                self._monitor_alerts(summary)
 
                 # Sleep interrompibile
                 for _ in range(TRACKING["poll_interval"]):

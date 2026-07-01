@@ -138,9 +138,23 @@ reset_state() {
 }
 
 clear_trading_state() {
-  echo "[RESET] Azzero lo stato della simulazione ..."
-  rm -f "$DATA_DIR/portfolio_state.json" "$DATA_DIR/trades_log.json" "$DATA_DIR/equity_curve.json"
-  echo "[RESET] Stato azzerato (scan_results.json mantenuto)."
+  echo "[RESET] Azzero completamente lo stato della simulazione ..."
+  # Portfolio + trade + equity (storico vecchio)
+  rm -f "$DATA_DIR/portfolio_state.json" "$DATA_DIR/portfolio_state.json.bak"
+  rm -f "$DATA_DIR/trades_log.json"
+  rm -f "$DATA_DIR/equity_curve.json"
+  # Phase K: peak equity (tracking drawdown) — no peak stale dopo un reset
+  rm -f "$DATA_DIR/peak_equity.json"
+  # Phase I: recent_opens (dedup anti-reopen) — no blocchi da run vecchi
+  rm -f "$DATA_DIR/recent_opens.json"
+  # Backup locali vecchi (cartella backup_*)
+  rm -rf "$DATA_DIR"/backup_*
+  # Alert log (Phase L) — riparte vuoto
+  rm -f "$LOGS_DIR/alerts.log"
+  echo "[RESET] Stato completamente azzerato."
+  echo "[RESET] Mantenuti: scan_results.json (serve come seed; verra' aggiornato con 'scan')."
+  echo "[RESET] Cancellati: portfolio_state, trades_log, equity_curve, peak_equity,"
+  echo "       recent_opens, *.bak, backup_*, alerts.log"
 }
 
 has_trading_history() {

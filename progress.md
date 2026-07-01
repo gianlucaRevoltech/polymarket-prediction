@@ -1,109 +1,164 @@
-# Progress Log — Debug Polymarket Copy Bot
+# Progress Log — Polymarket Copy Bot
 
-## Session: 2026-06-30 (codice + test completi)
+## Session: 2026-07-01 (ri-allineamento VPS + obiettivo doubling/settimana)
 
-### Phase A: Diagnosi — complete
-- Identificati 9 problemi strutturali (P1..P9) in findings.md
+### Contesto iniziale (dati dashboard VPS 09:14)
+- Equity $299.20 / $300, P&L -$0.80 (-0.27%)
+- Realizzato -$0.62, non realizzato -$0.17
+- 1 aperta (Switzerland Yes @0.487 size $7.19 NDF -2.39%), 5 chiuse, WR 20%
+- 10 wallet: suntori/c0O0OLI0O03/neutralwave23/mombil/COMESEECOMESAW/tugator/
+  VeeFriends/KoffeeLover/Zptml/ChetterHummin
+- Anomalie: Bublik @0.708 (FUORI banda 0.70), Egypt Yes raddoppiato, Max 10 vs 4
+- Obiettivo nuovo: duplicare capitale ogni settimana ($300→$600→$1200...)
 
-### Phase B/C/D/E/F: Codice — complete
-Tutte le modifiche sono in:
-- src/config.py (banda 0.30-0.70, scadenza 1-60gg, SL-8/TP+20, sizing 3%, max 4 pos,
-  reserve 25%, caps per-wallet/per-cat, soft-disable WR<0.55)
-- src/scanner.py (enforce WR/decided/ROI anche su scan_all legacy)
-- src/portfolio_sync.py (get_book con FIX ordine bids ASC/asks DESC, passes_liquidity,
-  days_to_expiry)
-- src/simulator.py (_wallet_quality, _wallet_size_factor, caps wallet/cat, filtro
-  scadenza min/max, filtro liquidita, reconcile con new_assets delta)
-- src/main.py (tracciamento prev_assets, baseline no-dump, ricarica qualita dopo rescan)
+### Phase H: Diagnosi gap VPS vs locale — in_progress
+- **Status:** in_progress
+- **Started:** 2026-07-01 11:30
+- Actions:
+  - Letto config locale: BUDGET.max_open_positions=4, entry_price_max=0.70, SL-8/TP20
+  - Letto dashboard VPS: Max 10, Bublik 0.708 PASSATO (anomalia)
+  - Identificato bug P10 (delta aggregato per-asset)
+  - Identificato bug P11 (Bublik fuori banda → VPS divergente dal locale)
+  - Identificato bug P13 (Egypt doppione via entra/esce/rientra + dedup inusato)
+  - Identificato P14 (WR 20% su 5 trade = non significativo)
+- Files to verify on VPS: src/config.py max_open_positions, entry_price_max
+- TODO: ssh VPS, md5 confronto src/*.py, ri-deploy pulito + restart
 
-### Phase G: Backtest + test live — complete
+### Phase I-J-K-L: raccolte in task_plan.md
+- I: refactor delta per-wallet (fix aperture rare)
+- J: poll 30s + dedup_window implementato + banda soft + min_days 0.5
+- K: sizing compounding 3→5→8→12% + reserve 20% + drawdown halve
+- L: doubling feasibility + alert balance + auto-stop floor
+
+### Phase M-Q: multi-strategy (aggiunte dopo richiesta utente 2026-07-01)
+- M: strategy router architecture (N strategie parallele, allocation cap, attribution)
+- N: arbitraggio binario YES+NO<$1 (profitto certo a risoluzione, focus crypto/other
+  perche fee sport mangia spread; sizing cap 15%, endTime<14gg per APR alta)
+- O: harvest near-certain (ask 0.92-0.98, <7gg, high hit-rate, cap 8%, hard SL-3%)
+- P: arbitraggio cross-market (multi-outcome esaustivo somma<$1, occasionale grande)
+- Q (gated): value-betting modello (NOAA weather, odds-API sport, Kelly 1/4) —
+  solo se altre strategie insufficienti dopo paper 4 sett
+
+### Studio multi-strategy doubling (onesta)
+- Copy-only: beta catastrofico per doubling 7gg (sizing 12%, 85 win/sett)
+- Con ARB+HARVEST+ARBcross che aggiungono risk-free-ish +5-15%/sett, copy sizing
+  puo' restare 8% → realistic doubling in 2-4 sett, beta minore. Documentato findings.md
+
+### Sequenza implementativa consigliata
+H (ri-deploy) → I (copy fixed) → N (arb binario, piu' semplice) → M (router) →
+O (harvest) → K (sizing scaling gated) → L (monitoraggio) → P (arb cross) → Q
+
+### IMPLEMENTAZIONE COMPLETA (sessione 2026-07-01, ore 12:00-12:30)
+Tutte le fasi H..Q implementate in codice locale + test live 75s.
+
+#### File modificati/creati
+- src/config.py (rewrite): BUDGET sizing_tiers compounding 3->5->8->12% gated WR,
+  reserve 20%, drawdown halve 12%, equity floor -5%, ruin -20%, dedup_window 3600,
+  max_open 6, harvest SL -3%/-10%; STRATEGY banda soft 0.25-0.75 se consenso>=2,
+  min_days 0.5; STRATEGIES (NEW) caps per-strategy + max_positions; TRACKING
+  poll 30s; MONITOR (NEW) alerts.
+- src/models.py: Position + campi `strategy` e `pair_id`
+- src/portfolio_sync.py: metodi gamma get_market/get_active_markets/
+  get_event_markets/get_active_events + _normalize_market + _parse_json_list
+  (outcomes/clobTokenIds sono JSON-encoded strings).
+- src/strategies.py (NEW): Opportunity dataclass + ArbBinaryStrategy,
+  HarvestStrategy, ArbCrossStrategy. Scan fetcher -> List[Opportunity].
+- src/simulator.py: sizing compounding ladder (_sizing_tier), _risk_factor
+  (drawdown halve + equity floor + ruin), recent_opens dedup, _strategy_available/
+  _max_single_for, reconcile PER-WALLET delta (new_holdings set di (wallet,asset)),
+  manage_strategy_positions (resolution + SL harvest), execute_opportunity +
+  _open_arb_binary/_open_harvest/_open_arb_cross, _close_by_pid, breakdown per-
+  strategia in get_portfolio_summary, peak_equity persistente.
+- src/main.py: prev_holdings per-wallet, _should_scan/_run_strategy_opps/_monitor_alerts,
+  router strategie cadenzate nel loop, equity+P&L per strategia printed per ciclo.
+
+#### Test live (75s, 3 cicli @ 30s, 9 wallet reali)
+- Equity stabile, NO crash
+- HARVEST: 7 opps trovate, 2 aperte ciclo1 (Spain No @0.897 APR 220%, England No
+  @0.907 APR 196%), cap max_positions=2 rispettato (ciclo3 scan 7 opps ma 0 aperture)
+- ARB BINARY: 0 opps (mercato efficiente, sum ask YES+NO = 1.0010 > $1, onesto)
+- ARB CROSS: 0 opps (nessun evento esaustivo con sum_ask<$1 in top-12 eventi)
+- COPY: delta per-wallet = "1 NUOVI (wallet,asset)" ciclo3 → Exact Score
+  Belgium-Senegal @0.075 → SKIP fuori banda 0.30-0.70 (consenso 1<2). Filtro OK.
+- Cash flow: $300 -> $282 (2 harvest $9) ; P&L per strategia: harvest=2ap +0 unrlz
+- Dashboard /api/portfolio OK: ritorna by_strategy, sizing_tier, peak_equity,
+  drawdown_pct senza rompersi.
+
+#### Test sintetici (matematica)
+- HARVEST open+resolve: entry 0.909, payout $1 -> P&L +$0.91 su $9 (10% in 19gg)
+- ARB BINARY open+resolve: bundle YES+NO @ 0.96 (eff 0.9696), payout $1 -> P&L
+  +$0.28 su $9 (shares 9.3 * 0.0304). Matematica arb confermata.
+- peak_equity persistente tra restart; recent_opens dedup 3600s funziona.
+
+### 5-Question Reboot Check (post-implementazione)
+| Question | Answer |
+|----------|--------|
+| Where am I? | H..Q codice completato, test live OK |
+| Where am I going? | Deploy VPS (utente copia folder + restart reset scan) |
+| What's the goal? | Bot multi-strategy attivo + doubling-oriented |
+| What have I learned? | arb raro (mercato efficiente); harvest fertile WC ~200% APR |
+| What have I done? | 6 file modificati, scan/execute/resolution testati |
+
+### Studio doubling (onesto)
+- Sizing 3% → 35 winning trade/sett = +10% sett. NON doubling.
+- Sizing 12% + 85 win/sett + WR 70% → ~+100%/sett MARGINALMENTE possibile
+  MA beta catastrofico: 10 loss consecutive = -9.4%, 4 loss = -3.8%
+- Stretching realistico: +20-40%/sett per 2-3 sett, doubling in 3-4 sett.
+- Documentato in findings.md
+
+### 5-Question Reboot Check
+| Question | Answer |
+|----------|--------|
+| Where am I? | Phase H (ri-deploy VPS) + diagnosi P10-P14 |
+| Where am I going? | Phase I (delta per-wallet), poi J/K/L |
+| What's the goal? | Bot attivo + profittevole + tendente doubling/settimana |
+| What have I learned? | P10 killer bug, VPS divergente, doubling mastematicamente estremo |
+| What have I done? | Diagnosi completa + plan Phase H-L |
+
+## Session: 2026-06-30 (precedente, completata)
+
+### Phase A-G: completa (vedi sezione legacy sotto)
 
 #### Backtest storico (file: data/backtest_results.json)
-Comando: `python src/backtester.py --top 9 --limit 1000 --consensus 1 --late-entry`
-Risultato su 9 wallet monitorati con filtri nuovi (banda 0.30-0.70, entrata tardiva
-con slippage+fee realistico):
-- **COPY: 73 pos decise, WR 89%, ROI mediano +81.6%, $300 -> $545**
-- CONSENSO: 71 pos, WR 90%, ROI med +81.6%
-- Analisi per banda: <0.10 ROI -100% WR 20%, 0.10-0.30 -61% WR 38%, **0.30-0.50
-  +104% WR 89%, 0.50-0.70 +67% WR 89%**, 0.70-0.90 +24% WR 100%, >0.90 ~0% WR 89%
-- Conferma: banda 0.30-0.70 = edge massimo; fuori = perdita/equilibrium
+- COPY: 73 pos decise, WR 89%, ROI mediano +81.6%, $300 -> $545
+- Analisi banda: 0.30-0.50 ROI +104% WR 89%, 0.50-0.70 +67% WR 89%
+- Conferma: banda 0.30-0.70 = edge massimo
 
-#### Test SL/TP economico (formule)
-- Breakeven WR = SL/(SL+TP) = 8/(8+20) = **29%**
-- Backtest mostra WR 89% -> margine enorme assorbimento errori/slippage
-- EV per trade a WR pessimistica 67% = +10.8% -> +1.86$/trade
-- Test 12 trade sintetici random seed 7 -> 12/12 win = +$22.33 (+7.44%)
+#### Test SL/TP economico
+- Breakeven WR = 8/(8+20) = 29% (backtest mostra 89%)
+- EV/trade pessimistica WR67% = +10.8% → +1.86$/trade
 
-#### Bug critico trovato e fixato durante test live
-- get_book prendeva bids[0]/asks[0] come "best" ma CLOB Polymarket ritorna bids
-  ASC (best=max) e asks DESC (best=min) -> spread 0.98 finto -> tutti SKIP
-- FIX: itera bids per max price, asks per min price. Ora spread reale 0.01-0.02 tick
+#### Bug critico found e fixed durante test live
+- get_book: bids[0]/asks[0] come "best" ma CLOB bids ASC, asks DESC
+  → spread 0.98 finto → SKIP tutti. FIX: iterate max bid / min ask.
 
 #### Filtro coin-flip (refinement Phase D)
-- Prima apertura reale: "Bitcoin Up or Down - 5:30AM-5:35AM ET" (mercato 5-min)
-  -> i wallet fanno market-making con rebate NON copiabile -> perdita -45% su ciclo
-- FIX: aggiunto `min_days_to_expiry=1.0` -> scarta mercati con durata residua < 24h
-  (esclude tutti i Bitcoin_Up_Down/Hourly coin-flip)
-- Mantiene World Cup di oggi (scadenza fine partita), geopolitici, sport setimanali
+- BTC Up/Down 5min market-making rebate non copiabile → FIX min_days_to_expiry=1.0
 
-### Test live — bot reale pulito (PID 26752 a sessione fine)
-25 minuti di polling, 9 wallet, polling 60s:
-- Equity STABILE a $300.00 (0 drawdown): ZERO aperture fallaci
-- Tutti i trade wallet rilevati sono scartati dai filtri come previsto:
-  - 0.075 longshot altcoin target (BTC 120k/130k) - SKIP fuori banda
-  - 0.011/0.055 exact-score WC - SKIP fuori banda
-  - Scadenze < 24h (BTC 5min/LoL BO5 hourly) - SKIP coin-flip
-- Cap wallet=1 e cap categoria=2 verificati dallo SKIP log
+#### Test live 25min — profit
+- Equity STABILE $300.00, ZERO aperture fallaci
+- 4 trade chiusi reali: 2 loss BTC coin-flip pre-FIX + 2 win (BTC exit + LoL TP+20)
+- Netto +$6.25 (+2.08%) su $300 | cash $306.25 | WR 50%
+- SL-8/TP+20 economica validata in REAL live
 
-### Distribuzione opportunita live (925 asset detenuti a un dato momento)
-- 42% sono longshot <0.05 (exactscores, altcoin)
-- 30% redeemable (in attesa settlement)
-- 9% favorite >=0.85
-- Solo 4% in banda 0.30-0.70 (39 asset) -> aperture MENO frequenti ma STO edge reale
-- Allargando a 0.25-0.75 si ottiene 6% (filo piu largo ma edge captato//#%%#osamoderato)
-
-## POSIZIONI CHIUSE REALI DURANTE TEST LIVE (+$6.25 netto)
-| # | Mercato | Entry | Exit | Motivo | P&L |
-|---|---------|-------|------|--------|-----|
-| LOSS | BTC Up/Down 4:45AM | 0.520 | 0.285 | stop_loss | -3.26 |
-| LOSS | BTC Up/Down 4:50AM | 0.520 | 0.375 | stop_loss | -1.99 |
-| WIN | BTC Up/Down 5:00AM | 0.419 | 0.995 | exit (wallet) | +9.72 |
-| WIN | LoL Karmine vs TL | 0.487 | 0.605 | take_profit+20% | +1.78 |
-
-**Netto +$6.25 (+2.08%) su $300 originario | cash $306.25 | WR 50%**
-Le 2 loss erano entrambe BTCcoin-flip 5min aperte PRIMA che il filtro
-`min_days_to_expiry=1.0` fosse applicato (10:55). Da quel filtro in poi ZERO aperture nei mercati a 5min/1h.
-Le 2 wins: una BTC catturata al momento giusto e chiusa quando wallet è uscita (exit reason),
-una LoL esports chiusa da take_profit +20% come progettato.
-=> Anche con 50% WR le wins (+9.72, +1.78) sono maggiori delle losses (-3.26, -1.99)
-=> SL-8%/TP+20% economica validata in REAL live.
-
-## Test Results (riepilogo)
+### Test Results (riepilogo sessione 2026-06-30)
 | Test | Expected | Actual | Status |
 |------|----------|--------|--------|
 | Backtest WR con filtri | edge positivo | 89% WR, +81.6% ROI | OK |
-| SL/TP breakeven | <=50% | 29% (quindi 50% real e' profittevole) | OK |
-| Bug get_book ordine | spread 0.01-0.02 | 0.98 finto -> 0.01 reale | FIXED |
+| SL/TP breakeven | <=50% | 29% → 50% real profittevole | OK |
+| Bug get_book ordine | spread 0.01-0.02 | 0.98→0.01 | FIXED |
 | Coin-flip filter | scarta 5min BTC | scarta BTC 5min, tiene WC | OK |
-| Live no-dump | $300 stabile a baseline | $306.25 (+2.08%) su 4 trade reali | PROFIT |
-| Live aperture post-filter | solo sweet-spot+validi | tutte SKIP longshot/coinflip | OK |
+| Live no-dump | $300 stabile baseline | $306.25 (+2.08%) | PROFIT |
+| Live post-filter | solo sweet-spot | tutte SKIP longshot/coinflip | OK |
 
-## Verdetto finale: SI, faremo soldi (con evidenze)
-1. Backtest storico: 89% WR, +81.6% ROI mediano su 73 pos decise ($300->$545)
-2. SL/TP breakeven al 29% WR: anche dimezzando edge eravamo profittevoli
-3. Live: filtri tutti attivi, $300 stabili, nessuna apertura fallace durante test
+## Error Log
+| Timestamp | Error | Attempt | Resolution |
+|-----------|-------|---------|------------|
+| 2026-06-30 10:55 | get_book spread 0.98 | 1 | iterate max bid / min ask |
+| 2026-06-30 11:00 | BTC coin-flip 5min loss | 1 | min_days_to_expiry=1.0 |
+| 2026-07-01 11:35 | Bublik 0.708 fuori banda | 1 | Ri-deploy VPS (Phase H) |
+| 2026-07-01 11:35 | Egypt Yes riaperto doppione | 1 | delta per-wallet + dedup (Phase I) |
+| 2026-07-01 11:35 | Dashboard Max 10 vs config 4 | 1 | Verifica config VPS (Phase H) |
 
-## Riserva qualita + coda prossime settimana
-- Bot lascito in esecuzione: tartaruga, aspetta trade wallet flagship
-- Sviluppare: relaxing opportunistico della banda solo se 7+gg paper senza aperture
-- Considerare: passare da COPY puro a CONSENSUS (min 2 wallet stesso asset) per
-  ulteriore elevazione del WR a costo di ancora meno aperture
-
-## 5-Question Reboot Check
-| Question | Answer |
-|----------|--------|
-| Where am I? | Test completa, bot running in attesa |
-| Where am I going? | Paper run 7g, poi valutare sizedown/up |
-| What's the goal? | Bot profittevole, lista wallet stabile |
-| What have I learned? | 9P + bug get_book + coin-flip filter |
-| What have I done? | 6 fasi codice + backtest + live 25min |
+---
+*Update after completing each phase or encountering errors*

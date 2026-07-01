@@ -10,6 +10,7 @@ di risoluzione: questo ci permette di valorizzare, chiudere e realizzare le
 posizioni simulate in modo fedele.
 """
 import requests
+import json as _json
 from typing import Dict, List, Optional
 from config import POLYMARKET_API, STRATEGY
 from categories import categorize_market
@@ -21,6 +22,7 @@ class PolymarketPositionFetcher:
     def __init__(self):
         self.data_api = POLYMARKET_API["data"]
         self.clob = POLYMARKET_API["clob"]
+        self.gamma_api = POLYMARKET_API["gamma"]
         self.session = requests.Session()
         self.session.headers.update({
             "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -175,6 +177,134 @@ class PolymarketPositionFetcher:
         except Exception:
             pass
         return None
+
+    # ----------------------------------------------------------------
+    # Phase M: scanning mercati attivi per strategie arb/harvest (gamma)
+    # ----------------------------------------------------------------
+    @staticmethod
+    def _parse_json_list(raw):
+        """gamma restituisce outcomes/clobTokenIds come stringa JSON."""
+        if raw is None:
+            return []
+        if isinstance(raw, list):
+            return raw
+        if isinstance(raw, str):
+            try:
+                v = _json.loads(raw)
+                return v if isinstance(v, list) else []
+            except Exception:
+                return []
+        return []
+
+    def get_market(self, condition_id: str) -> Optional[Dict]:
+        """Mercato singolo via gamma (conditionId) con outcomes/tokens parsati."""
+        try:
+            url = f"{self.gamma_api}/markets"
+            r = self.session.get(url, params={"condition_ids": condition_id},
+                                 timeout=15, headers={"User-Agent": "Mozilla/5.0"})
+            if not r.ok:
+                return None
+            arr = r.json()
+            if not arr:
+                return None
+            m = arr[0]
+        except Exception:
+            return None
+        return self._normalize_market(m)
+
+    @classmethod
+    def _normalize_market(cls, m: Dict) -> Dict:
+        outcomes = cls._parse_json_list(m.get("outcomes"))
+        tokens = cls._parse_json_list(m.get("clobTokenIds"))
+        events = m.get("events") or []
+        event_slug = events[0].get("slug", "") if events else ""
+        event_ticker = events[0].get("ticker", "") if events else ""
+        title = m.get("question") or m.get("title", "")
+        return {
+            "condition_id": m.get("conditionId", ""),
+            "question": title,
+            "slug": m.get("slug", ""),
+            "event_slug": event_slug,
+            "event_ticker": event_ticker,
+            "outcomes": outcomes,        # ["Yes","No"]
+            "tokens": tokens,             # [asset_yes, asset_no]
+            "end_date": m.get("endDate", ""),
+            "fee_type": m.get("feeType", ""),
+            "volume": float(m.get("volumeNum", 0) or 0),
+            "closed": bool(m.get("closed", False)),
+            "category": categorize_market(question=title, event_ticker=event_ticker,
+                                           event_slug=event_slug,
+                                           fee_type=m.get("feeType", "")),
+        }
+
+    def get_active_markets(self, limit: int = 100, min_volume: float = 1000.0) -> List[Dict]:
+        """
+        Mercati attivi (non closed) ordinati per volume — candidati arb/harvest.
+        """
+        try:
+            url = f"{self.gamma_api}/markets"
+            params = {"closed": "false", "active": "true",
+                      "order": "volumeNum", "ascending": "false",
+                      "limit": limit}
+            r = self.session.get(url, params=params, timeout=25,
+                                 headers={"User-Agent": "Mozilla/5.0"})
+            if not r.ok:
+                return []
+            out = []
+            for m in r.json():
+                mk = self._normalize_market(m)
+                if not mk["condition_id"]:
+                    continue
+                if mk["volume"] < min_volume:
+                    continue
+                if len(mk["tokens"]) < 2 and len(mk["outcomes"]) < 2:
+                    continue  # serve almeno una coppia YES/NO
+                out.append(mk)
+            return out
+        except Exception as e:
+            print(f"[SYNC] get_active_markets errore: {e}")
+            return []
+
+    def get_event_markets(self, event_slug: str) -> List[Dict]:
+        """
+        Tutti i sotto-mercati di un evento esaustivo (es. world-cup-winner x32).
+        Usato da arb_cross (Phase P)."""
+        try:
+            url = f"{self.gamma_api}/events"
+            r = self.session.get(url, params={"slug": event_slug, "limit": 5},
+                                 timeout=20, headers={"User-Agent": "Mozilla/5.0"})
+            if not r.ok or not r.json():
+                return []
+            ev = r.json()[0]
+            out = []
+            for m in ev.get("markets", []):
+                mk = self._normalize_market(m)
+                if mk["condition_id"] and len(mk["tokens"]) >= 2:
+                    out.append(mk)
+            return out
+        except Exception:
+            return []
+
+    def get_active_events(self, limit: int = 25) -> List[Dict]:
+        """Eventi popolari per arb_cross (slug + n sotto-mercati)."""
+        try:
+            url = f"{self.gamma_api}/events"
+            r = self.session.get(url, params={"closed": "false", "active": "true",
+                                              "order": "volumeNum", "ascending": "false",
+                                              "limit": limit}, timeout=25,
+                                 headers={"User-Agent": "Mozilla/5.0"})
+            if not r.ok:
+                return []
+            out = []
+            for ev in r.json():
+                markets = ev.get("markets", [])
+                if len(markets) >= 3:
+                    out.append({"slug": ev.get("slug", ""), "title": ev.get("title", ""),
+                                "n_markets": len(markets),
+                                "volume": float(ev.get("volumeNum", 0) or 0)})
+            return out
+        except Exception:
+            return []
 
     def snapshot_wallets(self, wallet_addresses: List[str]) -> Dict[str, Dict]:
         """

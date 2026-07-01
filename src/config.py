@@ -1,12 +1,16 @@
 """
-Configurazione Polymarket Paper Trading Bot
+Configurazione Polymarket Paper Trading Bot — MULTI-STRATEGY (2026-07-01)
 
-Aggiornato (7-fasi fix):
-  - Phase D: banda prezzo 0.30-0.70, filtro scadenza 60gg, filtro liquidita
-  - Phase E: SL -8% / TP +20%, hard SL -15%, max 1 pos/wallet, max 2/cat
-  - Phase F: sizing 3%, max 4 posizioni, reserve 25%
-  - Phase B: soft-disable wallet win-rate < 0.55
-  - Phase C: copy-trade puntuale via delta-snapshot
+Estensioni vs versione precedente (Phase A-G):
+  - Phase I: delta per-wallet, dedup_window implementato
+  - Phase J: poll 30s, min_days 0.5, banda soft 0.25-0.75 con consenso>=2
+  - Phase K: sizing compounding ladder (gated WR), reserve 20%, dd halve
+  - Phase L: monitoraggio balance + alert + equity floor auto-stop
+  - Phase M-N-O-P: multi-strategy router (COPY + ARB binary + HARVEST + ARB cross)
+  - Phase Q: value-betting gated (deprecato finche non serve)
+
+Vincoli: NON sostituire la lista wallet curata (soft-disable WR<0.55).
+Obiettivo: tendere al doubling settimanale via diversificazione strategie.
 """
 import os
 from pathlib import Path
@@ -23,68 +27,135 @@ POLYMARKET_API = {
     "data": "https://data-api.polymarket.com"
 }
 
-# Budget e Risk Management (Phase E + F)
+# Budget e Risk Management
 BUDGET = {
     "initial_capital": 300.0,
-    "max_position_size": 0.03,    # Phase F: 5% -> 3% (finche WR > 50% paper)
-    "min_position_size": 5.0,    # Minimo Polymarket
-    "max_open_positions": 4,     # Phase F: 6 -> 4 (concentra su segnali migliori)
-    "reserve_ratio": 0.25,       # Phase F: 15% -> 25% (fase di fix)
-    # Risk management (Phase E): SL/TP simmetrici/favorevoli
-    "stop_loss_pct": -0.08,      # Phase E: -30% -> -8% (taglia perdenti presto)
-    "take_profit_pct": 0.20,     # Phase E: +50% -> +20% (lascia correre vincenti)
-    "hard_stop_loss_pct": -0.15, # Phase E: protezione hard floor (sempre chiuso)
-    # Diversificazione reale (Phase E)
-    "max_positions_per_wallet": 1,    # max 1 posizione aperta per wallet sorgente
-    "max_positions_per_category": 2, # max 2 posizioni per categoria (anti-correlazione)
+    # sizing compounding ladder (Phase K): parte conservativo, scala per tier
+    "max_position_size": 0.03,     # floor: 3% (fino a 30 trade paper)
+    "sizing_tiers": [
+        # (soglia n_trade_totali, sizing_frac, descr)
+        (0,   0.03, "avviamento 3% (WR non ancora misurabile)"),
+        (30,  0.05, "tier1: +30 trade, edge inizia a misurarsi"),
+        (60,  0.08, "tier2: +60 trade e WR>=55%"),
+        (120, 0.12, "tier3: +120 trade e WR>=60% (massimo)"),
+    ],
+    "sizing_wr_gate": 0.55,        # WR minimo per salire di tier (altirmenti resta)
+    "min_position_size": 5.0,      # Minimo Polymarket
+    "max_open_positions": 6,       # Phase J: 4 -> 6 (dopo Phase I cattura molto piu)
+    "reserve_ratio": 0.20,         # Phase K: 25% -> 20% (piu capitale operativo)
+    # Risk management (copy/harvest): SL/TP
+    "stop_loss_pct": -0.08,        # taglia perdenti presto
+    "take_profit_pct": 0.20,       # lascia correre vincenti
+    "hard_stop_loss_pct": -0.15,   # protezione hard floor
+    # Harvest: SL duro diverso (near-certain, se -3% esce, esito NON era certo)
+    "harvest_hard_stop_pct": -0.03,
+    "harvest_soft_exit_pct": -0.10,  # se prezzo <0.90 dall'entry chiudi (black-swan)
+    # Drawdown protection (Phase K/L): se drawdown>12% dal peak, sizing auto -50%
+    "drawdown_halve_threshold": 0.12,
+    "drawdown_halve_factor": 0.5,
+    # Equity floor (Phase L): -5% da initial → blocca aperture nuove (solo gestione posizioni)
+    "equity_floor_pct": -0.05,
+    "hard_ruin_pct": -0.20,        # -20% → stop totale (emergenza)
+    # Diversificazione reale (per copy)
+    "max_positions_per_wallet": 1,
+    "max_positions_per_category": 2,
+    # Dedup anti reopen stesso asset (Phase I): entro N secondi non riaprire
+    "dedup_window_sec": 3600,
 }
 
-# Fee Polymarket (CLOB attualmente 0% taker permercati non-sport)
+# Fee Polymarket (CLOB attualmente 0% per mercati non-sport)
 FEES = {
     "taker_fee": 0.0,
     "maker_fee": 0.0,
     "gas_estimate": 0.0
 }
 
-# Strategia di copia (Phase C + D)
+# Strategia di COPY (engine principale)
 STRATEGY = {
     "mode": "copy",
     "min_wallets_consensus": 2,
     "top_wallets": 20,
-    # Phase D: banda prezzo entry ristretta (out favorite-selling e longshot)
+    # banda base 0.30-0.70 (edge max backtest)
     "entry_price_min": 0.30,
     "entry_price_max": 0.70,
-    # Phase C: anti entrata tardiva piu stringente
-    "max_entry_drift": 0.05,      # 12% -> 5%
-    # Phase C: copy-trade PUNTOLE via delta-snapshot (NON mirrorare bag intero)
+    # banda soft (Phase J): allentata 0.25-0.75 quando consenso>=2 wallet (extra aperture)
+    "soft_price_min": 0.25,
+    "soft_price_max": 0.75,
+    "soft_requires_consensus": 2,
+    # anti entrata tardiva (Phase C)
+    "max_entry_drift": 0.05,
+    # copy-trade puntuale via delta-snapshot PER-WALLET (Phase I)
     "delta_copy": True,
-    # Phase D: filtro scadenza mercato (evita capital-lock 2028 elections)
+    # filtro scadenza
     "max_days_to_expiry": 60,
-    # Phase D-refined: minimo durata del mercato (esclude coin-flip 5-min/1h crypto
-    # dove i wallet fanno market-making con rebate NON copiabile dal retail).
-    # Minimo 1 giorno di scadenza: mercati da almeno 24h di durata residua.
-    "min_days_to_expiry": 1.0,
-    # Phase D: filtro liquidita all'ingresso
-    "min_book_size_usdc": 50.0,   # best bid o ask size minima
-    "max_spread_ticks": 3,        # spread massimo in tick ($0.01)
-    # Phase B: soft-disable wallet con win-rate basso (NON rimossi, size dimezzata)
+    "min_days_to_expiry": 0.5,     # Phase J: 1.0 -> 0.5 (sport intraday >12h, no coinflip 5min)
+    # filtro liquidita
+    "min_book_size_usdc": 50.0,
+    "max_spread_ticks": 3,
+    # soft-disable wallet WR basso
     "soft_disable_wr_threshold": 0.55,
     "soft_disable_size_factor": 0.5,
     "min_wallet_win_rate": 0.55,
-    # Disattivato: la baseline e' gestita dal delta-snapshot nel main loop
     "prime_baseline_on_start": False,
 }
 
-# Selezione wallet per categoria di mercato (specialisti)
+# Strategie complementari (Phase M): allocation caps sul portafoglio.
+# "cap_pct" = frazione del portafoglio dedicata a quella strategia (soft: il cash
+# non usato e' disponibile ad altre strategie). "max_single" = size massima per
+# singolo trade di quella strategia.
+STRATEGIES = {
+    "copy": {
+        "cap_pct": 0.50,           # copy = engine principale
+        "max_single": 0.12,        # sizing ladder gate tier3
+        "max_positions": 4,        # lascia slot a harvest/arb (max_open=6)
+    },
+    "arb_binary": {
+        "cap_pct": 0.25,           # risk-free-ish, deploy cash idle
+        "max_single": 0.15,
+        "max_positions": 1,        # risk-free raro, 1 slot
+        "min_profit_abs": 0.50,    # profitto minimo assoluto $0.50 (no micro)
+        "safety_margin": 0.005,    # 0.5c di sicurezza sui fill
+        "max_days_to_expiry": 14,  # APR alta; no capital-lock lungo
+        "scan_markets": 80,        # quanti mercati attivi scansionare/ciclo
+        "scan_every_cycles": 2,    # ogni 2 cicli (60s*2=120s) — bilanciamento load
+    },
+    "harvest": {
+        "cap_pct": 0.12,
+        "max_single": 0.08,
+        "max_positions": 2,        # non saturare slot con harvest (lascia copy)
+        "fav_min": 0.85,           # lato vincente >= 0.85
+        "fav_max": 0.975,          # non tutto il juice gia' prezziato
+        "max_days_to_expiry": 21,   # Phase O: 7 -> 21 (cattura WC blowout 19gg)
+        "min_book_size": 20.0,
+        "max_spread_ticks": 2,
+        "scan_markets": 80,
+        "scan_every_cycles": 2,
+    },
+    "arb_cross": {
+        "cap_pct": 0.10,
+        "max_single": 0.10,
+        "max_positions": 1,        # n-leg raro: una posizione alla volta
+        "min_profit_abs": 1.00,    # n-leg piu' raro, profitto piu' sostanzioso
+        "safety_margin": 0.01,     # 1c per n-leg
+        "min_outcomes": 3,         # almeno 3 gambe elsefiltro
+        "max_outcomes": 12,
+        "scan_events": 12,         # eventi esaustivi da controllare/ciclo
+        "scan_every_cycles": 5,
+    },
+    # value-betting gated (Phase Q): disattivato finche altre non basta
+    "value": {"enabled": False},
+}
+
+# Selezione wallet per categoria (scanner) — invariato
 CATEGORIES = {
     "active": ["sport", "crypto", "politics", "weather"],
     "specialists_per_category": 5,
     "markets_to_scan": 200,
     "holders_per_market": 25,
     "min_overlap": 2,
-    "min_realized_roi": 0.20,   # ROI realizzato storico minimo 20%
-    "min_decided": 10,           # posizioni decise minime (anti-fortuna)
-    "min_win_rate": 0.55,        # Win rate minimo 55% (ENFORCED su ogni path)
+    "min_realized_roi": 0.20,
+    "min_decided": 10,
+    "min_win_rate": 0.55,
 }
 
 # Wallet Scanner
@@ -93,18 +164,13 @@ SCANNER = {
     "min_volume": 10000,
     "min_trades": 10,
     "max_age_days": 90,
-    # Phase B: auto-rescan DISABILITATO di default per NON sostituire la lista
-    # wallet curata (vincente utente: "non cambiare i wallet crea casini").
-    # I wallet a basso win-rate sono gestiti dal soft-disable (size dimezzata),
-    # non rimossi. Per riscoprire wallet manualmente: python src/scanner.py --mode categories
     "auto_rescan_enabled": False,
     "auto_rescan_interval_sec": 6 * 3600,
-    # Phase B: enforce qualita anche sul path legacy scan_all
     "min_win_rate": 0.55,
     "min_decided": 10,
 }
 
-# Analyzer - Filtri qualita wallet
+# Analyzer
 ANALYZER = {
     "min_roi": 0.20,
     "min_win_rate": 0.55,
@@ -127,9 +193,18 @@ SIMULATOR = {
 
 # Tracking
 TRACKING = {
-    "poll_interval": 60,
+    "poll_interval": 30,           # Phase J: 60 -> 30s
     "activity_limit": 100,
-    "dedup_window": 3600
+    "dedup_window": 3600,
+}
+
+# Monitoring / Alert (Phase L)
+MONITOR = {
+    "equity_floor_pct": -0.05,     # blocca nuove aperture sotto -5%
+    "drawdown_halve_pct": 0.12,    # -50% sizing sotto -12% dal peak
+    "ruin_pct": -0.20,             # stop totale
+    "weekly_target_pct": 0.20,     # alert se +% settimana < 20%
+    "alert_log_path": LOGS_DIR / "alerts.log",
 }
 
 # Logging

@@ -84,7 +84,13 @@ class Position:
     
     # Categoria di mercato (sport/crypto/politics/weather/other) per fee e analisi
     category: str = ""
-    
+
+    # Strategia di origine (Phase M multi-strategy): copy | arb_binary | harvest | arb_cross
+    strategy: str = "copy"
+    # Per arbitraggio binario: id del "bundle" (es. condition_id) che aggancia le
+    # due gambe YES+NO; nei trade normali e' vuoto.
+    pair_id: str = ""
+
     # Stato
     current_price: float = 0.0
     exit_price: Optional[float] = None
