@@ -338,6 +338,49 @@
         }
         .empty-state-icon { font-size: 3.6em; margin-bottom: 8px; }
 
+        /* ===== Phase AA: badge per strategia/status/reason ===== */
+        .strategy-badge {
+            display: inline-block; padding: 2px 7px; border-radius: 4px;
+            font-size: 0.72em; font-weight: 700; text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+        .strat-copy { background: rgba(59,130,246,0.18); color: #60a5fa; }
+        .strat-harvest { background: rgba(16,185,129,0.18); color: #34d399; }
+        .strat-arb { background: rgba(168,85,247,0.18); color: #c084fc; }
+        .strat-xarb { background: rgba(236,72,153,0.18); color: #f472b6; }
+        .strat-momentum { background: rgba(245,158,11,0.18); color: #fbbf24; }
+        .neutral-side { color: var(--neutral); font-weight: 700; }
+        .reason-badge {
+            display: inline-block; padding: 1px 5px; border-radius: 3px;
+            font-size: 0.68em; margin-left: 4px; opacity: 0.85;
+        }
+        .reason-resolved { background: rgba(148,163,184,0.2); color: #94a3b8; }
+        .reason-take_profit { background: rgba(16,185,129,0.2); color: #34d399; }
+        .reason-stop_loss { background: rgba(239,68,68,0.2); color: #f87171; }
+        .reason-exit { background: rgba(245,158,11,0.2); color: #fbbf24; }
+        .status-badge {
+            display: inline-block; padding: 1px 6px; border-radius: 3px;
+            font-size: 0.62em; font-weight: 700; margin-left: 4px; vertical-align: middle;
+        }
+        .status-active { background: rgba(16,185,129,0.2); color: #34d399; }
+        .status-disabled { background: rgba(239,68,68,0.2); color: #f87171; }
+        .status-reserve { background: rgba(245,158,11,0.2); color: #fbbf24; }
+        .trade-time { font-size: 0.82em; opacity: 0.7; white-space: nowrap; }
+        table { width: 100%; border-collapse: collapse; font-size: 0.88em; }
+        th, td { padding: 6px 8px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.06); }
+        th { font-weight: 600; opacity: 0.65; font-size: 0.85em; text-transform: uppercase; letter-spacing: 0.3px; }
+        tbody tr:hover { background: rgba(255,255,255,0.03); }
+        .strat-summary {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 10px; margin-top: 12px;
+        }
+        .strat-card {
+            background: rgba(255,255,255,0.03); border-radius: 8px; padding: 10px;
+            border-left: 3px solid var(--neutral);
+        }
+        .strat-card .label { font-size: 0.75em; opacity: 0.6; text-transform: uppercase; }
+        .strat-card .val { font-size: 1.15em; font-weight: 700; margin-top: 2px; }
+
         /* ===== Footer ===== */
         .footer {
             text-align: center; padding: 20px;
@@ -493,6 +536,17 @@
             </div>
         </div>
 
+        <!-- Phase AA: Strategies Breakdown -->
+        <div class="section">
+            <div class="section-title">
+                <span>🧬</span>
+                <span>Performance per Strategia</span>
+            </div>
+            <div id="strategiesContainer">
+                <div class="empty-state"><div>Caricamento...</div></div>
+            </div>
+        </div>
+
         <!-- Wallet Monitorati -->
         <div class="section">
             <div class="section-title">
@@ -507,7 +561,7 @@
         <div class="section">
             <div class="section-title">
                 <span>📝</span>
-                <span>Trade Recenti</span>
+                <span>Trade Recenti (BUY + SELL)</span>
                 <span class="count" id="tradeCount">0 trade</span>
             </div>
             <div id="tradesContainer">
@@ -518,9 +572,24 @@
             </div>
         </div>
 
+        <!-- Phase AA: Trade Chiusi con P&L -->
+        <div class="section">
+            <div class="section-title">
+                <span>✅</span>
+                <span>Trade Chiusi (Storico P&L)</span>
+                <span class="count" id="closedCount">0 chiusi</span>
+            </div>
+            <div id="closedContainer">
+                <div class="empty-state">
+                    <div class="empty-state-icon">✅</div>
+                    <div>Nessun trade chiuso ancora</div>
+                </div>
+            </div>
+        </div>
+
         <!-- Footer -->
         <div class="footer">
-            🤖 Polymarket Paper Trading Bot • Aggiornamento automatico ogni 10s • Budget: $300
+            🤖 Polymarket Paper Trading Bot • Aggiornamento automatico ogni 10s • Budget: $300 • Multi-strategy: COPY+HARVEST+ARB+MOMENTUM
         </div>
     </div>
 
@@ -790,16 +859,19 @@
             if (positions.length === 0) {
                 positionsContainer.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📭</div><div>Nessuna posizione aperta</div><div style="font-size: 0.9em; margin-top: 5px;">Il bot sta monitorando i wallet...</div></div>';
             } else {
-                let html = '<div class="table-wrap"><table><thead><tr><th>Mercato</th><th>Esito</th><th>Entry</th><th>Current</th><th>Size</th><th>P&L</th></tr></thead><tbody>';
+                let html = '<div class="table-wrap"><table><thead><tr><th>Mercato</th><th>Strat</th><th>Esito</th><th>Entry</th><th>Current</th><th>Size</th><th>P&L</th><th>%</th></tr></thead><tbody>';
                 positions.forEach(p => {
                     const pnlClass = getColorClass(p.pnl);
+                    const stratLabel = (p.strategy || 'copy').replace('arb_binary','arb').replace('arb_cross','xarb');
                     html += `<tr>
                         <td>${escapeHtml(p.market)}</td>
-                        <td><span class="${p.outcome === 'Yes' ? 'positive' : 'negative'}">${p.outcome}</span></td>
+                        <td><span class="strategy-badge strat-${stratLabel}">${stratLabel}</span></td>
+                        <td><span class="${p.outcome === 'Yes' || p.outcome === 'YES' ? 'positive' : 'negative'}">${escapeHtml(p.outcome)}</span></td>
                         <td>$${p.entry_price.toFixed(3)}</td>
                         <td>$${p.current_price.toFixed(3)}</td>
                         <td>$${p.size.toFixed(2)}</td>
-                        <td class="${pnlClass}">${formatMoney(p.pnl)} (${formatPercent(p.pnl_pct)})</td>
+                        <td class="${pnlClass}">${formatMoney(p.pnl)}</td>
+                        <td class="${pnlClass}">${formatPercent(p.pnl_pct)}</td>
                     </tr>`;
                 });
                 html += '</tbody></table></div>';
@@ -817,18 +889,27 @@
                 let html = '';
                 wallets.forEach(w => {
                     const roiClass = getColorClass(w.roi);
-                    const profit = (w.volume * w.roi / 100) || 0;
+                    const wr = (w.win_rate || 0) * 100;
+                    const wrClass = getColorClass(wr - 50);
+                    const profit = w.profit || (w.volume * w.roi / 100) || 0;
+                    const statusBadge = w.status === 'disabled' ? '<span class="status-badge status-disabled">DISABLED</span>'
+                                  : w.status === 'reserve' ? '<span class="status-badge status-reserve">RESERVE</span>'
+                                  : '<span class="status-badge status-active">ACTIVE</span>';
                     html += `<div class="wallet-card">
-                        <div class="wallet-name">${escapeHtml(w.name || 'Anonymous')}</div>
-                        <div class="wallet-address" title="${escapeHtml(w.address)}">${escapeHtml(w.address)}</div>
+                        <div class="wallet-name">${escapeHtml(w.name || 'Anonymous')} ${statusBadge}</div>
+                        <div class="wallet-address" title="${escapeHtml(w.address)}">${escapeHtml(w.address ? w.address.slice(0,10)+'...'+w.address.slice(-6) : '')}</div>
                         <div class="wallet-stats">
                             <div class="wallet-stat">
                                 <div class="wallet-stat-label">ROI</div>
-                                <div class="wallet-stat-value ${roiClass}">${w.roi.toFixed(1)}%</div>
+                                <div class="wallet-stat-value ${roiClass}">${(w.roi||0).toFixed(1)}%</div>
                             </div>
                             <div class="wallet-stat">
                                 <div class="wallet-stat-label">PnL</div>
                                 <div class="wallet-stat-value ${roiClass}">${formatMoney(profit)}</div>
+                            </div>
+                            <div class="wallet-stat">
+                                <div class="wallet-stat-label">WR</div>
+                                <div class="wallet-stat-value ${wrClass}">${wr.toFixed(0)}%</div>
                             </div>
                             <div class="wallet-stat">
                                 <div class="wallet-stat-label">Trades</div>
@@ -840,7 +921,7 @@
                 walletsContainer.innerHTML = html;
             }
 
-            // Trade
+            // Trade (BUY + SELL con P&L)
             const trades = data.recent_trades || [];
             const tradesContainer = document.getElementById('tradesContainer');
             document.getElementById('tradeCount').textContent = trades.length + ' trade';
@@ -848,27 +929,94 @@
             if (trades.length === 0) {
                 tradesContainer.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📜</div><div>Nessun trade recente</div></div>';
             } else {
-                let html = '';
-                trades.slice(0, 20).forEach(t => {
-                    const sideClass = t.side === 'BUY' ? 'positive' : 'negative';
-                    const isSell = t.side !== 'BUY';
-                    const date = new Date(t.timestamp).toLocaleString('it-IT');
-                    const price = t.entry_price || t.price || 0;
-                    html += `<div class="trade-item ${isSell ? 'sell-side' : ''}">
-                        <div class="trade-header">
-                            <div class="trade-market">${escapeHtml(t.market)}</div>
-                            <div class="trade-time">${date}</div>
-                        </div>
-                        <div class="trade-details">
-                            <span class="${sideClass}">${t.side}</span>
-                            <span>${t.outcome}</span>
-                            <span>Size: ${formatMoney(t.size)}</span>
-                            <span>Price: $${parseFloat(price).toFixed(3)}</span>
-                        </div>
-                    </div>`;
+                let html = '<div class="table-wrap"><table><thead><tr><th>Tempo</th><th>Mercato</th><th>Strat</th><th>Side</th><th>Esito</th><th>Entry</th><th>Exit</th><th>Size</th><th>P&L</th><th>%</th></tr></thead><tbody>';
+                trades.slice(0, 30).forEach(t => {
+                    const isSell = t.side === 'SELL';
+                    const date = new Date(t.timestamp).toLocaleString('it-IT', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'});
+                    const strat = (t.strategy || 'copy').replace('arb_binary','arb').replace('arb_cross','xarb');
+                    const entry = t.entry_price || 0;
+                    const exit = t.exit_price || (isSell ? '-' : '');
+                    const pnl = t.pnl;
+                    const pnlPct = t.pnl_pct;
+                    const pnlClass = pnl != null ? getColorClass(pnl) : '';
+                    const sideClass = isSell ? (t.win ? 'positive' : 'negative') : 'neutral-side';
+                    const sideLabel = isSell ? (t.win ? 'SELL ✓' : 'SELL ✗') : 'BUY';
+                    const reasonLabel = isSell && t.reason ? `<span class="reason-badge reason-${t.reason}">${t.reason}</span>` : '';
+                    html += `<tr>
+                        <td class="trade-time">${date}</td>
+                        <td>${escapeHtml((t.market||'').slice(0,40))}</td>
+                        <td><span class="strategy-badge strat-${strat}">${strat}</span></td>
+                        <td><span class="${sideClass}">${sideLabel}</span></td>
+                        <td>${escapeHtml(t.outcome || '')}</td>
+                        <td>$${parseFloat(entry).toFixed(3)}</td>
+                        <td>${exit !== '' && exit !== '-' ? '$'+parseFloat(exit).toFixed(3) : '-'}</td>
+                        <td>$${parseFloat(t.size||0).toFixed(2)}</td>
+                        <td class="${pnlClass}">${pnl != null ? formatMoney(pnl) : '-'}</td>
+                        <td class="${pnlClass}">${pnlPct != null ? formatPercent(pnlPct) : '-'} ${reasonLabel}</td>
+                    </tr>`;
                 });
+                html += '</tbody></table></div>';
                 tradesContainer.innerHTML = html;
             }
+
+            // Phase AA: Trade Chiusi con P&L
+            const closed = data.closed_positions || [];
+            const closedContainer = document.getElementById('closedContainer');
+            document.getElementById('closedCount').textContent = closed.length + ' chiusi';
+            if (closed.length === 0) {
+                closedContainer.innerHTML = '<div class="empty-state"><div class="empty-state-icon">✅</div><div>Nessun trade chiuso ancora</div></div>';
+            } else {
+                let html = '<div class="table-wrap"><table><thead><tr><th>Chiuso</th><th>Mercato</th><th>Strat</th><th>Esito</th><th>Entry</th><th>Exit</th><th>Size</th><th>P&L</th><th>%</th><th>Reason</th></tr></thead><tbody>';
+                closed.slice(0, 30).forEach(c => {
+                    const pnlClass = getColorClass(c.pnl);
+                    const strat = (c.strategy || 'copy').replace('arb_binary','arb').replace('arb_cross','xarb');
+                    const winBadge = c.win ? '<span class="positive">✓ WIN</span>' : '<span class="negative">✗ LOSS</span>';
+                    html += `<tr>
+                        <td class="trade-time">${c.close_time}</td>
+                        <td>${escapeHtml(c.market)}</td>
+                        <td><span class="strategy-badge strat-${strat}">${strat}</span></td>
+                        <td>${escapeHtml(c.outcome)}</td>
+                        <td>$${c.entry_price.toFixed(3)}</td>
+                        <td>$${c.exit_price.toFixed(3)}</td>
+                        <td>$${c.size.toFixed(2)}</td>
+                        <td class="${pnlClass}">${formatMoney(c.pnl)} ${winBadge}</td>
+                        <td class="${pnlClass}">${formatPercent(c.pnl_pct)}</td>
+                        <td>${c.reason ? '<span class="reason-badge reason-'+c.reason+'">'+c.reason+'</span>' : ''}</td>
+                    </tr>`;
+                });
+                html += '</tbody></table></div>';
+                closedContainer.innerHTML = html;
+            }
+
+            // Phase AA: Strategies Breakdown
+            const byStrategy = (data.summary && data.summary.by_strategy) || {};
+            const strategiesContainer = document.getElementById('strategiesContainer');
+            const stratEntries = Object.entries(byStrategy).filter(([k,v]) => v && (v.open || v.closed));
+            if (stratEntries.length === 0) {
+                strategiesContainer.innerHTML = '<div class="empty-state"><div>Nessuna strategia attiva ancora</div></div>';
+            } else {
+                let html = '<div class="strat-summary">';
+                stratEntries.forEach(([name, s]) => {
+                    const pnlClass = getColorClass(s.realized_pnl);
+                    const wr = s.win_rate || 0;
+                    const wrClass = getColorClass(wr - 50);
+                    html += `<div class="strat-card" style="border-left-color: ${stratColor(name)}">
+                        <div class="label">${name.toUpperCase()}</div>
+                        <div class="val">${s.open}ap / ${s.closed}cl</div>
+                        <div class="label">Realized P&L</div>
+                        <div class="val ${pnlClass}">${formatMoney(s.realized_pnl)}</div>
+                        <div class="label">Win Rate</div>
+                        <div class="val ${wrClass}">${wr.toFixed(0)}%</div>
+                    </div>`;
+                });
+                html += '</div>';
+                strategiesContainer.innerHTML = html;
+            }
+        }
+
+        function stratColor(name) {
+            const colors = {copy:'#60a5fa', harvest:'#34d399', arb_binary:'#c084fc', arb_cross:'#f472b6', momentum:'#fbbf24'};
+            return colors[name] || '#94a3b8';
         }
 
         async function refreshData() {

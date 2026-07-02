@@ -35,27 +35,49 @@ def get_portfolio_data():
                 "id": pid,
                 "market": pos.market_title[:50],
                 "outcome": pos.outcome,
+                "strategy": pos.strategy or "copy",
                 "entry_price": pos.entry_price,
                 "current_price": pos.current_price,
                 "size": pos.size_usdc,
                 "pnl": pos.pnl,
                 "pnl_pct": pos.pnl_pct,
                 "entry_time": pos.entry_time.strftime("%Y-%m-%d %H:%M"),
-                "source_wallet": pos.source_wallet[:10] + "..."
+                "source_wallet": pos.source_wallet[:10] + "..." if pos.source_wallet else "",
+                "category": pos.category or "",
             })
+        # Ordina per P&L desc (vincenti in alto)
+        positions.sort(key=lambda p: p["pnl"], reverse=True)
         
         recent_trades = []
         trades_file = DATA_DIR / "trades_log.json"
         if trades_file.exists():
             with open(trades_file, "r") as f:
                 all_trades = json.load(f)
-                recent_trades = all_trades[-20:]  # Ultimi 20
+                recent_trades = all_trades[-50:]  # Ultimi 50 (BUY + SELL)
                 recent_trades.reverse()
+        
+        # Phase AA: closed_positions con P&L per sezione storico
+        closed_positions = []
+        for pos in sorted(sim.portfolio.closed_positions, key=lambda p: p.close_time or datetime.min, reverse=True)[:30]:
+            closed_positions.append({
+                "market": pos.market_title[:50],
+                "outcome": pos.outcome,
+                "strategy": pos.strategy or "copy",
+                "entry_price": pos.entry_price,
+                "exit_price": pos.close_price or 0,
+                "size": pos.size_usdc,
+                "pnl": pos.pnl,
+                "pnl_pct": pos.pnl_pct,
+                "reason": pos.close_reason or "",
+                "close_time": pos.close_time.strftime("%Y-%m-%d %H:%M") if pos.close_time else "",
+                "win": pos.pnl > 0,
+            })
         
         return {
             "summary": summary,
             "positions": positions,
             "recent_trades": recent_trades,
+            "closed_positions": closed_positions,
             "monitored_wallets": get_monitored_wallets(),
             "bot_status": get_bot_status()
         }
@@ -78,6 +100,7 @@ def get_portfolio_data():
             },
             "positions": [],
             "recent_trades": [],
+            "closed_positions": [],
             "monitored_wallets": [],
             "bot_status": "unknown",
             "error": str(e)
@@ -95,14 +118,16 @@ def get_monitored_wallets():
             data = json.load(f)
         
         wallets = []
-        for w in data.get("wallets", [])[:10]:
+        for w in data.get("wallets", [])[:30]:
             wallets.append({
                 "name": w.get("name", "Unknown"),
                 "address": w.get("address", ""),
-                "roi": w.get("roi", 0),
-                "profit": w.get("profit", 0),
-                "volume": w.get("volume", 0),
-                "trades": w.get("num_trades", 0)
+                "roi": w.get("roi", 0) if isinstance(w.get("roi", 0), (int, float)) else 0,
+                "profit": w.get("profit", w.get("pnl", 0)),
+                "volume": w.get("volume", w.get("invested", 0)),
+                "trades": w.get("trades", w.get("decided", w.get("num_trades", 0))),
+                "win_rate": w.get("win_rate", 0),
+                "status": w.get("status", "active"),
             })
         return wallets
     except Exception:

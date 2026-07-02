@@ -189,6 +189,19 @@ SCANNER = {
     "min_decided": 10,
 }
 
+# Phase Z: Wallet quality refresh frequente + swap perdenti
+# Monitoraggio PIU frequente del full-scan: re-fetch win_rate solo wallet attivi
+# e swap immediato se wallet non vincente (WR<0.45 o nostro copy P&L<0 su >=2 trade)
+WALLET_MONITOR = {
+    "quality_refresh_interval_sec": 900,  # 15min (vs 3h full rescan)
+    "swap_wr_threshold": 0.45,            # WR storico Polymarket sotto questo -> swap
+    "swap_min_our_trades": 2,             # min trade nostri chiusi per giudicare
+    "swap_our_pnl_threshold": 0.0,        # se nostro copy P&L<0 su >=2 trade -> swap
+    "reserve_pool_size": 20,              # wallet di riserva qualificati non usati
+    "top_active": 15,                     # wallet attivamente monitorati (era 30, ottimizziamo)
+    "enabled": True,
+}
+
 # Analyzer
 ANALYZER = {
     "min_roi": 0.20,

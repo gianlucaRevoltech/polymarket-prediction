@@ -21,8 +21,9 @@ from analyzer import WalletAnalyzer
 from portfolio_sync import PolymarketPositionFetcher
 from simulator import PaperTradingSimulator
 from strategies import ArbBinaryStrategy, HarvestStrategy, ArbCrossStrategy, MomentumStrategy
+from wallet_manager import WalletManager
 from models import WalletAnalysis
-from config import BUDGET, STRATEGY, STRATEGIES, TRACKING, SCANNER, MONITOR, DATA_DIR, BASE_DIR
+from config import BUDGET, STRATEGY, STRATEGIES, TRACKING, SCANNER, MONITOR, WALLET_MONITOR, DATA_DIR, BASE_DIR
 
 
 class PolymarketPaperTradingBot:
@@ -45,6 +46,9 @@ class PolymarketPaperTradingBot:
         self.harvest = HarvestStrategy()
         self.arb_cross = ArbCrossStrategy()
         self.momentum = MomentumStrategy()
+        self.wallet_mgr = WalletManager(scanner=self.scanner)
+        # Phase Z: hook copy close -> wallet manager tracking P&L per-wallet
+        self.simulator.on_copy_close = self.wallet_mgr.record_copy_close
         self._cycle_count = 0
 
         pid_file = BASE_DIR / "data" / "bot.pid"
@@ -141,6 +145,30 @@ class PolymarketPaperTradingBot:
         print(f"\n[BOT] Scan obsoleto ({age_h:.1f}h) — aggiornamento automatico...")
         if self._run_wallet_scan():
             self._reload_monitored_wallets()
+
+    # Phase Z: wallet quality refresh frequente + swap perdenti
+    def _maybe_wallet_quality_refresh(self) -> None:
+        """Ogni 15min re-fetch win_rate wallet attivi e swap perdenti con riserve."""
+        if not self.wallet_mgr.should_refresh():
+            return
+        if not self.monitored_addresses:
+            return
+        print(f"\n[WALLET-MGR] Quality refresh ({len(self.monitored_addresses)} wallet)...")
+        qualities = self.wallet_mgr.refresh_quality(self.monitored_addresses)
+        # report
+        n_disabled = sum(1 for q in qualities.values() if q.get("status") == "disabled")
+        if n_disabled:
+            print(f"[WALLET-MGR] {n_disabled} wallet perdenti rilevati -> swap")
+        new_list, losers = self.wallet_mgr.swap_losers(self.monitored_addresses, qualities)
+        if losers:
+            self.monitored_addresses = new_list
+            # ricarica qualità nel simulator per soft-disable sizing
+            self.simulator._load_wallet_quality()
+            # reset baseline holdings per non copiare bag preesistente dei nuovi wallet
+            self.prev_holdings = None
+            print(f"[WALLET-MGR] Lista wallet aggiornata: {len(new_list)} attivi (reset baseline)")
+        else:
+            print(f"[WALLET-MGR] Tutti i wallet attivi, nessuno swap necessario")
 
     def run_initial_scan(self, top_n: int = 20) -> bool:
         """Scansione leaderboard + analisi per trovare wallet profittevoli."""
@@ -277,6 +305,7 @@ class PolymarketPaperTradingBot:
         try:
             while self.running:
                 self._maybe_auto_rescan()
+                self._maybe_wallet_quality_refresh()
 
                 cycle_start = datetime.now().strftime('%H:%M:%S')
                 print(f"\n[{cycle_start}] Snapshot posizioni...")

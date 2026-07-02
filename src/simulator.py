@@ -38,6 +38,9 @@ class PaperTradingSimulator:
         self.trades_log = DATA_DIR / "trades_log.json"
         self.equity_file = DATA_DIR / "equity_curve.json"
 
+        # Phase Z: hook per wallet manager (registra copy close per wallet P&L tracking)
+        self.on_copy_close = None  # callback(source_wallet, pnl)
+
         # Asset gia detenuti dai wallet all'avvio: registrati come baseline e NON
         # copiati (evita ingressi tardivi su posizioni vecchie a prezzo "live").
         self.baseline_assets: Set[str] = set()
@@ -525,6 +528,13 @@ class PaperTradingSimulator:
         print(f"  Entry: ${pos.entry_price:.3f} -> Exit: ${exit_price:.3f}")
         print(f"  P&L: ${pnl:.2f} | Cash: ${self.portfolio.cash:.2f}")
 
+        self._log_close_trade(pos, exit_price, reason)
+        # Phase Z: notifica wallet manager per tracking P&L per-wallet (solo copy)
+        if (pos.strategy or "copy") == "copy" and self.on_copy_close and pos.source_wallet:
+            try:
+                self.on_copy_close(pos.source_wallet, pnl)
+            except Exception:
+                pass
         self._save_state()
         return True
 
@@ -751,6 +761,7 @@ class PaperTradingSimulator:
         print(f"  Mercato: {pos.market_title[:50]} ({pos.outcome})")
         print(f"  Entry: ${pos.entry_price:.3f} -> Exit: ${exit_price:.3f}")
         print(f"  P&L: ${pnl:.2f} | Cash: ${self.portfolio.cash:.2f}")
+        self._log_close_trade(pos, exit_price, reason)
         self._save_state()
         return True
 
@@ -973,6 +984,44 @@ class PaperTradingSimulator:
                 json.dump(logs, f, indent=2)
         except Exception as e:
             print(f"[ERRORE] Salvataggio trade log: {e}")
+
+    def _log_close_trade(self, position: Position, exit_price: float, reason: str):
+        """Phase AA: logga chiusura trade con P&L completo per dashboard."""
+        pnl = (exit_price - position.entry_price) * position.shares
+        pnl_pct = ((exit_price - position.entry_price) / position.entry_price * 100) if position.entry_price > 0 else 0
+        hold_sec = (datetime.now() - position.entry_time).total_seconds() if position.entry_time else 0
+        close_log = {
+            "timestamp": datetime.now().isoformat(),
+            "strategy": position.strategy or "copy",
+            "position_id": position.position_id,
+            "asset": position.asset,
+            "market": position.market_title,
+            "outcome": position.outcome,
+            "side": "SELL",
+            "reason": reason,
+            "entry_price": round(position.entry_price, 4),
+            "exit_price": round(exit_price, 4),
+            "size": round(position.size_usdc, 2),
+            "shares": round(position.shares, 2),
+            "pnl": round(pnl, 4),
+            "pnl_pct": round(pnl_pct, 2),
+            "win": pnl > 0,
+            "hold_sec": round(hold_sec, 0),
+            "source_wallet": position.source_wallet or "",
+            "category": position.category or "",
+        }
+        try:
+            if self.trades_log.exists():
+                with open(self.trades_log, 'r') as f:
+                    logs = json.load(f)
+            else:
+                logs = []
+            logs.append(close_log)
+            logs = logs[-500:]  # cap 500 trade
+            with open(self.trades_log, 'w') as f:
+                json.dump(logs, f, indent=2)
+        except Exception as e:
+            print(f"[ERRORE] Salvataggio close trade log: {e}")
 
     # ------------------------------------------------------------------
     # Summary / metriche

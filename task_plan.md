@@ -118,6 +118,35 @@ di prezzo recente (es. YES salito da 0.30 a 0.55 in 24h → momentum continuatio
 - [ ] Monitorare 24h: target +5-10% primo giorno, +30-50% settimana
 - **Status:** pending
 
+### Phase Z: Wallet swap frequente + elimination perdenti (sessione 2026-07-02)
+Obiettivo: monitoraggio wallet PIU frequente del full-scan, swap immediato perdenti.
+Problema: auto_rescan 3h = full scan pesante (minuti, 300 API). Soft-disable solo
+ dimezza size ma non rimuove wallet perdenti. L'utente vuole wallet vincenti, cambio
+ subito se non lo sono.
+- [ ] Light quality refresh ogni ~15-20 min: re-fetch win_rate/ROI solo wallet
+  monitorati attuali (10-30 call, non 300 mercati)
+- [ ] Track per-wallet P&L dai NOSTRI copy trade (wallet copiato -> perso = badge
+  perdente per noi, non solo ROI storico Polymarket)
+- [ ] Swap immediato: se wallet WR<0.45 O nostro copy P&L<0 su >=2 trade ->
+  rimpiazza con riserva dalla reserve list (top wallet qualificati non usati)
+- [ ] Reserve list: scanner salva top 50 qualificati, usiamo top 30 attivi + 20 reserve
+- [ ] quality_refresh_interval_sec config (default 900 = 15min)
+- [ ] NO touchare wallet se solo 1 trade nostro chiuso in loss (varianza normale)
+- **Status:** pending
+
+### Phase AA: Dashboard P&L trade + info complete (sessione 2026-07-02)
+Obiettivo: UI mostra se trade andato in profitto, exit price, P&L, strategia.
+Problema: trades_log.json logga SOLO BUY (aperture). Chiusure non loggate.
+- [ ] Log SELL/close in trades_log: exit_price, pnl, pnl_pct, reason, strategy,
+  hold_time, exit_time
+- [ ] API dashboard: ritorna trade chiusi con P&L + aperti con P&L attuale
+- [ ] UI: sezione trade recenti con badge PROFIT/LOSS colorato, P&L $, %,
+  exit price, strategia, tempo held
+- [ ] UI: posizioni aperte mostrano P&L attuale + % (gia in dati, miglior display)
+- [ ] UI: breakdown P&L per strategia (copy/harvest/arb/momentum) con WR
+- [ ] UI: metriche sizing tier, drawdown, peak equity
+- **Status:** pending
+
 ## Phases vecchie (A-Q completate, vedi progress.md)
 
 ### Phase H: Allinea deploy VPS ↔ locale — COMPLETE
