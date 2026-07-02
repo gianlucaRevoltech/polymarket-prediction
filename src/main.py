@@ -308,97 +308,106 @@ class PolymarketPaperTradingBot:
         self.running = True
         try:
             while self.running:
-                self._maybe_auto_rescan()
-                self._maybe_wallet_quality_refresh()
+                try:
+                    self._maybe_auto_rescan()
+                    self._maybe_wallet_quality_refresh()
 
-                cycle_start = datetime.now().strftime('%H:%M:%S')
-                print(f"\n[{cycle_start}] Snapshot posizioni...")
+                    cycle_start = datetime.now().strftime('%H:%M:%S')
+                    print(f"\n[{cycle_start}] Snapshot posizioni...")
 
-                aggregate = self.fetcher.snapshot_wallets(self.monitored_addresses)
-                print(f"  {len(aggregate)} asset distinti rilevati tra i wallet")
+                    aggregate = self.fetcher.snapshot_wallets(self.monitored_addresses)
+                    print(f"  {len(aggregate)} asset distinti rilevati tra i wallet")
 
-                # Phase I: copy-trade puntuale via DELTA per-WALLET
-                # Holdings correnti: wallet -> set(asset)
-                current_holdings: Dict[str, set] = {addr: set() for addr in self.monitored_addresses}
-                for asset, entry in aggregate.items():
-                    for w in entry.get("holders", set()):
-                        if w in current_holdings:
-                            current_holdings[w].add(asset)
+                    # Phase I: copy-trade puntuale via DELTA per-WALLET
+                    # Holdings correnti: wallet -> set(asset)
+                    current_holdings: Dict[str, set] = {addr: set() for addr in self.monitored_addresses}
+                    for asset, entry in aggregate.items():
+                        for w in entry.get("holders", set()):
+                            if w in current_holdings:
+                                current_holdings[w].add(asset)
 
-                if self.prev_holdings is None:
-                    # Primo ciclo: baseline = holdings attuali, NON copiamo bag preesistente
-                    self.prev_holdings = current_holdings
-                    new_holdings = set()
-                    n_base = sum(len(s) for s in current_holdings.values())
-                    print(f"  [BASELINE] {n_base} (wallet,asset) preesistenti "
-                          f"-> nessuna apertura (zero-dump)")
-                else:
-                    # Delta per-wallet: (wallet, asset) NUOVI rispetto al ciclo precedente
-                    new_holdings = set()
-                    for w, assets in current_holdings.items():
-                        old = self.prev_holdings.get(w, set())
-                        for a in assets - old:
-                            new_holdings.add((w, a))
-                    self.prev_holdings = current_holdings
-                    if new_holdings:
-                        print(f"  {len(new_holdings)} NUOVI (wallet,asset) delta rilevati")
+                    if self.prev_holdings is None:
+                        # Primo ciclo: baseline = holdings attuali, NON copiamo bag preesistente
+                        self.prev_holdings = current_holdings
+                        new_holdings = set()
+                        n_base = sum(len(s) for s in current_holdings.values())
+                        print(f"  [BASELINE] {n_base} (wallet,asset) preesistenti "
+                              f"-> nessuna apertura (zero-dump)")
+                    else:
+                        # Delta per-wallet: (wallet, asset) NUOVI rispetto al ciclo precedente
+                        new_holdings = set()
+                        for w, assets in current_holdings.items():
+                            old = self.prev_holdings.get(w, set())
+                            for a in assets - old:
+                                new_holdings.add((w, a))
+                        self.prev_holdings = current_holdings
+                        if new_holdings:
+                            print(f"  {len(new_holdings)} NUOVI (wallet,asset) delta rilevati")
 
-                # Phase M/W: STRATEGIE COMPLEMENTARI (arb/harvest/cross/momentum)
-                self._cycle_count += 1
-                # Phase W: aggiorna price history per momentum (ogni ciclo)
-                self.momentum.update_prices(self.fetcher, self._cycle_count)
-                opps_tried = 0
-                if self._should_scan("arb_binary"):
-                    opps = self.arb_binary.scan(self.fetcher)
-                    opps_tried += self._run_strategy_opps("arb_binary", opps)
-                if self._should_scan("harvest"):
-                    opps = self.harvest.scan(self.fetcher)
-                    opps_tried += self._run_strategy_opps("harvest", opps)
-                if self._should_scan("arb_cross"):
-                    opps = self.arb_cross.scan(self.fetcher)
-                    opps_tried += self._run_strategy_opps("arb_cross", opps)
-                if self._should_scan("momentum"):
-                    opps = self.momentum.scan(self.fetcher)
-                    opps_tried += self._run_strategy_opps("momentum", opps)
-                if self._should_scan("whale"):
-                    opps = self.whale.scan(self.fetcher)
-                    opps_tried += self._run_strategy_opps("whale", opps)
-                if self._should_scan("sniper"):
-                    opps = self.sniper.scan(self.fetcher)
-                    opps_tried += self._run_strategy_opps("sniper", opps)
-                if self._should_scan("theta"):
-                    opps = self.theta.scan(self.fetcher)
-                    opps_tried += self._run_strategy_opps("theta", opps)
-                if self._should_scan("contrarian"):
-                    opps = self.contrarian.scan(self.fetcher)
-                    opps_tried += self._run_strategy_opps("contrarian", opps)
-                # Gestione posizioni non-copy (resolution + SL/TP harvest + momentum)
-                self.simulator.manage_strategy_positions(self.fetcher)
+                    # Phase M/W: STRATEGIE COMPLEMENTARI (arb/harvest/cross/momentum)
+                    self._cycle_count += 1
+                    # Phase W: aggiorna price history per momentum (ogni ciclo)
+                    self.momentum.update_prices(self.fetcher, self._cycle_count)
+                    opps_tried = 0
+                    if self._should_scan("arb_binary"):
+                        opps = self.arb_binary.scan(self.fetcher)
+                        opps_tried += self._run_strategy_opps("arb_binary", opps)
+                    if self._should_scan("harvest"):
+                        opps = self.harvest.scan(self.fetcher)
+                        opps_tried += self._run_strategy_opps("harvest", opps)
+                    if self._should_scan("arb_cross"):
+                        opps = self.arb_cross.scan(self.fetcher)
+                        opps_tried += self._run_strategy_opps("arb_cross", opps)
+                    if self._should_scan("momentum"):
+                        opps = self.momentum.scan(self.fetcher)
+                        opps_tried += self._run_strategy_opps("momentum", opps)
+                    if self._should_scan("whale"):
+                        opps = self.whale.scan(self.fetcher)
+                        opps_tried += self._run_strategy_opps("whale", opps)
+                    if self._should_scan("sniper"):
+                        opps = self.sniper.scan(self.fetcher)
+                        opps_tried += self._run_strategy_opps("sniper", opps)
+                    if self._should_scan("theta"):
+                        opps = self.theta.scan(self.fetcher)
+                        opps_tried += self._run_strategy_opps("theta", opps)
+                    if self._should_scan("contrarian"):
+                        opps = self.contrarian.scan(self.fetcher)
+                        opps_tried += self._run_strategy_opps("contrarian", opps)
+                    # Gestione posizioni non-copy (resolution + SL/TP harvest + momentum)
+                    self.simulator.manage_strategy_positions(self.fetcher)
 
-                self.simulator.reconcile(
-                    aggregate, min_wallets, self.fetcher, new_holdings=new_holdings)
+                    self.simulator.reconcile(
+                        aggregate, min_wallets, self.fetcher, new_holdings=new_holdings)
 
-                summary = self.simulator.get_portfolio_summary()
-                print(f"  Equity: ${summary['current_value']:.2f} "
-                      f"({summary['total_pnl_pct']:+.2f}%) | "
-                      f"Aperte: {summary['open_positions']} | "
-                      f"Chiuse: {summary['closed_positions']} "
-                      f"(WR {summary['win_rate']:.0f}%) | "
-                      f"tier {summary['sizing_tier']['frac']*100:.0f}% "
-                      f"dd {summary['drawdown_pct']*100:.1f}%")
-                bys = summary.get('by_strategy', {})
-                if len(bys) > 1 or any(v['open'] for v in bys.values() if v):
-                    parts = [f"{k}={v['open']}ap/{v['closed']}cl {v['realized_pnl']:+.2f}"
-                             for k, v in bys.items() if v['open'] or v['closed']]
-                    print("  P&L per strategia: " + " | ".join(parts))
-                # Phase L: alert weekly target / equity floor
-                self._monitor_alerts(summary)
+                    summary = self.simulator.get_portfolio_summary()
+                    print(f"  Equity: ${summary['current_value']:.2f} "
+                          f"({summary['total_pnl_pct']:+.2f}%) | "
+                          f"Aperte: {summary['open_positions']} | "
+                          f"Chiuse: {summary['closed_positions']} "
+                          f"(WR {summary['win_rate']:.0f}%) | "
+                          f"tier {summary['sizing_tier']['frac']*100:.0f}% "
+                          f"dd {summary['drawdown_pct']*100:.1f}%")
+                    bys = summary.get('by_strategy', {})
+                    if len(bys) > 1 or any(v['open'] for v in bys.values() if v):
+                        parts = [f"{k}={v['open']}ap/{v['closed']}cl {v['realized_pnl']:+.2f}"
+                                 for k, v in bys.items() if v['open'] or v['closed']]
+                        print("  P&L per strategia: " + " | ".join(parts))
+                    # Phase L: alert weekly target / equity floor
+                    self._monitor_alerts(summary)
 
-                # Sleep interrompibile
-                for _ in range(TRACKING["poll_interval"]):
-                    if not self.running:
-                        break
-                    time.sleep(1)
+                    # Sleep interrompibile
+                    for _ in range(TRACKING["poll_interval"]):
+                        if not self.running:
+                            break
+                        time.sleep(1)
+                except Exception as e:
+                    print(f"[ERRORE] Ciclo fallito: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    for _ in range(TRACKING["poll_interval"]):
+                        if not self.running:
+                            break
+                        time.sleep(1)
         except KeyboardInterrupt:
             print("\n[BOT] Interrotto dall'utente")
 
