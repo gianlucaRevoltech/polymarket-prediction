@@ -58,6 +58,18 @@
 - Gestione posizioni in simulator.manage_strategy_positions (TP/SL/resolution)
 - _open_momentum in simulator
 
+### Phase Z: Wallet swap frequente — COMPLETE
+- Nuovo wallet_manager.py: quality refresh 15min, swap perdenti con riserve
+- Track per-wallet P&L dai nostri copy trade (on_copy_close hook)
+- Swap: WR<0.45 o nostro P&L<0 su >=2 trade -> rimpiazza con reserve
+- Test: swap_losers OK, our_pnl tracking OK
+
+### Phase AA: Dashboard P&L — COMPLETE
+- _log_close_trade: exit_price, pnl, pnl_pct, reason, strategy, hold_time, win
+- UI: trade con badge PROFIT/LOSS, sezione Trade Chiusi, breakdown per strategia
+- UI: wallet card con win_rate + status badge (ACTIVE/DISABLED/RESERVE)
+- Test: close logging OK, dashboard API OK
+
 ### Phase X: Polling — COMPLETE
 - poll_interval: 30s → 20s
 
