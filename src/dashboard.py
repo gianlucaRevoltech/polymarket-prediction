@@ -58,18 +58,26 @@ def get_portfolio_data():
         
         # Phase AA: closed_positions con P&L per sezione storico
         closed_positions = []
-        for pos in sorted(sim.portfolio.closed_positions, key=lambda p: p.exit_time or datetime.min, reverse=True)[:30]:
+        for pos in sorted(
+            sim.portfolio.closed_positions,
+            key=lambda p: getattr(p, "exit_time", None) or getattr(p, "close_time", None) or datetime.min,
+            reverse=True,
+        )[:30]:
+            exit_time = getattr(pos, "exit_time", None) or getattr(pos, "close_time", None)
+            exit_price = getattr(pos, "exit_price", None)
+            if exit_price is None:
+                exit_price = getattr(pos, "close_price", None)
             closed_positions.append({
                 "market": pos.market_title[:50],
                 "outcome": pos.outcome,
                 "strategy": pos.strategy or "copy",
                 "entry_price": pos.entry_price,
-                "exit_price": pos.exit_price or 0,
+                "exit_price": exit_price or 0,
                 "size": pos.size_usdc,
                 "pnl": pos.pnl,
                 "pnl_pct": pos.pnl_pct,
                 "reason": pos.close_reason or "",
-                "close_time": pos.exit_time.strftime("%Y-%m-%d %H:%M") if pos.exit_time else "",
+                "close_time": exit_time.strftime("%Y-%m-%d %H:%M") if exit_time else "",
                 "win": pos.pnl > 0,
             })
         

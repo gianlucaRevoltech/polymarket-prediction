@@ -1,0 +1,39 @@
+name: VPS Deploy
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'scripts/**'
+      - 'deploy/**'
+      - 'start_all.sh'
+      - 'requirements.txt'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: github.repository == 'gianlucaRevoltech/polymarket-prediction'
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            for d in /root/polymarket-prediction /root/polymarket-bot ~/polymarket-prediction ~/polymarket-bot; do
+              if [ -f "$d/start_all.sh" ]; then
+                cd "$d"
+                break
+              fi
+            done
+            if [ ! -f start_all.sh ]; then
+              echo "Progetto non trovato"
+              exit 1
+            fi
+            git pull origin main
+            chmod +x start_all.sh scripts/*.sh
+            ./scripts/vps_recover.sh --systemd
