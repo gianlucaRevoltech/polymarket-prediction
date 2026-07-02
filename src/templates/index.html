@@ -552,6 +552,28 @@
             </div>
         </div>
 
+        <!-- Dashboard v2: Risk & System Info -->
+        <div class="section">
+            <div class="section-title">
+                <span>🛡️</span>
+                <span>Risk Management & System</span>
+            </div>
+            <div id="riskContainer">
+                <div class="empty-state"><div>Caricamento...</div></div>
+            </div>
+        </div>
+
+        <!-- Dashboard v2: Cluster Exposure -->
+        <div class="section">
+            <div class="section-title">
+                <span>🎯</span>
+                <span>Cluster Exposure (per evento)</span>
+            </div>
+            <div id="clusterContainer">
+                <div class="empty-state"><div>Caricamento...</div></div>
+            </div>
+        </div>
+
         <!-- Wallet Monitorati -->
         <div class="section">
             <div class="section-title">
@@ -816,6 +838,10 @@
             const now = new Date(data.timestamp || new Date());
             document.getElementById('lastUpdate').textContent = now.toLocaleTimeString('it-IT');
 
+            // Dashboard v2: risk + cluster
+            updateRiskDashboard(data.summary);
+            updateClusterExposure(data.summary);
+
             const statusEl = document.getElementById('botStatus');
             const status = data.bot_status || 'unknown';
             if (status === 'running') {
@@ -1022,6 +1048,51 @@
         function stratColor(name) {
             const colors = {copy:'#60a5fa', harvest:'#34d399', arb_binary:'#c084fc', arb_cross:'#f472b6', momentum:'#fbbf24', whale:'#2dd4bf', sniper:'#f87171', theta:'#818cf8', contrarian:'#ec4899'};
             return colors[name] || '#94a3b8';
+        }
+
+        // Dashboard v2: Risk & System Info
+        function updateRiskDashboard(summary) {
+            const container = document.getElementById('riskContainer');
+            if (!summary) { container.innerHTML = '<div class="empty-state"><div>Dati non disponibili</div></div>'; return; }
+            const tier = summary.sizing_tier || {};
+            const dd = (summary.drawdown_pct || 0) * 100;
+            const ddClass = dd > 8 ? 'negative' : dd > 3 ? 'neutral' : 'positive';
+            const rf = summary.risk_factor || 1;
+            const rfLabel = rf <= 0 ? 'BLOCKED' : rf < 1 ? 'HALVED' : 'NORMAL';
+            const rfClass = rf <= 0 ? 'negative' : rf < 1 ? 'neutral' : 'positive';
+            const deployed = summary.deployed_usdc || 0;
+            const avail = summary.available_cash || 0;
+            const reserve = summary.reserve_cash || 0;
+            const strategies = summary.active_strategies || [];
+            let html = '<div class="strat-summary">';
+            html += `<div class="strat-card" style="border-left-color:#60a5fa"><div class="label">Sizing Tier</div><div class="val">${(tier.frac*100||6).toFixed(0)}%</div><div class="label" style="margin-top:4px">${tier.desc||''}</div></div>`;
+            html += `<div class="strat-card" style="border-left-color:#fbbf24"><div class="label">Peak Equity</div><div class="val">$${(summary.peak_equity||0).toFixed(2)}</div><div class="label" style="margin-top:4px">Drawdown: <span class="${ddClass}">${dd.toFixed(1)}%</span></div></div>`;
+            html += `<div class="strat-card" style="border-left-color:#34d399"><div class="label">Deployed / Cash</div><div class="val">$${deployed.toFixed(0)} / $${avail.toFixed(0)}</div><div class="label" style="margin-top:4px">Reserve: $${reserve.toFixed(0)}</div></div>`;
+            html += `<div class="strat-card" style="border-left-color:${rf<=0?'#f87171':rf<1?'#fbbf24':'#34d399'}"><div class="label">Risk Factor</div><div class="val ${rfClass}">${rfLabel}</div><div class="label" style="margin-top:4px">Trailing: ${summary.trailing_stop_enabled?'ON':'OFF'} | Kelly: ${summary.kelly_enabled?'ON':'OFF'}</div></div>`;
+            html += `<div class="strat-card" style="border-left-color:#c084fc"><div class="label">Strategie Attive</div><div class="val">${strategies.length}</div><div class="label" style="margin-top:4px">${strategies.join(', ')}</div></div>`;
+            html += `<div class="strat-card" style="border-left-color:#f472b6"><div class="label">Posizioni</div><div class="val">${summary.open_positions||0}/${summary.max_open_positions||12}</div><div class="label" style="margin-top:4px">Chiuse: ${summary.closed_positions||0} | WR: ${(summary.win_rate||0).toFixed(0)}%</div></div>`;
+            html += '</div>';
+            container.innerHTML = html;
+        }
+
+        // Dashboard v2: Cluster Exposure
+        function updateClusterExposure(summary) {
+            const container = document.getElementById('clusterContainer');
+            const clusters = summary.cluster_exposure || {};
+            const entries = Object.entries(clusters);
+            if (entries.length === 0) { container.innerHTML = '<div class="empty-state"><div>Nessun cluster attivo</div></div>'; return; }
+            const capPct = summary.cluster_cap_pct || 0.4;
+            const totalValue = summary.current_value || 300;
+            const capUsd = totalValue * capPct;
+            let html = '<div class="table-wrap"><table><thead><tr><th>Evento (Cluster)</th><th>Deployed</th><th>% Portfolio</th><th>Cap</th><th>Stato</th></tr></thead><tbody>';
+            entries.forEach(([slug, usd]) => {
+                const pct = (usd / totalValue * 100);
+                const pctClass = pct > capPct*100*0.8 ? 'negative' : 'positive';
+                const status = pct > capPct*100 ? '<span class="negative">OVER CAP</span>' : '<span class="positive">OK</span>';
+                html += `<tr><td>${escapeHtml(slug.slice(0,40))}</td><td>$${usd.toFixed(0)}</td><td class="${pctClass}">${pct.toFixed(1)}%</td><td>$${capUsd.toFixed(0)}</td><td>${status}</td></tr>`;
+            });
+            html += '</tbody></table></div>';
+            container.innerHTML = html;
         }
 
         async function refreshData() {

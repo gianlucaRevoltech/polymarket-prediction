@@ -1244,6 +1244,14 @@ class PaperTradingSimulator:
     # ------------------------------------------------------------------
     # Summary / metriche
     # ------------------------------------------------------------------
+    def _cluster_exposure(self) -> Dict[str, float]:
+        """Phase FF: ritorna event_slug -> total USDC deployato per cluster."""
+        clusters: Dict[str, float] = {}
+        for p in self.portfolio.positions.values():
+            key = p.market_slug or p.condition_id or "unknown"
+            clusters[key] = clusters.get(key, 0) + p.size_usdc
+        return dict(sorted(clusters.items(), key=lambda kv: kv[1], reverse=True)[:10])
+
     def get_portfolio_summary(self) -> Dict:
         unrealized_pnl = sum(pos.pnl for pos in self.portfolio.positions.values())
         realized_pnl = sum(pos.pnl for pos in self.portfolio.closed_positions)
@@ -1293,7 +1301,20 @@ class PaperTradingSimulator:
             "peak_equity": peak,
             "drawdown_pct": dd_pct,
             "best_trade": self._get_best_trade(),
-            "worst_trade": self._get_worst_trade()
+            "worst_trade": self._get_worst_trade(),
+            # Phase CC-II: metriche avanzate dashboard v2
+            "max_open_positions": BUDGET["max_open_positions"],
+            "reserve_ratio": BUDGET["reserve_ratio"],
+            "available_cash": self._available_cash(),
+            "reserve_cash": self.portfolio.initial_capital * BUDGET["reserve_ratio"],
+            "risk_factor": self._risk_factor(),
+            "trailing_stop_enabled": BUDGET.get("trailing_stop_enabled", False),
+            "kelly_enabled": BUDGET.get("kelly_enabled", False),
+            "cluster_cap_pct": BUDGET.get("cluster_cap_pct", 0),
+            "active_strategies": [s for s in STRATEGIES if STRATEGIES[s].get("enabled", True) and s != "value"],
+            "deployed_usdc": sum(p.size_usdc for p in self.portfolio.positions.values()),
+            # cluster exposure: event_slug -> total deployed
+            "cluster_exposure": self._cluster_exposure(),
         }
 
     def _get_best_trade(self) -> Optional[Dict]:
