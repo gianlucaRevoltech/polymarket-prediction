@@ -350,6 +350,10 @@
         .strat-xarb { background: rgba(236,72,153,0.18); color: #f472b6; }
         .strat-momentum { background: rgba(245,158,11,0.18); color: #fbbf24; }
         .strat-whale { background: rgba(20,184,166,0.22); color: #2dd4bf; }
+        .strat-sniper { background: rgba(239,68,68,0.22); color: #f87171; }
+        .strat-theta { background: rgba(99,102,241,0.22); color: #818cf8; }
+        .strat-contrarian { background: rgba(236,72,153,0.22); color: #f472b6; }
+        .reason-trailing_stop { background: rgba(245,158,11,0.2); color: #fbbf24; }
         .neutral-side { color: var(--neutral); font-weight: 700; }
         .reason-badge {
             display: inline-block; padding: 1px 5px; border-radius: 3px;
@@ -590,7 +594,7 @@
 
         <!-- Footer -->
         <div class="footer">
-            🤖 Polymarket Paper Trading Bot • Aggiornamento automatico ogni 10s • Budget: $300 • Multi-strategy: COPY+HARVEST+ARB+MOMENTUM+WHALE
+            🤖 Polymarket Paper Trading Bot • Multi-strategy: COPY+HARVEST+ARB+MOMENTUM+WHALE+SNIPER+THETA+CONTRARIAN • Kelly+Trailing+Cluster
         </div>
     </div>
 
@@ -1016,7 +1020,7 @@
         }
 
         function stratColor(name) {
-            const colors = {copy:'#60a5fa', harvest:'#34d399', arb_binary:'#c084fc', arb_cross:'#f472b6', momentum:'#fbbf24', whale:'#2dd4bf'};
+            const colors = {copy:'#60a5fa', harvest:'#34d399', arb_binary:'#c084fc', arb_cross:'#f472b6', momentum:'#fbbf24', whale:'#2dd4bf', sniper:'#f87171', theta:'#818cf8', contrarian:'#ec4899'};
             return colors[name] || '#94a3b8';
         }
 

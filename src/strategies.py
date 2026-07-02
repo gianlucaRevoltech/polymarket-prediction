@@ -433,6 +433,8 @@ class MomentumStrategy:
         self.min_volume = cfg.get("min_volume", 2000.0)
         self.price_history = PriceHistory()
         self._last_cycle = 0
+        self.windows = cfg.get("windows", [self.window])
+        self.min_windows_confirmed = cfg.get("min_windows_confirmed", 1)
 
     def update_prices(self, fetcher, cycle: int) -> None:
         """Aggiorna price history con prezzi correnti dei top mercati."""
@@ -473,7 +475,24 @@ class MomentumStrategy:
             # determina lato trending: move>0 → YES, move<0 → NO
             if abs(move) < self.min_move:
                 continue
-            side_idx = 0 if move > 0 else 1   # YES se salita, NO se discesa
+            # Phase JJ: multi-timeframe — conferma trend su piu finestre
+            windows = getattr(self, 'windows', [self.window])
+            min_conf = getattr(self, 'min_windows_confirmed', 1)
+            directions = []
+            for w in windows:
+                win = self.price_history.get_window(m["condition_id"], w)
+                if not win or len(win) < 2:
+                    continue
+                fp = win[0][1]; lp = win[-1][1]
+                if fp <= 0 or fp >= 1:
+                    continue
+                mv = (lp - fp) / fp
+                if abs(mv) >= self.min_move:
+                    directions.append(1 if mv > 0 else -1)
+            if len(directions) < min_conf:
+                continue
+            trend_dir = 1 if sum(directions) > 0 else -1
+            side_idx = 0 if trend_dir > 0 else 1   # YES se salita, NO se discesa
             tok = tokens[side_idx]
             out = outcomes[side_idx] if side_idx < len(outcomes) else ("Yes" if side_idx == 0 else "No")
             book = fetcher.get_book(tok)
@@ -775,10 +794,294 @@ class WhaleStrategy:
         return opps
 
 
+# ----------------------------------------------------------------------
+# Phase DD: Sniper Harvest — risoluzione imminente <24h, APR astronomica
+# ----------------------------------------------------------------------
+class SniperStrategy:
+    """Sub-strategia harvest per mercati con endTime < 24h.
+    Compra lato vincente 0.85-0.97 → payout $1 a risoluzione (12-24h). APR >1000%."""
+    name = "sniper"
+
+    def __init__(self):
+        cfg = STRATEGIES[self.name]
+        self.cap_pct = cfg["cap_pct"]
+        self.max_single = cfg["max_single"]
+        self.fav_min = cfg["fav_min"]
+        self.fav_max = cfg["fav_max"]
+        self.min_hours = cfg["min_hours_to_expiry"]
+        self.max_hours = cfg["max_hours_to_expiry"]
+        self.min_book = cfg["min_book_size"]
+        self.max_spread = cfg["max_spread_ticks"]
+        self.scan_markets = cfg["scan_markets"]
+        self.min_volume = cfg.get("min_volume", 1000.0)
+        self.skip_politics = cfg.get("skip_politics", True)
+        self.tp = cfg.get("take_profit_pct", 0.05)
+        self.sl = cfg.get("stop_loss_pct", -0.05)
+
+    def scan(self, fetcher) -> List[Opportunity]:
+        markets = fetcher.get_active_markets(limit=self.scan_markets, min_volume=self.min_volume)
+        opps: List[Opportunity] = []
+        for m in markets:
+            tokens = m["tokens"]; outcomes = m["outcomes"]
+            if len(tokens) < 2 or len(outcomes) < 2:
+                continue
+            days = fetcher.days_to_expiry(m["end_date"])
+            if days is None:
+                continue
+            hours = days * 24
+            if hours < self.min_hours or hours > self.max_hours:
+                continue
+            if self.skip_politics and m["category"] == "politics":
+                continue
+            for i, (tok, out) in enumerate(zip(tokens, outcomes)):
+                book = fetcher.get_book(tok)
+                if not book:
+                    continue
+                ask = book.get("best_ask")
+                if ask is None or ask < self.fav_min or ask > self.fav_max:
+                    continue
+                bid = book.get("best_bid")
+                if bid is None:
+                    continue
+                spread_c = (ask - bid) * 100
+                if spread_c > self.max_spread * 0.01 * 100:
+                    continue
+                ask_sz = float(book.get("ask_size") or 0.0)
+                if ask_sz < self.min_book:
+                    continue
+                profit_per_share = 1.0 - ask - _leg_fee_fraction(m.get("fee_type", ""), ask) * ask
+                if profit_per_share <= 0:
+                    continue
+                max_fill = ask_sz * ask
+                if max_fill < BUDGET["min_position_size"]:
+                    continue
+                apr = (profit_per_share / ask) / max(hours, 0.1) * 365 * 24
+                opp = Opportunity(
+                    strategy=self.name, condition_id=m["condition_id"],
+                    market_title=m["question"], event_slug=m["event_slug"],
+                    category=m["category"], end_date=m["end_date"],
+                    assets=[tok, ""], outcomes=[out, ""],
+                    cost_per_share=ask, best_asks=[ask], book_sizes=[ask_sz],
+                    spread_cents=[spread_c], payout_per_share=1.0,
+                    profit_per_share=profit_per_share, max_fill_size=max_fill,
+                    fee_type=m.get("fee_type", ""), score=apr,
+                )
+                opps.append(opp)
+                break
+        opps.sort(key=lambda o: o.score, reverse=True)
+        return opps
+
+
+# ----------------------------------------------------------------------
+# Phase GG: Theta / time-decay — "Will X by [date]" dove X NON successo
+# ----------------------------------------------------------------------
+class ThetaStrategy:
+    """Mercati con domanda "Will X by <date>" dove X NON e' successo.
+    Il "No" drifta verso $1 man mano che il tempo passa (theta decay)."""
+    name = "theta"
+    THETA_KEYWORDS = ["by ", "before ", "until ", "this month", "this week",
+                      "by july", "by august", "by end", "in july", "in august"]
+
+    def __init__(self):
+        cfg = STRATEGIES[self.name]
+        self.cap_pct = cfg["cap_pct"]
+        self.max_single = cfg["max_single"]
+        self.no_min = cfg["no_price_min"]
+        self.no_max = cfg["no_price_max"]
+        self.min_days = cfg["min_days_to_expiry"]
+        self.max_days = cfg["max_days_to_expiry"]
+        self.min_book = cfg["min_book_size"]
+        self.max_spread = cfg["max_spread_ticks"]
+        self.scan_markets = cfg["scan_markets"]
+        self.min_volume = cfg.get("min_volume", 2000.0)
+        self.tp = cfg.get("take_profit_pct", 0.08)
+        self.sl = cfg.get("stop_loss_pct", -0.06)
+
+    def _is_theta_market(self, title: str) -> bool:
+        t = (title or "").lower()
+        return any(kw in t for kw in self.THETA_KEYWORDS)
+
+    def scan(self, fetcher) -> List[Opportunity]:
+        markets = fetcher.get_active_markets(limit=self.scan_markets, min_volume=self.min_volume)
+        opps: List[Opportunity] = []
+        for m in markets:
+            if not self._is_theta_market(m["question"]):
+                continue
+            tokens = m["tokens"]; outcomes = m["outcomes"]
+            if len(tokens) < 2 or len(outcomes) < 2:
+                continue
+            days = fetcher.days_to_expiry(m["end_date"])
+            if days is None or days < self.min_days or days > self.max_days:
+                continue
+            no_idx = 1 if (len(outcomes) > 1 and "no" in outcomes[1].lower()) else 0
+            tok = tokens[no_idx]
+            out = outcomes[no_idx] if no_idx < len(outcomes) else "No"
+            book = fetcher.get_book(tok)
+            if not book:
+                continue
+            ask = book.get("best_ask")
+            if ask is None or ask < self.no_min or ask > self.no_max:
+                continue
+            bid = book.get("best_bid")
+            if bid is None:
+                continue
+            spread_c = (ask - bid) * 100
+            if spread_c > self.max_spread * 0.01 * 100:
+                continue
+            ask_sz = float(book.get("ask_size") or 0.0)
+            if ask_sz < self.min_book:
+                continue
+            profit_per_share = 1.0 - ask - _leg_fee_fraction(m.get("fee_type", ""), ask) * ask
+            if profit_per_share <= 0:
+                continue
+            max_fill = ask_sz * ask
+            if max_fill < BUDGET["min_position_size"]:
+                continue
+            theta_rate = profit_per_share / max(days, 0.1)
+            opp = Opportunity(
+                strategy=self.name, condition_id=m["condition_id"],
+                market_title=m["question"], event_slug=m["event_slug"],
+                category=m["category"], end_date=m["end_date"],
+                assets=[tok, ""], outcomes=[out, ""],
+                cost_per_share=ask, best_asks=[ask], book_sizes=[ask_sz],
+                spread_cents=[spread_c], payout_per_share=1.0,
+                profit_per_share=profit_per_share, max_fill_size=max_fill,
+                fee_type=m.get("fee_type", ""), score=theta_rate,
+            )
+            opps.append(opp)
+        opps.sort(key=lambda o: o.score, reverse=True)
+        return opps
+
+
+# ----------------------------------------------------------------------
+# Phase II: Contrarian / fade extreme — whale VENDONO mercato estremo 0.93+
+# ----------------------------------------------------------------------
+class ContrarianStrategy:
+    """Rileva whale SELL su mercati a estremo (>= 0.93). Fade: compra lato opposto."""
+    name = "contrarian"
+
+    def __init__(self):
+        cfg = STRATEGIES[self.name]
+        self.cap_pct = cfg["cap_pct"]
+        self.max_single = cfg["max_single"]
+        self.extreme_min = cfg["extreme_min"]
+        self.extreme_max = cfg["extreme_max"]
+        self.min_sell_usdc = cfg["min_whale_sell_usdc"]
+        self.lookback = cfg["activity_lookback_min"]
+        self.min_days = cfg["min_days_to_expiry"]
+        self.max_days = cfg["max_days_to_expiry"]
+        self.min_book = cfg["min_book_size"]
+        self.max_spread = cfg["max_spread_ticks"]
+        self.scan_markets = cfg["scan_markets"]
+        self.min_volume = cfg.get("min_volume", 5000.0)
+        self.tp = cfg.get("take_profit_pct", 0.15)
+        self.sl = cfg.get("stop_loss_pct", -0.04)
+
+    def scan(self, fetcher) -> List[Opportunity]:
+        whale_file = DATA_DIR / "whale_wallets.json"
+        whale_addrs = []
+        try:
+            if whale_file.exists():
+                import json as _j
+                with open(whale_file) as f:
+                    whale_addrs = _j.load(f).get("addresses", [])
+        except Exception:
+            pass
+        if not whale_addrs:
+            return []
+        now_ts = datetime.now().timestamp()
+        cutoff = now_ts - self.lookback * 60
+        signals: Dict[str, dict] = {}
+        for addr in whale_addrs:
+            try:
+                url = f"{POLYMARKET_API['data']}/activity"
+                r = fetcher.session.get(url, params={"user": addr, "limit": 50}, timeout=15)
+                if not r.ok:
+                    continue
+                for a in r.json():
+                    if a.get("type") != "TRADE" or a.get("side", "").upper() != "SELL":
+                        continue
+                    try:
+                        ts = int(a.get("timestamp", 0))
+                    except Exception:
+                        continue
+                    if ts < cutoff:
+                        continue
+                    usdc = float(a.get("usdcSize", 0) or 0)
+                    if usdc < self.min_sell_usdc:
+                        continue
+                    price = float(a.get("price", 0) or 0)
+                    if price < self.extreme_min or price > self.extreme_max:
+                        continue
+                    cid = a.get("conditionId", "")
+                    if not cid:
+                        continue
+                    sig = signals.setdefault(cid, {"sells": [], "title": a.get("title", ""),
+                                                    "slug": a.get("slug", ""),
+                                                    "asset": a.get("asset", ""),
+                                                    "outcome": a.get("outcome", ""),
+                                                    "price": price})
+                    sig["sells"].append({"addr": addr, "usdc": usdc, "price": price,
+                                         "asset": a.get("asset", ""), "outcome": a.get("outcome", "")})
+            except Exception:
+                continue
+            import time as _t
+            _t.sleep(0.1)
+        opps: List[Opportunity] = []
+        for cid, sig in signals.items():
+            m = fetcher.get_market(cid)
+            if not m or len(m.get("tokens", [])) < 2:
+                continue
+            days = fetcher.days_to_expiry(m["end_date"])
+            if days is None or days < self.min_days or days > self.max_days:
+                continue
+            whale_outcome = (sig["outcome"] or "").lower()
+            fade_idx = 1 if "yes" in whale_outcome else 0
+            tok = m["tokens"][fade_idx]
+            out = m["outcomes"][fade_idx] if fade_idx < len(m["outcomes"]) else "No"
+            book = fetcher.get_book(tok)
+            if not book:
+                continue
+            ask = book.get("best_ask")
+            if ask is None or ask <= 0 or ask >= 1:
+                continue
+            bid = book.get("best_bid")
+            spread_c = ((ask - bid) * 100) if bid else 99
+            if spread_c > self.max_spread * 0.01 * 100:
+                continue
+            ask_sz = float(book.get("ask_size") or 0.0)
+            if ask_sz < self.min_book:
+                continue
+            max_fill = ask_sz * ask
+            if max_fill < BUDGET["min_position_size"]:
+                continue
+            total_sell = sum(s["usdc"] for s in sig["sells"])
+            score = len(sig["sells"]) * (total_sell / 1000.0)
+            fee = _leg_fee_fraction(m.get("fee_type", ""), ask) * ask
+            profit_per_share = ask * (self.tp * 0.5) - fee
+            opp = Opportunity(
+                strategy=self.name, condition_id=cid,
+                market_title=sig["title"] or m["question"],
+                event_slug=sig["slug"] or m.get("event_slug", ""),
+                category=m["category"], end_date=m["end_date"],
+                assets=[tok, ""], outcomes=[out, ""],
+                cost_per_share=ask, best_asks=[ask], book_sizes=[ask_sz],
+                spread_cents=[spread_c], payout_per_share=1.0,
+                profit_per_share=profit_per_share, max_fill_size=max_fill,
+                fee_type=m.get("fee_type", ""), score=score,
+            )
+            opps.append(opp)
+        opps.sort(key=lambda o: o.score, reverse=True)
+        return opps
+
+
 STRATEGY_REGISTRY = {
     "arb_binary": ArbBinaryStrategy,
     "harvest": HarvestStrategy,
     "arb_cross": ArbCrossStrategy,
     "momentum": MomentumStrategy,
     "whale": WhaleStrategy,
+    "sniper": SniperStrategy,
+    "theta": ThetaStrategy,
+    "contrarian": ContrarianStrategy,
 }

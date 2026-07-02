@@ -20,7 +20,7 @@ from scanner import PolymarketScanner
 from analyzer import WalletAnalyzer
 from portfolio_sync import PolymarketPositionFetcher
 from simulator import PaperTradingSimulator
-from strategies import ArbBinaryStrategy, HarvestStrategy, ArbCrossStrategy, MomentumStrategy, WhaleStrategy
+from strategies import ArbBinaryStrategy, HarvestStrategy, ArbCrossStrategy, MomentumStrategy, WhaleStrategy, SniperStrategy, ThetaStrategy, ContrarianStrategy
 from wallet_manager import WalletManager
 from models import WalletAnalysis
 from config import BUDGET, STRATEGY, STRATEGIES, TRACKING, SCANNER, MONITOR, WALLET_MONITOR, DATA_DIR, BASE_DIR
@@ -47,6 +47,9 @@ class PolymarketPaperTradingBot:
         self.arb_cross = ArbCrossStrategy()
         self.momentum = MomentumStrategy()
         self.whale = WhaleStrategy()
+        self.sniper = SniperStrategy()
+        self.theta = ThetaStrategy()
+        self.contrarian = ContrarianStrategy()
         self.wallet_mgr = WalletManager(scanner=self.scanner)
         # Phase Z: hook copy close -> wallet manager tracking P&L per-wallet
         self.simulator.on_copy_close = self.wallet_mgr.record_copy_close
@@ -360,6 +363,15 @@ class PolymarketPaperTradingBot:
                 if self._should_scan("whale"):
                     opps = self.whale.scan(self.fetcher)
                     opps_tried += self._run_strategy_opps("whale", opps)
+                if self._should_scan("sniper"):
+                    opps = self.sniper.scan(self.fetcher)
+                    opps_tried += self._run_strategy_opps("sniper", opps)
+                if self._should_scan("theta"):
+                    opps = self.theta.scan(self.fetcher)
+                    opps_tried += self._run_strategy_opps("theta", opps)
+                if self._should_scan("contrarian"):
+                    opps = self.contrarian.scan(self.fetcher)
+                    opps_tried += self._run_strategy_opps("contrarian", opps)
                 # Gestione posizioni non-copy (resolution + SL/TP harvest + momentum)
                 self.simulator.manage_strategy_positions(self.fetcher)
 

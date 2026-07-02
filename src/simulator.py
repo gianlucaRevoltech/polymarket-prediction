@@ -738,6 +738,20 @@ class PaperTradingSimulator:
                 pnl_pct = (cur - pos.entry_price) / pos.entry_price if pos.entry_price > 0 else 0
                 mtp = STRATEGIES.get("momentum", {}).get("take_profit_pct", 0.06)
                 msl = STRATEGIES.get("momentum", {}).get("stop_loss_pct", -0.05)
+                # Phase CC: trailing stop
+                if BUDGET.get("trailing_stop_enabled", False) and strat in BUDGET.get("trailing_apply_strategies", []):
+                    trail_act = BUDGET.get("trailing_activate_pct", 0.03)
+                    trail_pct = BUDGET.get("trailing_stop_pct", -0.03)
+                    if pnl_pct >= trail_act:
+                        peak = getattr(pos, '_peak_price', pos.entry_price)
+                        if cur > peak:
+                            pos._peak_price = cur
+                            peak = cur
+                        trail_pnl = (cur - peak) / peak if peak > 0 else 0
+                        if trail_pnl <= trail_pct:
+                            print(f"[MOMENTUM TRAIL] {pos.market_title[:40]} peak {peak:.3f} cur {cur:.3f}")
+                            self._close_by_pid(pid, cur, "trailing_stop")
+                            continue
                 if pnl_pct >= mtp:
                     print(f"[MOMENTUM TP] {pos.market_title[:40]} P&L {pnl_pct:.1%} >= {mtp:.0%}")
                     self._close_by_pid(pid, cur, "take_profit")
@@ -766,6 +780,44 @@ class PaperTradingSimulator:
                 elif pnl_pct <= wsl:
                     print(f"[WHALE SL] {pos.market_title[:40]} P&L {pnl_pct:.1%} <= {wsl:.0%}")
                     self._close_by_pid(pid, cur, "stop_loss")
+            elif strat in ("sniper", "theta", "contrarian"):
+                # Phase DD/GG/II: gestione direzionale — TP/SL + resolution + trailing
+                cur = fetcher.get_price(pos.asset) if pos.asset else None
+                if cur is None:
+                    m = fetcher.get_market(pos.condition_id) if pos.condition_id else None
+                    if m is not None and m.get("closed"):
+                        exit_price = 1.0 if (pos.outcome and pos.outcome.lower() in ("yes",)) else 0.0
+                        self._close_by_pid(pid, exit_price, "resolved")
+                    continue
+                if cur <= 0.0 or cur >= 1.0:
+                    self._close_by_pid(pid, 1.0 if cur >= 0.5 else 0.0, "resolved")
+                    continue
+                pos.current_price = cur
+                pnl_pct = (cur - pos.entry_price) / pos.entry_price if pos.entry_price > 0 else 0
+                cfg_s = STRATEGIES.get(strat, {})
+                tp = cfg_s.get("take_profit_pct", 0.08)
+                sl = cfg_s.get("stop_loss_pct", -0.05)
+                # Phase CC: trailing stop — lock profit vincenti
+                if BUDGET.get("trailing_stop_enabled", False) and strat in BUDGET.get("trailing_apply_strategies", []):
+                    trail_act = BUDGET.get("trailing_activate_pct", 0.03)
+                    trail_pct = BUDGET.get("trailing_stop_pct", -0.03)
+                    if pnl_pct >= trail_act:
+                        # track peak price per posizione
+                        peak = getattr(pos, '_peak_price', pos.entry_price)
+                        if cur > peak:
+                            pos._peak_price = cur
+                            peak = cur
+                        trail_pnl = (cur - peak) / peak if peak > 0 else 0
+                        if trail_pnl <= trail_pct:
+                            print(f"[{strat.upper()} TRAIL] {pos.market_title[:40]} peak {peak:.3f} cur {cur:.3f}")
+                            self._close_by_pid(pid, cur, "trailing_stop")
+                            continue
+                if pnl_pct >= tp:
+                    print(f"[{strat.upper()} TP] {pos.market_title[:40]} P&L {pnl_pct:.1%}")
+                    self._close_by_pid(pid, cur, "take_profit")
+                elif pnl_pct <= sl:
+                    print(f"[{strat.upper()} SL] {pos.market_title[:40]} P&L {pnl_pct:.1%}")
+                    self._close_by_pid(pid, cur, "stop_loss")
 
     def _close_by_pid(self, pid: str, exit_price: float, reason: str) -> bool:
         if pid not in self.portfolio.positions:
@@ -785,6 +837,56 @@ class PaperTradingSimulator:
         print(f"  P&L: ${pnl:.2f} | Cash: ${self.portfolio.cash:.2f}")
         self._log_close_trade(pos, exit_price, reason)
         self._save_state()
+        return True
+
+    def _kelly_size(self, strategy_name: str, base_size: float) -> float:
+        """Phase EE: Kelly fractional sizing — ottimizza size basato su WR e payoff."""
+        if not BUDGET.get("kelly_enabled", False):
+            return base_size
+        # WR per strategia dai trade chiusi
+        closed = [p for p in self.portfolio.closed_positions if (p.strategy or "copy") == strategy_name]
+        if len(closed) < 5:
+            return base_size  # sample insufficiente, usa base
+        wins = sum(1 for p in closed if p.pnl > 0)
+        p = wins / len(closed)
+        q = 1 - p
+        # payoff b: per harvest/sniper ~ (1-entry)/entry, per direzionale usa TP target
+        avg_entry = sum(p.entry_price for p in closed) / len(closed)
+        b = (1.0 - avg_entry) / avg_entry if avg_entry > 0 else 1.0
+        # Kelly fraction: f = (b*p - q) / b
+        if b <= 0:
+            return base_size
+        kelly_f = (b * p - q) / b
+        if kelly_f <= 0:
+            return base_size * 0.5  # edge negativo → dimezza
+        # Fractional Kelly (1/4) per ridurre volatilità
+        kelly_frac = BUDGET.get("kelly_fraction", 0.25) * kelly_f
+        kelly_frac = max(BUDGET.get("kelly_min_size", 0.03),
+                         min(kelly_frac, BUDGET.get("kelly_max_size", 0.20)))
+        kelly_size = self.portfolio.total_value * kelly_frac
+        return min(kelly_size, base_size * 1.5)  # max 1.5x base (anti over-bet)
+
+    def _cluster_check(self, strategy_name: str, condition_id: str, event_slug: str) -> bool:
+        """Phase FF: correlation-aware hedging — limita esposizione per evento cluster.
+        Returns True se OK aprire, False se cluster saturato."""
+        if not BUDGET.get("cluster_cap_pct", 0):
+            return True
+        cluster_key = event_slug or condition_id
+        if not cluster_key:
+            return True
+        # conta posizioni aperte stesso evento
+        same_cluster = [p for p in self.portfolio.positions.values()
+                        if (p.market_slug or getattr(p, '_event_slug', '') or p.condition_id) == cluster_key]
+        max_pos = BUDGET.get("cluster_max_positions", 5)
+        if len(same_cluster) >= max_pos:
+            print(f"[CLUSTER] {cluster_key[:20]}... saturato ({len(same_cluster)}/{max_pos})")
+            return False
+        # cap esposizione %
+        cluster_deployed = sum(p.size_usdc for p in same_cluster)
+        cluster_cap = self.portfolio.total_value * BUDGET.get("cluster_cap_pct", 0.40)
+        if cluster_deployed >= cluster_cap:
+            print(f"[CLUSTER] {cluster_key[:20]}... cap $ {cluster_deployed:.0f} >= ${cluster_cap:.0f}")
+            return False
         return True
 
     # ------------------------------------------------------------------
@@ -808,11 +910,17 @@ class PaperTradingSimulator:
         # size: min(max_single, avail, opportunity max_fill_size)
         # sizing compounding: usa il sizing base come upper bound
         size = self._sizing_compounding()
+        # Phase EE: Kelly fractional sizing (ottimizza per WR+payoff della strategia)
+        size = self._kelly_size(strat, size)
         size = min(size, max_single, avail, opp.max_fill_size)
         if size < BUDGET["min_position_size"]:
             return False
         # equity floor block
         if self._risk_factor() <= 0.0:
+            return False
+        # Phase FF: cluster hedging — limita esposizione per evento
+        event_slug = getattr(opp, 'event_slug', '') or ''
+        if not self._cluster_check(strat, opp.condition_id, event_slug):
             return False
         # dedup per condition_id / asset
         now = datetime.now()
@@ -831,6 +939,12 @@ class PaperTradingSimulator:
             return self._open_momentum(opp, size, fetcher)
         if strat == "whale":
             return self._open_whale(opp, size, fetcher)
+        if strat == "sniper":
+            return self._open_directional(opp, size, fetcher, "sniper")
+        if strat == "theta":
+            return self._open_directional(opp, size, fetcher, "theta")
+        if strat == "contrarian":
+            return self._open_directional(opp, size, fetcher, "contrarian")
         return False
 
     def _open_arb_binary(self, opp, size: float, fetcher) -> bool:
@@ -1022,6 +1136,46 @@ class PaperTradingSimulator:
         self._save_state()
         return True
 
+    def _open_directional(self, opp, size: float, fetcher, strategy_name: str) -> bool:
+        """Apre posizione direzionale generica per sniper/theta/contrarian."""
+        ask = opp.cost_per_share
+        if ask <= 0 or ask >= 1:
+            return False
+        slip = SIMULATOR["entry_slippage"]
+        eff = min(0.999, ask * (1 + slip))
+        fee_frac = taker_fee_fraction(opp.category, eff)
+        eff_fee = min(0.999, eff * (1 + fee_frac))
+        shares = size / eff_fee
+        cfg = STRATEGIES.get(strategy_name, {})
+        tp = cfg.get("take_profit_pct", 0.08)
+        sl = cfg.get("stop_loss_pct", -0.05)
+        position = Position(
+            position_id=str(uuid.uuid4()),
+            market_title=opp.market_title,
+            market_slug="",
+            condition_id=opp.condition_id,
+            outcome=opp.outcomes[0],
+            entry_price=eff_fee,
+            size_usdc=size,
+            shares=shares,
+            entry_time=datetime.now(),
+            source_wallet="",
+            asset=opp.assets[0],
+            category=opp.category,
+            current_price=ask,
+        )
+        position.strategy = strategy_name
+        self.portfolio.add_position(position)
+        self._log_strategy_trade(position, opp)
+        self.recent_opens[opp.condition_id] = datetime.now()
+        self.recent_opens[opp.assets[0]] = datetime.now()
+        self._save_recent_opens()
+        print(f"\n[{strategy_name.upper()} APERTO] {opp.market_title[:50]} ({opp.outcomes[0]} @ {ask:.3f})")
+        print(f"  Size ${size:.2f} | Shares {shares:.1f} | TP {tp:.0%} / SL {sl:.0%} | Score {opp.score:.3f}")
+        print(f"  Cash: ${self.portfolio.cash:.2f}")
+        self._save_state()
+        return True
+
     def _log_strategy_trade(self, position: Position, opp):
         trade_log = {
             "timestamp": datetime.now().isoformat(),
@@ -1101,7 +1255,7 @@ class PaperTradingSimulator:
 
         # Phase M: breakdown per strategia (aperte + chiuse + P&L realizzato)
         by_strategy = {}
-        for strat in ("copy", "arb_binary", "harvest", "arb_cross", "momentum", "whale", "other"):
+        for strat in ("copy", "arb_binary", "harvest", "arb_cross", "momentum", "whale", "sniper", "theta", "contrarian", "other"):
             open_p = [p for p in self.portfolio.positions.values() if (p.strategy or "copy") == strat]
             closed_p = [p for p in self.portfolio.closed_positions if (p.strategy or "copy") == strat]
             if not open_p and not closed_p and strat != "copy":

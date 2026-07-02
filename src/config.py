@@ -52,6 +52,29 @@ BUDGET = {
     "harvest_hard_stop_pct": -0.04,  # -4% (era -3%, più tollerante con fav_min 0.78)
     "harvest_soft_exit_pct": -0.12,  # se prezzo crolla sotto -12% chiudi (black-swan)
     "harvest_take_profit_pct": 0.04, # Phase T: early TP +4% → scalp, libera capitale
+    # Phase CC: Trailing stop — lock profit vincenti, segui peak price
+    "trailing_stop_enabled": True,
+    "trailing_stop_pct": -0.03,      # -3% dal peak → chiudi (lock profit)
+    "trailing_activate_pct": 0.03,  # attiva trailing solo dopo +3% gain
+    "trailing_apply_strategies": ["copy", "harvest", "momentum", "whale"],
+    # Phase EE: Kelly fractional sizing — ottimizzazione matematica
+    "kelly_enabled": True,
+    "kelly_fraction": 0.25,          # 1/4 Kelly (fractional, anti over-bet)
+    "kelly_min_size": 0.03,         # floor sizing Kelly
+    "kelly_max_size": 0.20,         # cap sizing Kelly (anti blow-up)
+    # Phase FF: Correlation-aware hedging — cluster cap per evento
+    "cluster_cap_pct": 0.40,        # max 40% portafoglio su stesso evento cluster
+    "cluster_max_positions": 5,     # max posizioni stesso evento
+    "cluster_event_key": "event_slug",  # campo per raggruppare (event_slug)
+    # Phase HH: Re-entry su continuation
+    "reentry_enabled": True,
+    "reentry_max": 2,               # max 2 re-entry per posizione originale
+    "reentry_size_factor": 0.5,     # size dimezzata ogni re-entry
+    "reentry_only_strategies": ["momentum", "whale"],
+    # Phase LL: Limit orders simulati (paper)
+    "limit_orders_enabled": True,
+    "limit_order_ttl_sec": 300,     # order expires dopo 5min
+    "limit_order_max_active": 6,    # max limit orders pending simultanei
     # Drawdown protection: se drawdown>12% dal peak, sizing auto -50%
     "drawdown_halve_threshold": 0.12,
     "drawdown_halve_factor": 0.5,
@@ -151,6 +174,9 @@ STRATEGIES = {
         "max_positions": 3,
         "min_move_pct": 0.05,      # move >= 5% nella finestra
         "window_cycles": 6,        # ~2min a 20s poll (finestra breve = trend fresco)
+        # Phase JJ: multi-timeframe — conferma trend su più finestre
+        "windows": [3, 6, 12],     # finestre multiple: 1min, 2min, 4min
+        "min_windows_confirmed": 2, # almeno 2 finestre confermano stesso verso
         "min_book_size": 30.0,
         "max_spread_ticks": 4,
         "min_days_to_expiry": 0.5,
@@ -191,6 +217,82 @@ STRATEGIES = {
         "scan_every_cycles": 3,     # ogni ~60s (3 cicli x 20s)
         "scan_markets": 60,         # top mercati per scoperta whale
     },
+
+    # Phase DD: SNIPER HARVEST — risoluzione imminente <24h, APR astronomica
+    # Sub-strategia harvest che scan solo mercati con endTime < 24h.
+    # Compra lato vincente 0.85-0.97 → payout $1 a risoluzione (12-24h). APR >1000%.
+    "sniper": {
+        "cap_pct": 0.20,
+        "max_single": 0.12,
+        "max_positions": 4,
+        "fav_min": 0.85,
+        "fav_max": 0.97,
+        "min_hours_to_expiry": 1,     # min 1h residuo (no last-minute illiquido)
+        "max_hours_to_expiry": 24,    # max 24h — SNIPER window
+        "min_book_size": 30.0,
+        "max_spread_ticks": 3,
+        "scan_markets": 150,
+        "scan_every_cycles": 1,       # ogni ciclo (20s) — window stretta, capture massimo
+        "min_volume": 1000.0,
+        "take_profit_pct": 0.05,      # early TP +5% se prezzo sale prima di resolution
+        "stop_loss_pct": -0.05,       # SL -5% (reversal near-certain)
+        "skip_politics": True,        # politics sorprendibili fino all'ultimo
+    },
+
+    # Phase GG: THETA / time-decay — "Will X by [date]" dove X NON successo
+    # No drifta verso $1 man mano che tempo passa senza evento (theta decay opzioni)
+    "theta": {
+        "cap_pct": 0.15,
+        "max_single": 0.08,
+        "max_positions": 4,
+        # riconosce mercati con "by <date>" / "before" nel titolo, compra NO
+        "no_price_min": 0.55,
+        "no_price_max": 0.92,
+        "min_days_to_expiry": 2,      # >2gg per far maturare theta
+        "max_days_to_expiry": 45,
+        "min_book_size": 30.0,
+        "max_spread_ticks": 4,
+        "scan_markets": 120,
+        "scan_every_cycles": 4,       # ogni ~80s (theta lento, no fretta)
+        "min_volume": 2000.0,
+        "take_profit_pct": 0.08,      # TP +8% (theta matura)
+        "stop_loss_pct": -0.06,       # SL -6% (evento accade -> reversal)
+        "min_keyword_score": 1,      # keywords "by/before/until/this month/week"
+    },
+
+    # Phase II: CONTRARIAN / fade extreme — whale VENDONO mercato estremo 0.95+
+    # Tesi: whale SELL su mercato a 0.97 = sanno qualcosa → fade (compra NO)
+    "contrarian": {
+        "cap_pct": 0.10,
+        "max_single": 0.06,
+        "max_positions": 2,
+        "extreme_min": 0.93,          # mercato >= 0.93 (estremo)
+        "extreme_max": 0.99,
+        "min_whale_sell_usdc": 8000,  # whale SELL >= $8K su estremo
+        "activity_lookback_min": 60,
+        "min_days_to_expiry": 0.5,
+        "max_days_to_expiry": 60,
+        "min_book_size": 40.0,
+        "max_spread_ticks": 4,
+        "scan_every_cycles": 5,       # ogni ~100s
+        "scan_markets": 80,
+        "min_volume": 5000.0,
+        "take_profit_pct": 0.15,      # TP +15% (reversion estremo = grande)
+        "stop_loss_pct": -0.04,       # SL -4% (estremo continua → esci presto)
+    },
+
+    # Phase MM: CROSS-MARKET ODDS — gated stub (richiede API odds esterni)
+    # Confronta Polymarket vs odds esterni (the-odds-api, Kalshi, Betfair)
+    # Bet quando |poly_prob - external_prob| > 2*(spread+fee)
+    "cross_odds": {
+        "enabled": False,            # GATED: richiede API key esterna
+        "cap_pct": 0.15,
+        "max_single": 0.10,
+        "max_positions": 3,
+        "odds_api_key": "",          # inserire chiave the-odds-api per attivare
+        "min_edge_pct": 0.04,        # min 4% edge vs esterni
+        "scan_every_cycles": 10,
+    },
 }
 
 # Selezione wallet per categoria (scanner) — invariato
@@ -228,6 +330,12 @@ WALLET_MONITOR = {
     "reserve_pool_size": 20,              # wallet di riserva qualificati non usati
     "top_active": 15,                     # wallet attivamente monitorati (era 30, ottimizziamo)
     "enabled": True,
+    # Phase KK: wallet clustering — raggruppa wallet correlati (stessi mercati)
+    # per evitare over-exposure a un cluster di whale che copiano tra loro
+    "clustering_enabled": True,
+    "cluster_min_overlap": 3,            # min 3 mercati condivisi = stesso cluster
+    "max_active_per_cluster": 3,         # max 3 wallet attivi dallo stesso cluster
+    "cluster_refresh_interval_sec": 7200, # refresh cluster ogni 2h
 }
 
 # Analyzer
