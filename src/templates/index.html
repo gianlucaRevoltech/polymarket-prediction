@@ -349,6 +349,7 @@
         .strat-arb { background: rgba(168,85,247,0.18); color: #c084fc; }
         .strat-xarb { background: rgba(236,72,153,0.18); color: #f472b6; }
         .strat-momentum { background: rgba(245,158,11,0.18); color: #fbbf24; }
+        .strat-whale { background: rgba(20,184,166,0.22); color: #2dd4bf; }
         .neutral-side { color: var(--neutral); font-weight: 700; }
         .reason-badge {
             display: inline-block; padding: 1px 5px; border-radius: 3px;
@@ -589,7 +590,7 @@
 
         <!-- Footer -->
         <div class="footer">
-            🤖 Polymarket Paper Trading Bot • Aggiornamento automatico ogni 10s • Budget: $300 • Multi-strategy: COPY+HARVEST+ARB+MOMENTUM
+            🤖 Polymarket Paper Trading Bot • Aggiornamento automatico ogni 10s • Budget: $300 • Multi-strategy: COPY+HARVEST+ARB+MOMENTUM+WHALE
         </div>
     </div>
 
@@ -1015,7 +1016,7 @@
         }
 
         function stratColor(name) {
-            const colors = {copy:'#60a5fa', harvest:'#34d399', arb_binary:'#c084fc', arb_cross:'#f472b6', momentum:'#fbbf24'};
+            const colors = {copy:'#60a5fa', harvest:'#34d399', arb_binary:'#c084fc', arb_cross:'#f472b6', momentum:'#fbbf24', whale:'#2dd4bf'};
             return colors[name] || '#94a3b8';
         }
 

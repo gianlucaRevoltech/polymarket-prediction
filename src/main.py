@@ -20,7 +20,7 @@ from scanner import PolymarketScanner
 from analyzer import WalletAnalyzer
 from portfolio_sync import PolymarketPositionFetcher
 from simulator import PaperTradingSimulator
-from strategies import ArbBinaryStrategy, HarvestStrategy, ArbCrossStrategy, MomentumStrategy
+from strategies import ArbBinaryStrategy, HarvestStrategy, ArbCrossStrategy, MomentumStrategy, WhaleStrategy
 from wallet_manager import WalletManager
 from models import WalletAnalysis
 from config import BUDGET, STRATEGY, STRATEGIES, TRACKING, SCANNER, MONITOR, WALLET_MONITOR, DATA_DIR, BASE_DIR
@@ -46,6 +46,7 @@ class PolymarketPaperTradingBot:
         self.harvest = HarvestStrategy()
         self.arb_cross = ArbCrossStrategy()
         self.momentum = MomentumStrategy()
+        self.whale = WhaleStrategy()
         self.wallet_mgr = WalletManager(scanner=self.scanner)
         # Phase Z: hook copy close -> wallet manager tracking P&L per-wallet
         self.simulator.on_copy_close = self.wallet_mgr.record_copy_close
@@ -356,6 +357,9 @@ class PolymarketPaperTradingBot:
                 if self._should_scan("momentum"):
                     opps = self.momentum.scan(self.fetcher)
                     opps_tried += self._run_strategy_opps("momentum", opps)
+                if self._should_scan("whale"):
+                    opps = self.whale.scan(self.fetcher)
+                    opps_tried += self._run_strategy_opps("whale", opps)
                 # Gestione posizioni non-copy (resolution + SL/TP harvest + momentum)
                 self.simulator.manage_strategy_positions(self.fetcher)
 

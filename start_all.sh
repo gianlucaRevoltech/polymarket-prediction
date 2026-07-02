@@ -149,6 +149,8 @@ clear_trading_state() {
   rm -f "$DATA_DIR/recent_opens.json"
   # Phase W: price history (momentum tracker) — no stale trend data dopo reset
   rm -f "$DATA_DIR/price_history.json"
+  # Phase BB: whale wallet list — no stale whale list dopo reset
+  rm -f "$DATA_DIR/whale_wallets.json"
   # Backup locali vecchi (cartella backup_*)
   rm -rf "$DATA_DIR"/backup_*
   # Alert log (Phase L) — riparte vuoto

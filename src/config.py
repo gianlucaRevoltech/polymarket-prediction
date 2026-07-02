@@ -163,6 +163,34 @@ STRATEGIES = {
     },
     # value-betting gated (Phase Q): disattivato
     "value": {"enabled": False},
+
+    # Phase BB: WHALE strategy — monitora wallet istituzionali (size enorme)
+    # Tesi: le whale muovono i mercati. Seguire i loro INGRESSI recenti cattura
+    # momentum istituzionale, non correlato con copy (wallet bravi) o momentum (prezzo).
+    "whale": {
+        "cap_pct": 0.25,           # 25% portafoglio dedicabile a whale following
+        "max_single": 0.12,        # sizing per singolo whale trade
+        "max_positions": 4,        # max posizioni whale simultanee
+        # scoperta whale: holders con posizione >= $25K in un singolo mercato
+        "min_whale_position_usdc": 25000,
+        "max_whales_tracked": 25,   # quante whale tenere in lista
+        "whale_refresh_interval_sec": 3600,  # refresh lista whale ogni 1h
+        # signal: whale ha fatto BUY negli ultimi N minuti
+        "activity_lookback_min": 45,
+        "min_whales_consensus": 1,  # min 1 whale (se >=2 whale stesso mercato = strong)
+        "min_whale_buy_usdc": 5000, # compra whale >= $5K per contare come signal
+        # filtri mercato (simili copy)
+        "max_days_to_expiry": 60,
+        "min_days_to_expiry": 0.25,
+        "min_book_size": 50.0,
+        "max_spread_ticks": 4,
+        "min_volume": 5000.0,
+        # risk: TP/SL
+        "take_profit_pct": 0.10,    # TP +10% (whale move puo' durare)
+        "stop_loss_pct": -0.06,     # SL -6% (whale sbagliata -> esci)
+        "scan_every_cycles": 3,     # ogni ~60s (3 cicli x 20s)
+        "scan_markets": 60,         # top mercati per scoperta whale
+    },
 }
 
 # Selezione wallet per categoria (scanner) — invariato

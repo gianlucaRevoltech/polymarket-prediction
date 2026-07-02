@@ -70,6 +70,15 @@
 - UI: wallet card con win_rate + status badge (ACTIVE/DISABLED/RESERVE)
 - Test: close logging OK, dashboard API OK
 
+### Phase BB: WHALE strategy — COMPLETE
+- Nuova WhaleStrategy: discover whale (25K+ shares holder) + follow BUY recenti
+- 25 whale scoperte da top 60 mercati, refresh ogni 1h
+- Signal: BUY whale >= $5K negli ultimi 45min, consenso per conditionId
+- Score = n_whales * total_usdc_buy (conviction istituzionale)
+- TP+10%/SL-6%, cap 25%, max_pos 4, scan ogni 60s
+- Test live: discovery OK, signal detection OK (Spain Yes, Egypt No con threshold test)
+- UI: whale badge teal, breakdown include whale
+
 ### Phase X: Polling — COMPLETE
 - poll_interval: 30s → 20s
 

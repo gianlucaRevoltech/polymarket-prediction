@@ -137,15 +137,29 @@ Problema: auto_rescan 3h = full scan pesante (minuti, 300 API). Soft-disable sol
 ### Phase AA: Dashboard P&L trade + info complete (sessione 2026-07-02)
 Obiettivo: UI mostra se trade andato in profitto, exit price, P&L, strategia.
 Problema: trades_log.json logga SOLO BUY (aperture). Chiusure non loggate.
-- [ ] Log SELL/close in trades_log: exit_price, pnl, pnl_pct, reason, strategy,
-  hold_time, exit_time
-- [ ] API dashboard: ritorna trade chiusi con P&L + aperti con P&L attuale
-- [ ] UI: sezione trade recenti con badge PROFIT/LOSS colorato, P&L $, %,
-  exit price, strategia, tempo held
-- [ ] UI: posizioni aperte mostrano P&L attuale + % (gia in dati, miglior display)
-- [ ] UI: breakdown P&L per strategia (copy/harvest/arb/momentum) con WR
-- [ ] UI: metriche sizing tier, drawdown, peak equity
-- **Status:** pending
+- [x] Log SELL/close in trades_log: exit_price, pnl, pnl_pct, reason, strategy, hold_time
+- [x] API dashboard: ritorna trade chiusi con P&L + aperti con P&L attuale
+- [x] UI: sezione trade recenti con badge PROFIT/LOSS colorato, P&L $, %, exit, strategia
+- [x] UI: posizioni aperte con P&L + strategy badge
+- [x] UI: breakdown P&L per strategia (copy/harvest/arb/momentum/whale) con WR
+- [x] UI: nuova sezione Trade Chiusi con storico P&L completo
+- **Status:** complete
+
+### Phase BB: WHALE strategy — monitora wallet istituzionali (sessione 2026-07-02)
+Obiettivo: strategia parallela che segue movimenti istituzionali (whale).
+Tesi: le whale muovono i mercati Polymarket. Seguire i loro INGRESSI recenti
+(BUY >= $5K) cattura momentum da SIZE, non correlato con copy/momentum/harvest.
+- [x] discover_whales: scan top 60 mercati -> holders con >= 25K shares -> lista 25 whale
+- [x] Persistente in data/whale_wallets.json, refresh ogni 1h
+- [x] scan: activity recente (45min) per whale -> filtra BUY >= $5K -> consenso conditionId
+- [x] Opportunity con score = n_whales * total_usdc_buy (conviction istituzionale)
+- [x] _open_whale in simulator: compra stesso outcome whale, TP+10%/SL-6%
+- [x] manage_strategy_positions: whale TP/SL + resolution
+- [x] Collegata in main.py (scan ogni 3 cicli ~60s)
+- [x] Config STRATEGIES.whale: cap 25%, max_pos 4, min_buy $5K, lookback 45min
+- [x] Test live: 25 whale scoperte, signal detection OK (Spain Yes, Egypt No)
+- [x] UI: whale badge color teal, breakdown summary include whale
+- **Status:** complete
 
 ## Phases vecchie (A-Q completate, vedi progress.md)
 

@@ -21,7 +21,7 @@ from datetime import datetime
 import json
 from pathlib import Path
 
-from config import STRATEGIES, BUDGET, POLYMARKET_API, DATA_DIR
+from config import STRATEGIES, BUDGET, POLYMARKET_API, DATA_DIR, SCANNER
 from categories import taker_fee_fraction
 
 
@@ -526,9 +526,259 @@ class MomentumStrategy:
         return opps
 
 
+# ----------------------------------------------------------------------
+# Phase BB: Whale strategy — segui movimenti istituzionali (wallet enormi)
+# ----------------------------------------------------------------------
+class WhaleStrategy:
+    """
+    Monitora wallet istituzionali (whale) e segue i loro INGRESSI recenti.
+
+    Tesi: le whale muovono i mercati Polymarket. Un ingresso whale (BUY >= $5K)
+    in un mercato segnala informazione/conviction istituzionale. Seguendo
+    i loro buy recenti catturiamo momentum da SIZE, non correlato con:
+      - copy (wallet bravi per WR storico)
+      - momentum (trend prezzo)
+      - harvest (near-certain resolution)
+
+    Flusso:
+      1) discover_whales: scan top mercati per volume -> get_market_holders
+         -> filtra holders con amount >= min_whale_position_usdc -> lista whale
+      2) scan: per ogni whale, fetch activity recente (last 45min)
+         -> filtra BUY con usdcSize >= min_whale_buy_usdc
+         -> raggruppa per conditionId (consenso whale)
+         -> genera Opportunity per ogni mercato con >= min_whales_consensus
+      3) Esecuzione: compra stesso outcome della whale, TP+10%/SL-6%
+    """
+    name = "whale"
+
+    def __init__(self):
+        cfg = STRATEGIES[self.name]
+        self.cap_pct = cfg["cap_pct"]
+        self.max_single = cfg["max_single"]
+        self.min_whale_pos = cfg["min_whale_position_usdc"]
+        self.max_whales = cfg["max_whales_tracked"]
+        self.refresh_interval = cfg["whale_refresh_interval_sec"]
+        self.lookback_min = cfg["activity_lookback_min"]
+        self.min_consensus = cfg["min_whales_consensus"]
+        self.min_buy_usdc = cfg["min_whale_buy_usdc"]
+        self.max_days = cfg["max_days_to_expiry"]
+        self.min_days = cfg["min_days_to_expiry"]
+        self.min_book = cfg["min_book_size"]
+        self.max_spread = cfg["max_spread_ticks"]
+        self.tp = cfg["take_profit_pct"]
+        self.sl = cfg["stop_loss_pct"]
+        self.scan_markets = cfg["scan_markets"]
+        self.min_volume = cfg.get("min_volume", 5000.0)
+
+        self.whale_file = DATA_DIR / "whale_wallets.json"
+        self.whale_addresses: List[str] = []
+        self.last_discover: Optional[datetime] = None
+        self._load_whales()
+
+    def _load_whales(self):
+        try:
+            if self.whale_file.exists():
+                import json as _j
+                with open(self.whale_file) as f:
+                    data = _j.load(f)
+                self.whale_addresses = data.get("addresses", [])
+                ts = data.get("last_discover")
+                if ts:
+                    self.last_discover = datetime.fromisoformat(ts)
+        except Exception:
+            self.whale_addresses = []
+
+    def _save_whales(self):
+        try:
+            import json as _j
+            with open(self.whale_file, "w") as f:
+                _j.dump({"addresses": self.whale_addresses,
+                         "last_discover": self.last_discover.isoformat() if self.last_discover else ""},
+                        f, indent=2)
+        except Exception:
+            pass
+
+    def _should_discover(self) -> bool:
+        if not self.whale_addresses:
+            return True
+        if self.last_discover is None:
+            return True
+        return (datetime.now() - self.last_discover).total_seconds() >= self.refresh_interval
+
+    def discover_whales(self, fetcher) -> int:
+        """Scansiona top mercati, raccoglie holder con posizione >= min_whale_pos.
+        Ritorna n whale scoperte."""
+        markets = fetcher.get_active_markets(limit=self.scan_markets, min_volume=self.min_volume)
+        whale_set = set()
+        for m in markets:
+            cid = m.get("condition_id")
+            if not cid:
+                continue
+            holders = self._get_holders(fetcher, cid)
+            for h in holders:
+                # amount = shares; valore ~= amount * price (~0.5 mid). Approssimazione
+                # conservativa: usa amount come proxy (shares). Per essere sicuri
+                # consideriamo amount >= min_whale_pos (shares; a prezzo 0.5 = $12.5K value)
+                amt = h.get("amount", 0)
+                if amt >= self.min_whale_pos:
+                    addr = h.get("address", "").lower()
+                    if addr:
+                        whale_set.add(addr)
+            if len(whale_set) >= self.max_whales * 2:
+                break
+        self.whale_addresses = list(whale_set)[:self.max_whales]
+        self.last_discover = datetime.now()
+        self._save_whales()
+        print(f"  [WHALE] Scoperte {len(self.whale_addresses)} whale (pos >= {self.min_whale_pos/1000:.0f}K shares)")
+        return len(self.whale_addresses)
+
+    def _get_holders(self, fetcher, condition_id: str) -> list:
+        """Wrapper get_market_holders via data-api."""
+        try:
+            url = f"{fetcher.data_api}/holders"
+            r = fetcher.session.get(url, params={"market": condition_id, "limit": 50}, timeout=15)
+            r.raise_for_status()
+            data = r.json()
+        except Exception:
+            return []
+        holders = []
+        for token in data:
+            for h in token.get("holders", []):
+                addr = h.get("proxyWallet", "")
+                if not addr:
+                    continue
+                holders.append({
+                    "address": addr,
+                    "name": h.get("name", ""),
+                    "amount": float(h.get("amount", 0) or 0),
+                    "outcome_index": h.get("outcomeIndex", -1),
+                })
+        return holders
+
+    def _fetch_whale_activity(self, fetcher, address: str, limit: int = 50) -> list:
+        """Activity recente di una whale via data-api."""
+        try:
+            url = f"{fetcher.data_api}/activity"
+            r = fetcher.session.get(url, params={"user": address, "limit": limit}, timeout=15)
+            r.raise_for_status()
+            return r.json()
+        except Exception:
+            return []
+
+    def scan(self, fetcher) -> List[Opportunity]:
+        """Rileva BUY whale recenti e genera opportunita per consenso."""
+        # 1) discover se necessario
+        if self._should_discover():
+            self.discover_whales(fetcher)
+        if not self.whale_addresses:
+            return []
+
+        # 2) activity recente di ogni whale, filtra BUY >= min_buy_usdc in lookback
+        now_ts = datetime.now().timestamp()
+        cutoff = now_ts - self.lookback_min * 60
+        # conditionId -> {whales: set, buys: [...], title, slug, asset, outcome, price}
+        signals: Dict[str, dict] = {}
+        for addr in self.whale_addresses:
+            acts = self._fetch_whale_activity(fetcher, addr, limit=50)
+            for a in acts:
+                if a.get("type") != "TRADE":
+                    continue
+                if a.get("side", "").upper() != "BUY":
+                    continue
+                try:
+                    ts = int(a.get("timestamp", 0))
+                except Exception:
+                    continue
+                if ts < cutoff:
+                    continue
+                usdc = float(a.get("usdcSize", 0) or 0)
+                if usdc < self.min_buy_usdc:
+                    continue
+                cid = a.get("conditionId", "")
+                if not cid:
+                    continue
+                asset = a.get("asset", "")
+                outcome = a.get("outcome", "")
+                price = float(a.get("price", 0) or 0)
+                title = a.get("title", "")
+                slug = a.get("slug", "")
+                sig = signals.setdefault(cid, {"whales": set(), "buys": [], "title": title,
+                                                "slug": slug, "asset": asset, "outcome": outcome,
+                                                "price": price})
+                sig["whales"].add(addr.lower())
+                sig["buys"].append({"addr": addr, "outcome": outcome, "price": price,
+                                    "usdc": usdc, "asset": asset})
+            import time as _t
+            _t.sleep(0.1)  # rate limit gentile tra whale
+
+        # 3) filtra per consenso >= min_whales_consensus, genera Opportunity
+        opps: List[Opportunity] = []
+        for cid, sig in signals.items():
+            n_whales = len(sig["whales"])
+            if n_whales < self.min_consensus:
+                continue
+            asset = sig["asset"]
+            if not asset:
+                continue
+            # recupera info mercato per end_date + tokens + filtri
+            m = fetcher.get_market(cid)
+            if not m or len(m.get("tokens", [])) < 2:
+                continue
+            days = fetcher.days_to_expiry(m["end_date"])
+            if days is None or days > self.max_days or days < self.min_days:
+                continue
+            # book per liquidita + entry price
+            book = fetcher.get_book(asset)
+            if not book:
+                continue
+            ask = book.get("best_ask")
+            bid = book.get("best_bid")
+            if ask is None or ask <= 0 or ask >= 1:
+                continue
+            spread_c = ((ask - bid) * 100) if bid is not None else 99
+            if spread_c > self.max_spread * 0.01 * 100:
+                continue
+            ask_sz = float(book.get("ask_size") or 0.0)
+            if ask_sz < self.min_book:
+                continue
+            max_fill = ask_sz * ask
+            if max_fill < BUDGET["min_position_size"]:
+                continue
+            # score: n_whales * total_usdc_buy (conviction istituzionale)
+            total_usdc = sum(b["usdc"] for b in sig["buys"])
+            score = n_whales * (total_usdc / 1000.0)
+            # profit_per_share stima: whale move -> +TP target (conservativo 50% TP)
+            fee = _leg_fee_fraction(m.get("fee_type", ""), ask) * ask
+            profit_per_share = ask * (self.tp * 0.5) - fee
+            out_label = sig["outcome"] or (m["outcomes"][0] if m["outcomes"] else "Yes")
+            opp = Opportunity(
+                strategy=self.name,
+                condition_id=cid,
+                market_title=sig["title"] or m["question"],
+                event_slug=sig["slug"] or m.get("event_slug", ""),
+                category=m["category"],
+                end_date=m["end_date"],
+                assets=[asset, ""],
+                outcomes=[out_label, ""],
+                cost_per_share=ask,
+                best_asks=[ask],
+                book_sizes=[ask_sz],
+                spread_cents=[spread_c],
+                payout_per_share=1.0,
+                profit_per_share=profit_per_share,
+                max_fill_size=max_fill,
+                fee_type=m.get("fee_type", ""),
+                score=score,
+            )
+            opps.append(opp)
+        opps.sort(key=lambda o: o.score, reverse=True)
+        return opps
+
+
 STRATEGY_REGISTRY = {
     "arb_binary": ArbBinaryStrategy,
     "harvest": HarvestStrategy,
     "arb_cross": ArbCrossStrategy,
     "momentum": MomentumStrategy,
+    "whale": WhaleStrategy,
 }

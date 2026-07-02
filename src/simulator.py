@@ -744,6 +744,28 @@ class PaperTradingSimulator:
                 elif pnl_pct <= msl:
                     print(f"[MOMENTUM SL] {pos.market_title[:40]} P&L {pnl_pct:.1%} <= {msl:.0%}")
                     self._close_by_pid(pid, cur, "stop_loss")
+            elif strat == "whale":
+                # Phase BB: gestione whale — TP/SL direzionale + resolution
+                cur = fetcher.get_price(pos.asset) if pos.asset else None
+                if cur is None:
+                    m = fetcher.get_market(pos.condition_id) if pos.condition_id else None
+                    if m is not None and m.get("closed"):
+                        exit_price = 1.0 if (pos.outcome and pos.outcome.lower() in ("yes",)) else 0.0
+                        self._close_by_pid(pid, exit_price, "resolved")
+                    continue
+                if cur <= 0.0 or cur >= 1.0:
+                    self._close_by_pid(pid, 1.0 if cur >= 0.5 else 0.0, "resolved")
+                    continue
+                pos.current_price = cur
+                pnl_pct = (cur - pos.entry_price) / pos.entry_price if pos.entry_price > 0 else 0
+                wtp = STRATEGIES.get("whale", {}).get("take_profit_pct", 0.10)
+                wsl = STRATEGIES.get("whale", {}).get("stop_loss_pct", -0.06)
+                if pnl_pct >= wtp:
+                    print(f"[WHALE TP] {pos.market_title[:40]} P&L {pnl_pct:.1%} >= {wtp:.0%}")
+                    self._close_by_pid(pid, cur, "take_profit")
+                elif pnl_pct <= wsl:
+                    print(f"[WHALE SL] {pos.market_title[:40]} P&L {pnl_pct:.1%} <= {wsl:.0%}")
+                    self._close_by_pid(pid, cur, "stop_loss")
 
     def _close_by_pid(self, pid: str, exit_price: float, reason: str) -> bool:
         if pid not in self.portfolio.positions:
@@ -807,6 +829,8 @@ class PaperTradingSimulator:
             return self._open_arb_cross(opp, size, fetcher)
         if strat == "momentum":
             return self._open_momentum(opp, size, fetcher)
+        if strat == "whale":
+            return self._open_whale(opp, size, fetcher)
         return False
 
     def _open_arb_binary(self, opp, size: float, fetcher) -> bool:
@@ -958,6 +982,46 @@ class PaperTradingSimulator:
         self._save_state()
         return True
 
+    def _open_whale(self, opp, size: float, fetcher) -> bool:
+        # Phase BB: seguito ingresso whale — compra stesso outcome della whale
+        ask = opp.cost_per_share
+        if ask <= 0 or ask >= 1:
+            return False
+        slip = SIMULATOR["entry_slippage"]
+        eff = min(0.999, ask * (1 + slip))
+        fee_frac = taker_fee_fraction(opp.category, eff)
+        eff_fee = min(0.999, eff * (1 + fee_frac))
+        shares = size / eff_fee
+        position = Position(
+            position_id=str(uuid.uuid4()),
+            market_title=opp.market_title,
+            market_slug="",
+            condition_id=opp.condition_id,
+            outcome=opp.outcomes[0],
+            entry_price=eff_fee,
+            size_usdc=size,
+            shares=shares,
+            entry_time=datetime.now(),
+            source_wallet="",
+            asset=opp.assets[0],
+            category=opp.category,
+            current_price=ask,
+        )
+        position.strategy = "whale"
+        self.portfolio.add_position(position)
+        self._log_strategy_trade(position, opp)
+        self.recent_opens[opp.condition_id] = datetime.now()
+        self.recent_opens[opp.assets[0]] = datetime.now()
+        self._save_recent_opens()
+        wtp = STRATEGIES.get("whale", {}).get("take_profit_pct", 0.10)
+        wsl = STRATEGIES.get("whale", {}).get("stop_loss_pct", -0.06)
+        print(f"\n[WHALE APERTO] {opp.market_title[:50]} ({opp.outcomes[0]} @ {ask:.3f})")
+        print(f"  Size ${size:.2f} | Shares {shares:.1f} | TP {wtp:.0%} / SL {wsl:.0%} | "
+              f"Whale score {opp.score:.2f}")
+        print(f"  Cash: ${self.portfolio.cash:.2f}")
+        self._save_state()
+        return True
+
     def _log_strategy_trade(self, position: Position, opp):
         trade_log = {
             "timestamp": datetime.now().isoformat(),
@@ -1037,7 +1101,7 @@ class PaperTradingSimulator:
 
         # Phase M: breakdown per strategia (aperte + chiuse + P&L realizzato)
         by_strategy = {}
-        for strat in ("copy", "arb_binary", "harvest", "arb_cross", "momentum", "other"):
+        for strat in ("copy", "arb_binary", "harvest", "arb_cross", "momentum", "whale", "other"):
             open_p = [p for p in self.portfolio.positions.values() if (p.strategy or "copy") == strat]
             closed_p = [p for p in self.portfolio.closed_positions if (p.strategy or "copy") == strat]
             if not open_p and not closed_p and strat != "copy":
