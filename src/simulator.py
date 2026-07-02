@@ -688,9 +688,6 @@ class PaperTradingSimulator:
                     # market may be resolved: prova a leggere via gamma
                     m = fetcher.get_market(pos.condition_id) if pos.condition_id else None
                     if m is not None and m.get("closed"):
-                        # resolved: pago $1 se favored outcome vince, $0 altro.
-                        # Heuristic: harvest compriamo lato 0.85-0.975 (vincente),
-                        # quindi se resolved_score >=0.5 vinceva, aspettiamo $1.
                         exit_price = 1.0 if (pos.entry_price >= 0.50) else 0.0
                         self._close_by_pid(pid, exit_price, "resolved")
                     continue
@@ -699,14 +696,43 @@ class PaperTradingSimulator:
                     continue
                 pos.current_price = cur
                 pnl_pct = (cur - pos.entry_price) / pos.entry_price if pos.entry_price > 0 else 0
-                hard = BUDGET.get("harvest_hard_stop_pct", -0.03)
-                soft_exit = BUDGET.get("harvest_soft_exit_pct", -0.10)
-                if pnl_pct <= soft_exit:
+                hard = BUDGET.get("harvest_hard_stop_pct", -0.04)
+                soft_exit = BUDGET.get("harvest_soft_exit_pct", -0.12)
+                early_tp = BUDGET.get("harvest_take_profit_pct", 0.04)
+                # Phase T: early TP (+4%) → scalp mode, libera capitale per nuovo harvest
+                if pnl_pct >= early_tp:
+                    print(f"[HARVEST EARLY TP] {pos.market_title[:40]} P&L {pnl_pct:.1%} >= {early_tp:.0%}")
+                    self._close_by_pid(pid, cur, "take_profit")
+                elif pnl_pct <= soft_exit:
                     print(f"[HARVEST EXIT] {pos.market_title[:40]} P&L {pnl_pct:.1%}")
                     self._close_by_pid(pid, cur, "stop_loss")
-                elif cur < 0.90 and pnl_pct <= hard:
-                    # price < 0.90 → esito non era certo; esci
+                elif cur < 0.85 and pnl_pct <= hard:
+                    # price crollato sotto 0.85 → esito non era certo; esci
                     print(f"[HARVEST HARD SL] {pos.market_title[:40]} cur {cur:.3f}")
+                    self._close_by_pid(pid, cur, "stop_loss")
+            elif strat == "momentum":
+                # Phase W: gestione momentum — SL/TP direzionale + resolution
+                cur = fetcher.get_price(pos.asset) if pos.asset else None
+                if cur is None:
+                    m = fetcher.get_market(pos.condition_id) if pos.condition_id else None
+                    if m is not None and m.get("closed"):
+                        # resolved: payout $1 se nostro outcome vince, $0 altro
+                        # heuristic: usciamo al prezzo corrente di resolution
+                        exit_price = 1.0 if (pos.outcome and pos.outcome.lower() in ("yes",)) else 0.0
+                        self._close_by_pid(pid, exit_price, "resolved")
+                    continue
+                if cur <= 0.0 or cur >= 1.0:
+                    self._close_by_pid(pid, 1.0 if cur >= 0.5 else 0.0, "resolved")
+                    continue
+                pos.current_price = cur
+                pnl_pct = (cur - pos.entry_price) / pos.entry_price if pos.entry_price > 0 else 0
+                mtp = STRATEGIES.get("momentum", {}).get("take_profit_pct", 0.06)
+                msl = STRATEGIES.get("momentum", {}).get("stop_loss_pct", -0.05)
+                if pnl_pct >= mtp:
+                    print(f"[MOMENTUM TP] {pos.market_title[:40]} P&L {pnl_pct:.1%} >= {mtp:.0%}")
+                    self._close_by_pid(pid, cur, "take_profit")
+                elif pnl_pct <= msl:
+                    print(f"[MOMENTUM SL] {pos.market_title[:40]} P&L {pnl_pct:.1%} <= {msl:.0%}")
                     self._close_by_pid(pid, cur, "stop_loss")
 
     def _close_by_pid(self, pid: str, exit_price: float, reason: str) -> bool:
@@ -768,6 +794,8 @@ class PaperTradingSimulator:
             return self._open_harvest(opp, size, fetcher)
         if strat == "arb_cross":
             return self._open_arb_cross(opp, size, fetcher)
+        if strat == "momentum":
+            return self._open_momentum(opp, size, fetcher)
         return False
 
     def _open_arb_binary(self, opp, size: float, fetcher) -> bool:
@@ -880,6 +908,45 @@ class PaperTradingSimulator:
         self._save_state()
         return True
 
+    def _open_momentum(self, opp, size: float, fetcher) -> bool:
+        ask = opp.cost_per_share
+        if ask <= 0 or ask >= 1:
+            return False
+        slip = SIMULATOR["entry_slippage"]
+        eff = min(0.999, ask * (1 + slip))
+        fee_frac = taker_fee_fraction(opp.category, eff)
+        eff_fee = min(0.999, eff * (1 + fee_frac))
+        shares = size / eff_fee
+        position = Position(
+            position_id=str(uuid.uuid4()),
+            market_title=opp.market_title,
+            market_slug="",
+            condition_id=opp.condition_id,
+            outcome=opp.outcomes[0],
+            entry_price=eff_fee,
+            size_usdc=size,
+            shares=shares,
+            entry_time=datetime.now(),
+            source_wallet="",
+            asset=opp.assets[0],
+            category=opp.category,
+            current_price=ask,
+        )
+        position.strategy = "momentum"
+        self.portfolio.add_position(position)
+        self._log_strategy_trade(position, opp)
+        self.recent_opens[opp.condition_id] = datetime.now()
+        self.recent_opens[opp.assets[0]] = datetime.now()
+        self._save_recent_opens()
+        mtp = STRATEGIES.get("momentum", {}).get("take_profit_pct", 0.06)
+        msl = STRATEGIES.get("momentum", {}).get("stop_loss_pct", -0.05)
+        print(f"\n[MOMENTUM APERTO] {opp.market_title[:50]} ({opp.outcomes[0]} @ {ask:.3f})")
+        print(f"  Size ${size:.2f} | Shares {shares:.1f} | TP {mtp:.0%} / SL {msl:.0%} | "
+              f"Move score {opp.score:.3f}")
+        print(f"  Cash: ${self.portfolio.cash:.2f}")
+        self._save_state()
+        return True
+
     def _log_strategy_trade(self, position: Position, opp):
         trade_log = {
             "timestamp": datetime.now().isoformat(),
@@ -921,7 +988,7 @@ class PaperTradingSimulator:
 
         # Phase M: breakdown per strategia (aperte + chiuse + P&L realizzato)
         by_strategy = {}
-        for strat in ("copy", "arb_binary", "harvest", "arb_cross", "other"):
+        for strat in ("copy", "arb_binary", "harvest", "arb_cross", "momentum", "other"):
             open_p = [p for p in self.portfolio.positions.values() if (p.strategy or "copy") == strat]
             closed_p = [p for p in self.portfolio.closed_positions if (p.strategy or "copy") == strat]
             if not open_p and not closed_p and strat != "copy":

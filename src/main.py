@@ -20,7 +20,7 @@ from scanner import PolymarketScanner
 from analyzer import WalletAnalyzer
 from portfolio_sync import PolymarketPositionFetcher
 from simulator import PaperTradingSimulator
-from strategies import ArbBinaryStrategy, HarvestStrategy, ArbCrossStrategy
+from strategies import ArbBinaryStrategy, HarvestStrategy, ArbCrossStrategy, MomentumStrategy
 from models import WalletAnalysis
 from config import BUDGET, STRATEGY, STRATEGIES, TRACKING, SCANNER, MONITOR, DATA_DIR, BASE_DIR
 
@@ -44,6 +44,7 @@ class PolymarketPaperTradingBot:
         self.arb_binary = ArbBinaryStrategy()
         self.harvest = HarvestStrategy()
         self.arb_cross = ArbCrossStrategy()
+        self.momentum = MomentumStrategy()
         self._cycle_count = 0
 
         pid_file = BASE_DIR / "data" / "bot.pid"
@@ -224,6 +225,8 @@ class PolymarketPaperTradingBot:
     def _should_scan(self, strategy_name: str) -> bool:
         cfg = STRATEGIES.get(strategy_name, {})
         every = cfg.get("scan_every_cycles", 1)
+        if every <= 1:
+            return True   # every=1: scan ogni ciclo
         return (self._cycle_count % every) == 1
 
     def _run_strategy_opps(self, strategy_name: str, opps: list) -> int:
@@ -307,8 +310,10 @@ class PolymarketPaperTradingBot:
                     if new_holdings:
                         print(f"  {len(new_holdings)} NUOVI (wallet,asset) delta rilevati")
 
-                # Phase M: STRATEGIE COMPLEMENTARI (arb/harvest/cross) cadenzate
+                # Phase M/W: STRATEGIE COMPLEMENTARI (arb/harvest/cross/momentum)
                 self._cycle_count += 1
+                # Phase W: aggiorna price history per momentum (ogni ciclo)
+                self.momentum.update_prices(self.fetcher, self._cycle_count)
                 opps_tried = 0
                 if self._should_scan("arb_binary"):
                     opps = self.arb_binary.scan(self.fetcher)
@@ -319,7 +324,10 @@ class PolymarketPaperTradingBot:
                 if self._should_scan("arb_cross"):
                     opps = self.arb_cross.scan(self.fetcher)
                     opps_tried += self._run_strategy_opps("arb_cross", opps)
-                # Gestione posizioni non-copy (resolution + SL harvest)
+                if self._should_scan("momentum"):
+                    opps = self.momentum.scan(self.fetcher)
+                    opps_tried += self._run_strategy_opps("momentum", opps)
+                # Gestione posizioni non-copy (resolution + SL/TP harvest + momentum)
                 self.simulator.manage_strategy_positions(self.fetcher)
 
                 self.simulator.reconcile(
