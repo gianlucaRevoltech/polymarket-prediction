@@ -205,5 +205,71 @@ e aumentare aperture per raccogliere 30+ trade prima di giudicare edge.
   VeeFriendsDownUnder/CoffeeLover/Zptml/ChetterHummin (vs 9 sessione precedente)
 - Trade Egypt Yes raddoppiato @0.393 con size $9.01 vs $7.22 (cap-wallet differenza)
 
+## EMERGENZA 2026-07-07: Dashboard mostra -5.63%, WR 24% — ROOT CAUSE
+
+### Dati dashboard 07/07 07:25
+- Equity $283.11 / $300 → P&L -$16.89 (-5.63%)
+- Realizzato -$18.86 | Non realizzato +$1.97
+- 25 trade chiusi: 6W / 19L = **WR 24%**
+- 19/25 chiusi sono **STOP LOSS** (76%)
+
+### Per-strategia
+| Strategia | Open | Closed | Realized P&L | WR |
+|-----------|------|--------|-------------|-----|
+| whale     | 4    | 6      | -$6.99       | 17% |
+| momentum  | 0    | 4      | -$4.20       |  0% |
+| contrarian| 0    | 3      | -$3.00       |  0% |
+| harvest   | 0    | 8      | -$3.13       | 38% |
+| copy      | 0    | 4      | -$1.54       | 50% |
+| arb/sniper/theta | 0 | 0 | $0 | - |
+
+### ROOT CAUSE: SL percentuale a prezzi estremi = rumore-trigger
+
+Il bot entra a prezzi estremi (0.999, 0.992, 0.036, 0.026, 0.061) dove:
+- **SL % triggera sul rumore**, non sul fallimento del segnale
+- **Risk/reward invertito**: max gain minuscolo, max loss enorme
+
+**Esempi critici (tutti dalla trade history reale):**
+1. Whale No @ 0.999 → SL -6% = trigger a 0.939. Gain max $0.001, loss $0.06. RR 1:60.
+2. Whale Yes @ 0.036 (Mexico) → SL -6% = trigger a 0.0338. 0.002 move = 1 tick.
+   Risultato: -21.70% (gap oltre SL).
+3. Contrarian Yes @ 0.026 (USA) → SL -4% = trigger a 0.025. 0.001 move = 1 tick.
+4. Momentum No @ 0.992 (Norway) → SL -5% = trigger a 0.942. YES era a 0.008,
+   "momentum" rilevato su move di 0.0005 = rumore puro.
+5. Harvest No @ 0.929 (England) → SL -4% = trigger a 0.892. 3.7 cent = rumore
+   normale per near-certain market.
+
+### Perché le strategie entrano a prezzi estremi
+
+**Whale:** `scan()` filtra solo `0 < ask < 1`. NESSUNA banda prezzo. Compra a
+qualsiasi prezzo la whale ha comprato, anche 0.999.
+
+**Momentum:** `scan()` calcola `move = (last - first) / first`. Se YES va da 0.0085
+a 0.008, move = -5.9% → "momentum!". Ma 0.0005 assoluti = rumore. Compra NO
+a 0.992 (complemento).
+
+**Contrarian:** fade di mercati estremi 0.93-0.99. Se whale SELL Yes a 0.97,
+compra No. Ma No price può essere 0.025-0.06 — longshot con SL a 1 tick.
+
+**Harvest:** fav_min 0.78, fav_max 0.985. A 0.985, SL -4% = 3.9 cent = rumore.
+Early TP +4% = 3.9 cent = anche rumore, ma peggio: chiude posizioni che
+andrebbero a $1 a resolution, lasciando 96% del juice sul tavolo.
+
+### Bug secondari
+- **9 strategie attive**: solo copy ha backtest (89% WR in 0.30-0.70). Le altre
+  MAI backtestate. Whale/momentum/contrarian sono scommesse non validate.
+- **Sizing 6-13%**: a WR 24%, ogni loss è -0.8% portfolio. Drain costante.
+- **Kelly + trailing stop attivi**: amplificano sizing e chiudono su rumore.
+- **max_open_positions 12**: troppi slot, troppo esposizione con WR basso.
+
+### Fix (vedi task_plan.md Phase CC-CG)
+1. KILL whale/momentum/contrarian/sniper/theta (0-17% WR, non validati)
+2. SL assoluto (cent) per prezzi estremi, non percentuale
+3. Entry band 0.08-0.92 per tutte le direzionali
+4. Harvest: hold-to-resolution, no early TP, SL assoluto -5 cent
+5. Sizing 3% base, 8 pos max, reserve 20%, no Kelly, no trailing
+6. Validare 30 trade prima di scalare
+
 ---
+
 *Update this file after every 2 view/browser/search operations*

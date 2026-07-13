@@ -1,222 +1,187 @@
-# Task Plan: Polymarket Multi-Strategy Bot → obiettivo "raddoppio capitale/settimana"
+# Task Plan: Polymarket Bot — FIX EMERGENZA PERFORMANCE (-5.63%, WR 24%)
 
 ## Goal
-Far diventare il bot (dopo deploy 01/07: -$0.81, 4 trade/24h, sizing 3%=$9) un
-sistema AGGRESSIVO e profittevole che possa raddoppiare $300 → $600 in 1-2 settimane.
-Step intermedio: +30-50%/sett prima settimana. Raddoppio realistico in 10-14gg
-con sizing aggressivo + alta frequenza + multi-strategy + wallet rotation.
+Fermare l'emorragia di capitale ($300→$283, -5.63%, WR 24%) e trasformare il bot
+in un sistema profittevole. ROOT CAUSE: il bot entra a prezzi estremi (0.999, 0.036,
+0.026) dove lo stop-loss percentuale viene triggerato dal RUMORE di mercato, non
+dal fallimento del segnale. Risk/reward invertito: gain minuscolo, loss enorme.
 
-## Snapshot post-deploy 01/07 (dashboard 02/07 07:12)
-- Equity $299.19 / $300 → P&L -$0.81 (-0.27%)
-- Realizzato -$0.73 | Non realizzato -$0.09
-- **2 aperte** (Spain No @0.909, England No @0.918 = HARVEST), **2 chiuse**, WR 50%
-- 4 trade recenti: 2 Alphabet Yes (COPY, size $7.20) + Spain/England No (HARVEST $9)
-- 10 wallet monitorati (auto-rescan DISABLED, lista fissa)
-- ARB BINARY: 0 opp (mercato efficiente) | ARB CROSS: 0 opp (raro)
+## Current Phase
+Phase CH (Re-validazione e deploy)
 
-## Diagnosi: perché risultati scadenti
-1. **Sizing 3% = $9/trade** → troppo piccolo per doubling. 100 trade vincenti a $9
-   con +18% = +$162 totale. Servono sizing 8-15% per impatto reale.
-2. **Tier 0 bloccato fino a 30 trade** → sizing resta 3% per giorni. Troppo lento.
-3. **Solo 4 trade/24h** → frequenza bassissima. Copy trova poco (filtri stretti +
-   pochi wallet), harvest capped a 2 pos, arb 0.
-4. **Harvest cap 2 posizioni, cap_pct 12%** → solo $36 deployabili su harvest.
-   Harvest è la strategia più profittevole (APR 200%+ su WC) ma strozzata.
-5. **10 wallet fissi, no rotation** → copy vede pochi ingressi nuovi. Wallet
-   migliori cambiano nel tempo; lista statica perde segnali freschi.
-6. **Arb binary 0** → mercato efficiente su top-80. Ma con scan più ampio + profit
-   min più basso, qualche arb appare (es. mercati meno liquidi).
-7. **Niente strategia momentum/value** → copy è l'unica con edge reale ma frequenza
-   bassa. Serve almeno una strategia non-correlata attiva.
+## Diagnosi Root Cause (DASHBOARD 07/07)
 
-## Piano aggressivo (Phase R-Y, sessione 2026-07-02)
+### I numeri
+| Strategia | Open/Closed | Realized P&L | WR | Verdetto |
+|-----------|-------------|-------------|-----|----------|
+| WHALE     | 4/6         | -$6.99      | 17% | ❌ KILL |
+| MOMENTUM  | 0/4         | -$4.20      |  0% | ❌ KILL |
+| CONTRARIAN| 0/3         | -$3.00      |  0% | ❌ KILL |
+| HARVEST   | 0/8         | -$3.13      | 38% | ⚠️ FIX |
+| COPY      | 0/4         | -$1.54      | 50% | ✅ KEEP |
+| Arb/cross/sniper/theta | 0/0 | $0 | - | ⏸ DISABLE |
 
-### Phase R: Sizing aggressivo + tier progression veloce
-Obiettivo: sizing partenza 6% (non 3%), scala a 10-15% in poche decine di trade.
-- [x] Tier 0: 3% → **6%** (backtest conferma edge, non serve attendere 30 trade)
-- [x] Tier thresholds: 0/30/60/120 → **0/10/25/50** (scale up in 1-2 giorni)
-- [x] Tier fracs: 6% → **10% → 13% → 15%** (massimo aggressivo ma non blow-up)
-- [x] max_position_size floor: 3% → 6%
-- [x] reserve_ratio: 20% → **15%** (più capitale operativo)
-- [x] max_open_positions: 6 → **12** (più slot per tutte le strategie)
-- [x] max_positions_per_wallet: 1 → **2** (copy: anche 2 pos/wallet)
-- [x] max_positions_per_category: 2 → **4** (più diversificazione categoria)
+### Il problema FONDAMENTALE: SL percentuale a prezzi estremi
+
+**Esempio Whale (pegzimo):**
+- Compra No @ 0.999 (Cape Verde Semifinals) → SL -6% triggera a 0.939
+- Max gain: $0.001/share (a $1.00) | Max loss: $0.06/share (a 0.939)
+- **Risk:Reward = 60:1 SFASCIO**. Basta un tick di rumore → stop loss.
+
+**Esempio Whale longshot:**
+- Compra Yes @ 0.036 (Mexico win) → SL -6% triggera a 0.0338
+- 0.002 di move assoluta = stop loss. Il rumore normale è 1-2 tick.
+- Risultato: -21.70% (SL hard triggerato oltre il -6% per gap)
+
+**Esempio Contrarian:**
+- Compra Yes @ 0.026 (USA win) → SL -4% triggera a 0.025
+- 0.001 di move = stop loss. UN TICK.
+
+**Esempio Momentum:**
+- Compra No @ 0.992 (Norway win) → SL -5% triggera a 0.942
+- Move rilevata: YES sceso da 0.0085 a 0.008 = -5.9% → "momentum!"
+- Ma 0.0005 assoluti = rumore puro, non trend.
+
+**Consequenza: 19/25 trade chiusi sono STOP LOSS.** Il 76% delle chiusure è SL.
+Non è "sfortuna" — è un difetto strutturale: entrate a prezzi estremi + SL
+percentuale = macchina da perdita garantita.
+
+### Altri problemi
+1. **9 strategie attive, nessuna validata.** Whale/momentum/contrarian non sono
+   MAI state backtestate. Solo copy ha backtest 89% WR (in banda 0.30-0.70).
+2. **Whale/contrarian non hanno filtro banda prezzo.** Comprano a qualsiasi prezzo
+   seguendo la whale, anche 0.999 o 0.02.
+3. **Momentum: move detection a prezzi estremi è rumore.** 5% di 0.008 = 0.0004.
+4. **Sizing 6-13% amplifica ogni loss.** A 13% sizing, -$1.85 medio perde = -0.8%
+   portafoglio per trade. Con WR 24% = drain costante.
+5. **Harvest SL -4% su entry 0.985 triggera a 0.946.** 3.9 cent di move = rumore
+   normale per near-certain market. In più, early TP +4% lascia juice sul tavolo
+   (harvest dovrebbe hold-to-resolution per payout pieno).
+
+## Piano di Fix (Phase CC-CG)
+
+### Phase CI: Fix wallet orfani — posizioni copy dopo wallet rotation [EMERGENZA]
+Obiettivo: quando un wallet copiato sparisce dalla lista monitorati
+(rotazione 3h, quality swap 15min), le posizioni copy NON devono essere
+chiuse forzatamente a "exit". Devono essere gestite con SL/TP.
+
+Bug trovato: `reconcile()` riga 588 chiudeva `if asset not in qualifying:
+close("exit")`. Ma `aggregate` contiene SOLO asset dei wallet monitorati.
+Se il wallet viene rimosso dalla lista, l'asset non e' in aggregate →
+chiusura forzata a qualsiasi prezzo.
+
+Inoltre `_reload_monitored_wallets` (auto_rescan 3h) NON resettava
+`prev_holdings` → i wallet nuovi venivano trattati come "tutti nuovi" →
+copia massiva del loro bag preesistente (bug P2/P10 ricorrente).
+
+- [x] simulator.py reconcile: nuovo parametro `monitored_wallets` set.
+  Se `source_wallet` ancora in monitored → asset non in aggregate = wallet
+  ha venduto → exit legittimo. Se `source_wallet` NON in monitored →
+  wallet rimosso → NON chiudere a exit, gestisci con SL/TP.
+- [x] main.py: passa `monitored_wallets=set(self.monitored_addresses)` a reconcile
+- [x] main.py _reload_monitored_wallets: reset `prev_holdings = None` quando
+  ci sono wallet aggiunti/rimossi (evita dump bag preesistente nuovi wallet)
 - **Status:** complete
 
-### Phase S: Copy più aggressivo (più aperture)
-Obiettivo: aumentare frequenza aperture copy senza perdere edge.
-- [x] entry banda soft: 0.25-0.75 → **0.20-0.80** (consenso>=2)
-- [x] min_book_size_usdc: 50 → **25** (mercati meno liquidi ma ancora tradabili)
-- [x] max_spread_ticks: 3 → **4** (accetta spread leggermente più larghi)
-- [x] min_days_to_expiry: 0.5 → **0.25** (sport intraday 6h+)
-- [x] soft_requires_consensus: 2 → **1** (banda soft anche con 1 wallet fresco)
-  → ATTENZIONE: questo allarga molto. Teniamo 2 ma amplifichiamo altrove.
-  RIMOSSO: resta soft_requires_consensus=2 per protezione edge.
-- [x] max_entry_drift: 0.05 → **0.08** (accetta ingressi un po' più tardivi)
+### Phase CC: Triage — Disabilita strategie perdenti [EMERGENZA]
+Obiettivo: fermare il sanguinamento. Disabilitare whale, momentum, contrarian,
+sniper, theta. Tenere solo copy + harvest + arb_binary.
+- [x] config.py: aggiunto enabled=False a whale/momentum/contrarian/sniper/theta
+- [x] main.py: gate ogni strategia con check `STRATEGIES[name].get("enabled", True)`
+  in _should_scan()
+- [x] Le 4 posizioni whale aperte (Strait of Hormuz, Ghana) vengono lasciate
+  risolvere naturalmente (sono near-certain, andranno in profitto a resolution)
 - **Status:** complete
 
-### Phase T: Harvest aggressivo (engine principale per doubling)
-Obiettivo: harvest è la strategia più profittevole (APR alta, alta hit-rate).
-Sbloccarla: più slot, più sizing, banda più larga, early TP per turnover.
-- [x] cap_pct: 12% → **30%** (harvest diventa engine primario)
-- [x] max_single: 8% → **15%**
-- [x] max_positions: 2 → **6**
-- [x] fav_min: 0.85 → **0.78** (cattura anche 0.78-0.85, più opportunità)
-- [x] fav_max: 0.975 → **0.985** (cattura anche 0.975-0.985, juice residuo piccolo)
-- [x] max_days_to_expiry: 21 → **30** (cattura più mercati a lunga risoluzione)
-- [x] min_book: 20 → **15**
-- [x] scan_markets: 80 → **150**
-- [x] scan_every_cycles: 2 → **1** (scan ogni ciclo, 30s)
-- [x] **Early TP su harvest**: se prezzo +4% dall'entry → chiudi (scalp mode)
-  → Aumenta turnover: capital lock breve invece di attendere resolution
-  → Config: harvest_take_profit_pct = 0.04
+### Phase CD: Fix Stop Loss — SL assoluto per prezzi estremi
+Obiettivo: lo SL percentuale non funziona a prezzi estremi. Usare SL basato su
+**delta prezzo assoluto** (centesimi) invece di percentuale.
+- [x] simulator.py: aggiunto stop_loss_abs (es. -0.03 = esci se prezzo scende
+  di 3 cent dall'entry) — implementato per harvest, momentum, whale, directional
+- [x] Logica: `if (cur - entry) <= stop_loss_abs: close` (SL assoluto in cent)
+- [x] Harvest: SL assoluto -0.05 (5 cent) invece di -4%. soft_exit -0.15 absolute
+- [x] Copy: mantiene SL percentuale -8% (ok in banda 0.30-0.70)
+- [x] Whale: SL assoluto -0.03 (3 cent) + SL % fallback
 - **Status:** complete
 
-### Phase U: Arb binary/cross più aggressivi
-Obiettivo: catturare arb rari ma con scan più ampio e profitto min più basso.
-- [x] arb_binary cap_pct: 25% → **30%**
-- [x] arb_binary max_positions: 1 → **3**
-- [x] arb_binary min_profit_abs: 0.50 → **0.20** (micro-arb worthwhile se risk-free)
-- [x] arb_binary scan_markets: 80 → **150**
-- [x] arb_binary scan_every_cycles: 2 → **1**
-- [x] arb_cross scan_events: 12 → **25**
-- [x] arb_cross scan_every_cycles: 5 → **2**
-- [x] arb_cross min_profit_abs: 1.00 → **0.50**
+### Phase CE: Fix Entry Price Bands — niente ingressi a prezzi estremi
+Obiettivo: NESSUNA strategia entra sopra 0.95 o sotto 0.05. A questi prezzi
+il risk/reward è invertito e lo SL è rumore-trigger.
+- [x] config.py: aggiunto entry_price_min/max a whale (0.15-0.85), momentum
+  (0.15-0.85), contrarian (0.10-0.90), sniper/theta (SL abs aggiunto)
+- [x] strategies.py: whale scan filtra entry band
+- [x] strategies.py: momentum scan filtra entry band + min_move 5%->8%
+- [x] strategies.py: contrarian scan filtra entry band sul fade side
+- [x] Harvest: fav_min 0.78->0.85, fav_max 0.985->0.95 (entry band nativa)
 - **Status:** complete
 
-### Phase V: Wallet rotation + più wallet
-Obiettivo: copy vede più segnali freschi. Rotazione automatica wallet top.
-- [x] auto_rescan_enabled: False → **True**
-- [x] auto_rescan_interval_sec: 6h → **3h** (refresh frequente)
-- [x] top_wallets: 20 → **30** (più wallet monitorati)
-- [x] SCANNER min_profit: 1000 → **500** (cattura wallet mid-cap più attivi)
-- [x] SCANNER min_volume: 10000 → **5000**
-- [x] SCANNER min_trades: 10 → **8**
-- [x] markets_to_scan: 200 → **300** (più mercati per scoprire wallet)
+### Phase CF: Fix Harvest — hold-to-resolution, no early TP
+Obiettivo: harvest deve tenere fino a resolution per payout pieno $1.
+- [x] config.py: harvest_take_profit_pct 0.04 -> 0.0 (early TP disabilitato)
+- [x] Harvest: SL assoluto -0.05 (5 cent) invece di -4% percentuale
+- [x] Harvest: soft_exit -0.15 absolute (-15 cent) per black-swan protection
+- [x] Harvest: cap 30%->25%, max_positions 6->4, max_single 15%->10%
 - **Status:** complete
 
-### Phase W: Nuova strategia MOMENTUM (trend-following)
-Obiettivo: strategia non-correlata con copy/arb. Compra mercati con forte trend
-di prezzo recente (es. YES salito da 0.30 a 0.55 in 24h → momentum continuation).
-- [x] PriceHistory tracker: memorizza prezzi per market across cicli (in-memory + persist)
-- [x] MomentumStrategy.scan: rileva mercati con move >X% in finestra N cicli
-- [x] Compra lato trending (YES se salita, NO se discesa)
-- [x] TP +6% / SL -5% (trend-following, esci se inversione)
-- [x] Sizing cap 12%, max_positions 3
-- [x] Cap_pct 20% (strategia ad alto turnover)
+### Phase CG: Sizing conservativo — torna a 3% finché WR<50%
+Obiettivo: con WR 24%, sizing 6-13% è suicidio.
+- [x] config.py: sizing_tiers 6% -> 3% base, tier1 5%, tier2 8%, tier3 10%
+- [x] max_open_positions: 12 -> 8
+- [x] reserve_ratio: 15% -> 20%
+- [x] max_position_size: 6% -> 3% floor
+- [x] Kelly disabilitato (kelly_enabled: False)
+- [x] Trailing stop disabilitato (trailing_stop_enabled: False)
+- [x] sizing_wr_gate: 0.50 -> 0.45
 - **Status:** complete
 
-### Phase X: Faster polling + monitoring
-- [x] poll_interval: 30s → **20s** (capture più rapido)
-- [x] Monitoraggio: alert se <10 trade/giorno (frequenza insufficiente)
-- **Status:** complete
-
-### Phase Y: Deploy + verifica
-- [ ] Test live locale 5min (no crash, strategie girano)
+### Phase CH: Re-validazione e deploy
+- [x] Test live locale: bot instanzia OK, strategie gated correttamente
 - [ ] Deploy su VPS (utente copia folder + restart reset)
-- [ ] Verifica post-deploy: sizing 6%, harvest 6 slot, momentum attivo
-- [ ] Monitorare 24h: target +5-10% primo giorno, +30-50% settimana
-- **Status:** pending
+- [ ] Verifica post-deploy: sizing 3%, solo copy+harvest+arb attivi, niente trade a 0.99+
+- [ ] Monitorare 24-48h: target WR >45%, P&L flat/positivo
+- [ ] Dopo 30 trade: se WR<40% → kill strategy, se WR>55% → scale sizing
+- **Status:** in_progress
 
-### Phase Z: Wallet swap frequente + elimination perdenti (sessione 2026-07-02)
-Obiettivo: monitoraggio wallet PIU frequente del full-scan, swap immediato perdenti.
-Problema: auto_rescan 3h = full scan pesante (minuti, 300 API). Soft-disable solo
- dimezza size ma non rimuove wallet perdenti. L'utente vuole wallet vincenti, cambio
- subito se non lo sono.
-- [ ] Light quality refresh ogni ~15-20 min: re-fetch win_rate/ROI solo wallet
-  monitorati attuali (10-30 call, non 300 mercati)
-- [ ] Track per-wallet P&L dai NOSTRI copy trade (wallet copiato -> perso = badge
-  perdente per noi, non solo ROI storico Polymarket)
-- [ ] Swap immediato: se wallet WR<0.45 O nostro copy P&L<0 su >=2 trade ->
-  rimpiazza con riserva dalla reserve list (top wallet qualificati non usati)
-- [ ] Reserve list: scanner salva top 50 qualificati, usiamo top 30 attivi + 20 reserve
-- [ ] quality_refresh_interval_sec config (default 900 = 15min)
-- [ ] NO touchare wallet se solo 1 trade nostro chiuso in loss (varianza normale)
-- **Status:** pending
-
-### Phase AA: Dashboard P&L trade + info complete (sessione 2026-07-02)
-Obiettivo: UI mostra se trade andato in profitto, exit price, P&L, strategia.
-Problema: trades_log.json logga SOLO BUY (aperture). Chiusure non loggate.
-- [x] Log SELL/close in trades_log: exit_price, pnl, pnl_pct, reason, strategy, hold_time
-- [x] API dashboard: ritorna trade chiusi con P&L + aperti con P&L attuale
-- [x] UI: sezione trade recenti con badge PROFIT/LOSS colorato, P&L $, %, exit, strategia
-- [x] UI: posizioni aperte con P&L + strategy badge
-- [x] UI: breakdown P&L per strategia (copy/harvest/arb/momentum/whale) con WR
-- [x] UI: nuova sezione Trade Chiusi con storico P&L completo
-- **Status:** complete
-
-### Phase BB: WHALE strategy — monitora wallet istituzionali (sessione 2026-07-02)
-Obiettivo: strategia parallela che segue movimenti istituzionali (whale).
-Tesi: le whale muovono i mercati Polymarket. Seguire i loro INGRESSI recenti
-(BUY >= $5K) cattura momentum da SIZE, non correlato con copy/momentum/harvest.
-- [x] discover_whales: scan top 60 mercati -> holders con >= 25K shares -> lista 25 whale
-- [x] Persistente in data/whale_wallets.json, refresh ogni 1h
-- [x] scan: activity recente (45min) per whale -> filtra BUY >= $5K -> consenso conditionId
-- [x] Opportunity con score = n_whales * total_usdc_buy (conviction istituzionale)
-- [x] _open_whale in simulator: compra stesso outcome whale, TP+10%/SL-6%
-- [x] manage_strategy_positions: whale TP/SL + resolution
-- [x] Collegata in main.py (scan ogni 3 cicli ~60s)
-- [x] Config STRATEGIES.whale: cap 25%, max_pos 4, min_buy $5K, lookback 45min
-- [x] Test live: 25 whale scoperte, signal detection OK (Spain Yes, Egypt No)
-- [x] UI: whale badge color teal, breakdown summary include whale
-- **Status:** complete
-
-## Phases vecchie (A-Q completate, vedi progress.md)
-
-### Phase H: Allinea deploy VPS ↔ locale — COMPLETE
-### Phase I: Fix delta-snapshot per-wallet — COMPLETE
-### Phase J: Frequenza aperture — COMPLETE
-### Phase K: Sizing compounding — COMPLETE (rivisto Phase R)
-### Phase L: Monitoraggio balance — COMPLETE
-### Phase M: Strategy router — COMPLETE
-### Phase N: Arb binario — COMPLETE (rivisto Phase U)
-### Phase O: Harvest — COMPLETE (rivisto Phase T)
-### Phase P: Arb cross — COMPLETE (rivisto Phase U)
-### Phase Q: Value-betting — gated (sostituito da Phase W momentum)
+## Phases precedenti (completate, vedi progress.md)
+- Phase A-Q: copy base + multi-strategy
+- Phase R-BB: config aggressivo + whale/momentum/sniper/theta/contrarian ← MIGLIORATIVO MA FALLITO
+- Phase R-Y: deploy aggressivo (causa della perdita attuale)
 
 ## Key Questions
-1. Harvest early TP +4%: i prezzi near-certain si muovono abbastanza per triggerare?
-   (Test live: Spain No 0.909→0.900 = -1%, non ha ancora triggerato TP. Normale,
-   TP si attiva sui mercati dove confidence aumenta verso resolution)
-2. Momentum: qual è la finestra ottimale? Iniziare con 6 cicli (~2min a 20s poll)
-   e move threshold 5%. Tunare dopo 24h live.
-3. Wallet rotation 3h: il rescan impatta performance? Scanner fa ~200 richieste,
-   3h = 8 rescans/giorno. Accettabile.
-4. Sizing 6% = $18/trade. 50 trade vincenti/sett a +10% = +$90 = +30%. OK per
-   target +30-50%/sett. Con sizing 10% (tier1) → 50 trade = +$150 = +50%.
-5. Risk: 12 posizioni simultanee con sizing 6% = $216 deployati (72% portafoglio).
-   Reserve 15% = $45. Cash operating = $255. OK se non tutte sizing-piena.
+1. SL assoluto vs percentuale: quale threshold? Harvest -5 cent ok. Per copy
+   in banda 0.30-0.70, -8% = -2.4 a -5.6 cent — ragionevole, tenere %.
+2. Entry band 0.08-0.92: troppo stretta? No — a 0.92 max gain 8.7%, a 0.08 max
+   gain 1150% (longshot). La banda 0.10-0.90 copre dove le move sono reali.
+3. Whale riattivabile? Forse, MA solo con: entry band 0.15-0.85 + SL assoluto
+   + validazione 20 trade a 3% sizing. Per ora KILL.
+4. Momentum riattivabile? Forse con entry 0.20-0.80 + min_move 10% + SL assoluto.
+   Per ora KILL — 0% WR su 4 trade è spietato.
 
 ## Decisions Made
 | Decision | Rationale |
 |----------|-----------|
-| Sizing 6% partenza (non 3%) | Backtest 89% WR valida edge; 3% troppo timido per doubling |
-| Tier progression 0/10/25/50 | Scale up in 1-2 giorni invece di settimane |
-| Harvest early TP +4% | Turnover capitale vs attesa resolution; compounding più veloce |
-| Harvest cap 30% + 6 pos | Engine primario: APR alta, hit-rate alta, risk可控 |
-| fav_min 0.78 (era 0.85) | Più opportunità; rischio reversal accettabile con SL -10% |
-| Momentum strategy nuova | Strategia non-correlata, alto turnover, sfrutta trend Polymarket |
-| Wallet rotation 3h + 30 wallet | Segnali copy freschi; wallet top cambiano nel tempo |
-| poll 20s | Capture real-time; +load API trascurabile |
-| max_open 12 + per-wallet 2 | Più slot = più posizioni simultanee = più P&L |
-| Reserve 15% | Più capitale operativo; floor comunque protetto |
-| Arb min_profit $0.20 | Micro-arb risk-free worthwhile su cash idle |
+| KILL whale/momentum/contrarian/sniper/theta | 0-17% WR, -$14.19 totale, non validati |
+| SL assoluto per prezzi estremi | SL % triggera su rumore a 0.99/0.02; SL in cent è robusto |
+| Entry band 0.08-0.92 | Evita risk/reward invertito; dove SL non è noise-trigger |
+| Harvest hold-to-resolution | Early TP +4% lascia juice; payout $1 è l'edge reale |
+| Sizing 3% base | WR 24% non giustifica 6-13%; validare prima di scalare |
+| Disabilita Kelly + trailing | Troppo aggressivi per WR attuale; riattivare post-validazione |
 
 ## Errors Encountered
 | Error | Attempt | Resolution |
 |-------|---------|------------|
-| Risultati scadenti post-deploy (-$0.81, 4 trade) | 1 | Phase R-Y: sizing aggressivo + harvest + momentum + wallet rotation |
-| PriceHistory.cleanup_stale cancellava tutto dopo ciclo 1 | 1 | Fix: rimuovi solo entry stale (>200 cicli), non entry fresche con 1 punto |
-| _should_scan con every=1 non scansionava MAI ((cycle%1)==1 sempre False) | 1 | Fix: special-case every<=1 return True |
+| WR 24%, -$16.89 dopo config aggressivo | 1 | Phase CC-CG: kill perdenti, fix SL, fix entry band, sizing conservativo |
+| SL % triggera su rumore a prezzi estremi | 1 | SL assoluto (cent) + entry band filter |
+| 9 strategie non validate | 1 | Ridurre a 3 (copy+harvest+arb), validare 30 trade |
+| Wallet rotation chiude posizioni copy a "exit" forzato | 1 | Phase CI: reconcile distingue wallet venduto vs wallet rimosso; se rimosso gestisci con SL/TP |
+| auto_rescan non resetta prev_holdings → dump bag nuovi wallet | 1 | Phase CI: reset prev_holdings in _reload_monitored_wallets |
 
 ## Notes
-- Doubling $300→$600 in 7gg con sizing 6-10% + 50-80 trade/sett + WR 65% + harvest
-  APR + momentum = **matematicamente possibile ma aggressivo**. Realistico 10-14gg.
-- Beta risk: sizing 10% + 12 posizioni = drawdown possibile -15% in giornata se
-  tutto va male. Equity floor -5% blocca nuove aperture; drawdown halve -12% riduce
-  sizing. Reserve 15% = floor $45. Hard ruin -20% = stop totale.
-- Harvest early TP cambia profilo: da "lock capital until resolution" a "scalp
-  near-certain moves". Aumenta turnover 3-5x. Rischio: lascia juice su tavolo se
-  market poi resolve a $1. Tradeoff accettabile per obiettivo doubling.
-- Momentum strategy è sperimentale: primo ciclo non ha history (baseline), serve
-  ~6 cicli (2min) per primo signal. Tunare threshold dopo 24h live.
+- Le 4 posizioni whale aperte (Strait of Hormuz No ×3 @0.939-0.998, Ghana No
+  @0.999) sono near-certain → risolveranno in profitto. NON chiuderle forzatamente.
+- Il problema NON è "poca frequenza" o "sizing troppo basso" come pensato prima.
+  È l'opposto: sizing troppo alto + entrate a prezzi estremi + SL rumore-trigger.
+- La strategia copy (50% WR, -$1.54) è la migliore. L'edge è reale in banda 0.30-0.70.
+  Le altre strategie sono state aggiunte senza backtest e sono la causa della perdita.
+- Priorità: PRIMA fermare il sanguinamento (Phase CC), POI fixare la meccanica
+  (Phase CD-CE), POI ridurre sizing (Phase CG), POI validare (Phase CH).

@@ -542,7 +542,8 @@ class PaperTradingSimulator:
     # Riconciliazione: cuore del mirroring
     # ------------------------------------------------------------------
     def reconcile(self, aggregate: Dict[str, Dict], min_wallets: int, fetcher,
-                  new_holdings: Optional[set] = None) -> None:
+                  new_holdings: Optional[set] = None,
+                  monitored_wallets: Optional[set] = None) -> None:
         """
         Phase I: copy-trade puntuale via DELTA per-WALLET.
 
@@ -556,6 +557,10 @@ class PaperTradingSimulator:
             fetcher: PolymarketPositionFetcher per fallback + filtri D
             new_holdings: set di (wallet, asset) NUOVI dal main loop. Se e'
                 None e delta_copy e attivo, NON si apre nulla (safety).
+            monitored_wallets: set di wallet attualmente monitorati. Se il wallet
+                sorgente di una posizione copy NON e' piu' in questo set (rotazione/
+                swap), la posizione NON viene chiusa a "exit" forzato — viene gestita
+                solo con SL/TP. Evita chiusure premature da wallet rotation.
         """
         qualifying = {a for a, e in aggregate.items() if len(e["holders"]) >= min_wallets}
 
@@ -597,8 +602,33 @@ class PaperTradingSimulator:
                     self.close_by_asset(asset, 1.0 if last >= 0.5 else 0.0, "resolved")
                 continue  # prezzo ignoto, riprova prossimo ciclo
             if asset not in qualifying:
-                self.close_by_asset(asset, cur, "exit")
-                continue
+                # Phase CI: se il wallet sorgente e' ancora monitorato, l'asset
+                # non in aggregate significa che il wallet ha VENDUTO → exit.
+                # Ma se il wallet NON e' piu' monitorato (rotazione/swap), NON
+                # chiudere forzatamente — gestisci con SL/TP al prossimo check.
+                src = (pos.source_wallet or "").lower()
+                mon_set = monitored_wallets or set()
+                mon_set_lower = {w.lower() for w in mon_set}
+                if src and src in mon_set_lower:
+                    # wallet ancora monitorato → ha venduto → exit legittimo
+                    self.close_by_asset(asset, cur, "exit")
+                    continue
+                else:
+                    # wallet rimosso dalla lista → NON chiudere a exit forzato.
+                    # Aggiorna prezzo e gestisci con SL/TP sotto.
+                    self.update_price_by_asset(asset, cur)
+                    pnl_pct = (cur - pos.entry_price) / pos.entry_price if pos.entry_price > 0 else 0
+                    hard_sl = BUDGET.get("hard_stop_loss_pct", -0.15)
+                    if pnl_pct <= hard_sl:
+                        print(f"[HARD SL] {pos.market_title[:40]} P&L {pnl_pct:.1%} <= {hard_sl:.0%} (wallet rimosso)")
+                        self.close_by_asset(asset, cur, "stop_loss")
+                    elif pnl_pct <= stop_loss:
+                        print(f"[STOP LOSS] {pos.market_title[:40]} P&L {pnl_pct:.1%} <= {stop_loss:.0%} (wallet rimosso)")
+                        self.close_by_asset(asset, cur, "stop_loss")
+                    elif pnl_pct >= take_profit:
+                        print(f"[TAKE PROFIT] {pos.market_title[:40]} P&L {pnl_pct:.1%} >= {take_profit:.0%} (wallet rimosso)")
+                        self.close_by_asset(asset, cur, "take_profit")
+                    continue
             self.update_price_by_asset(asset, cur)
             pnl_pct = (cur - pos.entry_price) / pos.entry_price if pos.entry_price > 0 else 0
             hard_sl = BUDGET.get("hard_stop_loss_pct", -0.15)
@@ -706,20 +736,26 @@ class PaperTradingSimulator:
                     continue
                 pos.current_price = cur
                 pnl_pct = (cur - pos.entry_price) / pos.entry_price if pos.entry_price > 0 else 0
-                hard = BUDGET.get("harvest_hard_stop_pct", -0.04)
-                soft_exit = BUDGET.get("harvest_soft_exit_pct", -0.12)
-                early_tp = BUDGET.get("harvest_take_profit_pct", 0.04)
-                # Phase T: early TP (+4%) → scalp mode, libera capitale per nuovo harvest
-                if pnl_pct >= early_tp:
+                # Phase CD: SL assoluto (cent) — robusto a prezzi estremi dove
+                # SL % triggera su rumore. Un near-certain market che scende 5 cent
+                # ha davvero problemi; 2 cent e' rumore normale.
+                hard_abs = BUDGET.get("harvest_hard_stop_abs", -0.05)
+                soft_exit_abs = BUDGET.get("harvest_soft_exit_abs", -0.15)
+                early_tp = BUDGET.get("harvest_take_profit_pct", 0.0)
+                price_delta = cur - pos.entry_price   # assoluto in $
+                # Phase CF: hold-to-resolution. Early TP solo se > 0 (ora 0.0 = disabled).
+                if early_tp > 0 and pnl_pct >= early_tp:
                     print(f"[HARVEST EARLY TP] {pos.market_title[:40]} P&L {pnl_pct:.1%} >= {early_tp:.0%}")
                     self._close_by_pid(pid, cur, "take_profit")
-                elif pnl_pct <= soft_exit:
-                    print(f"[HARVEST EXIT] {pos.market_title[:40]} P&L {pnl_pct:.1%}")
+                elif price_delta <= soft_exit_abs:
+                    # black-swan: prezzo crollato >15 cent → esito non era certo
+                    print(f"[HARVEST EXIT] {pos.market_title[:40]} delta {price_delta:+.3f} (black-swan)")
                     self._close_by_pid(pid, cur, "stop_loss")
-                elif cur < 0.85 and pnl_pct <= hard:
-                    # price crollato sotto 0.85 → esito non era certo; esci
-                    print(f"[HARVEST HARD SL] {pos.market_title[:40]} cur {cur:.3f}")
+                elif price_delta <= hard_abs and cur < 0.85:
+                    # prezzo sceso >5 cent E sotto 0.85 → esito non era certo; esci
+                    print(f"[HARVEST HARD SL] {pos.market_title[:40]} cur {cur:.3f} delta {price_delta:+.3f}")
                     self._close_by_pid(pid, cur, "stop_loss")
+                # else: hold-to-resolution (payout $1 è l'edge reale)
             elif strat == "momentum":
                 # Phase W: gestione momentum — SL/TP direzionale + resolution
                 cur = fetcher.get_price(pos.asset) if pos.asset else None
@@ -738,7 +774,10 @@ class PaperTradingSimulator:
                 pnl_pct = (cur - pos.entry_price) / pos.entry_price if pos.entry_price > 0 else 0
                 mtp = STRATEGIES.get("momentum", {}).get("take_profit_pct", 0.06)
                 msl = STRATEGIES.get("momentum", {}).get("stop_loss_pct", -0.05)
-                # Phase CC: trailing stop
+                msl_abs = STRATEGIES.get("momentum", {}).get("stop_loss_abs", -0.03)
+                # Phase CD: SL assoluto (cent) — robusto a prezzi estremi
+                price_delta = cur - pos.entry_price
+                # Phase CC: trailing stop disabilitato (config trailing_stop_enabled=False)
                 if BUDGET.get("trailing_stop_enabled", False) and strat in BUDGET.get("trailing_apply_strategies", []):
                     trail_act = BUDGET.get("trailing_activate_pct", 0.03)
                     trail_pct = BUDGET.get("trailing_stop_pct", -0.03)
@@ -755,7 +794,12 @@ class PaperTradingSimulator:
                 if pnl_pct >= mtp:
                     print(f"[MOMENTUM TP] {pos.market_title[:40]} P&L {pnl_pct:.1%} >= {mtp:.0%}")
                     self._close_by_pid(pid, cur, "take_profit")
-                elif pnl_pct <= msl:
+                elif price_delta <= msl_abs:
+                    # Phase CD: SL assoluto (cent) — triggera su move reale, non rumore
+                    print(f"[MOMENTUM SL] {pos.market_title[:40]} delta {price_delta:+.3f} (abs SL {msl_abs:+.3f})")
+                    self._close_by_pid(pid, cur, "stop_loss")
+                elif pnl_pct <= msl and price_delta > msl_abs:
+                    # SL % solo se NON gia coperto da SL assoluto (edge case prezzi alti)
                     print(f"[MOMENTUM SL] {pos.market_title[:40]} P&L {pnl_pct:.1%} <= {msl:.0%}")
                     self._close_by_pid(pid, cur, "stop_loss")
             elif strat == "whale":
@@ -774,10 +818,16 @@ class PaperTradingSimulator:
                 pnl_pct = (cur - pos.entry_price) / pos.entry_price if pos.entry_price > 0 else 0
                 wtp = STRATEGIES.get("whale", {}).get("take_profit_pct", 0.10)
                 wsl = STRATEGIES.get("whale", {}).get("stop_loss_pct", -0.06)
+                wsl_abs = STRATEGIES.get("whale", {}).get("stop_loss_abs", -0.03)
+                price_delta = cur - pos.entry_price
                 if pnl_pct >= wtp:
                     print(f"[WHALE TP] {pos.market_title[:40]} P&L {pnl_pct:.1%} >= {wtp:.0%}")
                     self._close_by_pid(pid, cur, "take_profit")
-                elif pnl_pct <= wsl:
+                elif price_delta <= wsl_abs:
+                    # Phase CD: SL assoluto (cent) — robusto a prezzi estremi
+                    print(f"[WHALE SL] {pos.market_title[:40]} delta {price_delta:+.3f} (abs SL {wsl_abs:+.3f})")
+                    self._close_by_pid(pid, cur, "stop_loss")
+                elif pnl_pct <= wsl and price_delta > wsl_abs:
                     print(f"[WHALE SL] {pos.market_title[:40]} P&L {pnl_pct:.1%} <= {wsl:.0%}")
                     self._close_by_pid(pid, cur, "stop_loss")
             elif strat in ("sniper", "theta", "contrarian"):
@@ -797,7 +847,9 @@ class PaperTradingSimulator:
                 cfg_s = STRATEGIES.get(strat, {})
                 tp = cfg_s.get("take_profit_pct", 0.08)
                 sl = cfg_s.get("stop_loss_pct", -0.05)
-                # Phase CC: trailing stop — lock profit vincenti
+                sl_abs = cfg_s.get("stop_loss_abs", -0.03)  # Phase CD: SL assoluto (cent)
+                price_delta = cur - pos.entry_price
+                # Phase CC: trailing stop disabilitato (config trailing_stop_enabled=False)
                 if BUDGET.get("trailing_stop_enabled", False) and strat in BUDGET.get("trailing_apply_strategies", []):
                     trail_act = BUDGET.get("trailing_activate_pct", 0.03)
                     trail_pct = BUDGET.get("trailing_stop_pct", -0.03)
@@ -815,7 +867,11 @@ class PaperTradingSimulator:
                 if pnl_pct >= tp:
                     print(f"[{strat.upper()} TP] {pos.market_title[:40]} P&L {pnl_pct:.1%}")
                     self._close_by_pid(pid, cur, "take_profit")
-                elif pnl_pct <= sl:
+                elif price_delta <= sl_abs:
+                    # Phase CD: SL assoluto (cent) — triggera su move reale, non rumore
+                    print(f"[{strat.upper()} SL] {pos.market_title[:40]} delta {price_delta:+.3f} (abs SL {sl_abs:+.3f})")
+                    self._close_by_pid(pid, cur, "stop_loss")
+                elif pnl_pct <= sl and price_delta > sl_abs:
                     print(f"[{strat.upper()} SL] {pos.market_title[:40]} P&L {pnl_pct:.1%}")
                     self._close_by_pid(pid, cur, "stop_loss")
 

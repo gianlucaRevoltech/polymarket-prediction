@@ -1,5 +1,63 @@
 # Progress Log — Polymarket Copy Bot
 
+## Session: 2026-07-13 (FIX EMERGENZA PERFORMANCE: -5.63%, WR 24%)
+
+### Contesto: dashboard 07/07 mostra disastro
+- Equity $283.11 / $300, P&L -$16.89 (-5.63%)
+- WR 24% (6W/19L), 19/25 chiusi sono STOP LOSS (76%!)
+- Whale: 17% WR -$6.99 | Momentum: 0% WR -$4.20 | Contrarian: 0% WR -$3.00
+- ROOT CAUSE: bot entra a prezzi estremi (0.999, 0.036, 0.026) dove SL %
+  triggera su rumore di mercato, non su fallimento segnale. Risk/reward invertito.
+
+### Phase CC: Triage — KILL strategie perdenti — COMPLETE
+- config.py: enabled=False su whale, momentum, contrarian, sniper, theta
+- main.py _should_scan(): gate con STRATEGIES[name].get('enabled', True)
+- Attive ora: copy + harvest + arb_binary + arb_cross (solo 4, erano 9)
+- 4 posizioni whale aperte (near-certain) lasciate risolvere naturalmente
+
+### Phase CD: SL assoluto (cent) per prezzi estremi — COMPLETE
+- simulator.py: stop_loss_abs implementato per harvest, momentum, whale, directional
+- Logica: if (cur - entry) <= stop_loss_abs: close (SL in cent, robusto a estremi)
+- Harvest: SL -5 cent (era -4% = 3.9 cent a 0.985 = rumore)
+- Harvest soft_exit: -15 cent absolute (black-swan)
+- Momentum/Whale/Directional: SL -3/-4 cent + fallback SL %
+
+### Phase CE: Entry price bands — no prezzi estremi — COMPLETE
+- Whale: entry_price_min 0.15, max 0.85 (era 0-1 = comprava a 0.999!)
+- Momentum: entry 0.15-0.85 + min_move 5%->8% (5% di 0.008 = rumore)
+- Contrarian: entry 0.10-0.90 sul fade side (era 0.026 = longshot)
+- Harvest: fav_min 0.78->0.85, fav_max 0.985->0.95
+- strategies.py: filtro entry band in scan() di whale, momentum, contrarian
+
+### Phase CF: Harvest hold-to-resolution — COMPLETE
+- harvest_take_profit_pct 0.04 -> 0.0 (early TP disabilitato)
+- Harvest ora hold-to-resolution per payout $1 pieno (l'edge reale)
+- Harvest cap 30%->25%, max_positions 6->4, max_single 15%->10%
+
+### Phase CG: Sizing conservativo — COMPLETE
+- sizing_tiers: 6% -> 3% base, tier1 5%, tier2 8%, tier3 10%
+- max_open_positions: 12 -> 8
+- reserve_ratio: 15% -> 20%
+- max_position_size: 6% -> 3% floor
+- kelly_enabled: True -> False
+- trailing_stop_enabled: True -> False (triggera su rumore)
+- sizing_wr_gate: 0.50 -> 0.45
+
+### Test live (sessione 2026-07-13)
+- Bot instanzia OK, no crash
+- Strategie gated: copy/arb_binary/harvest = scan_enabled=True
+  momentum/whale/sniper/theta/contrarian = enabled=False (skip)
+- Sizing 3% = $8.49/trade (era $18 a 6%)
+- Entry band harvest 0.85-0.95 (era 0.78-0.985)
+
+### Files modificati (sessione 2026-07-13)
+- src/config.py: BUDGET (sizing conservativo, SL abs, Kelly/trailing off),
+  STRATEGIES (enabled=False su perdenti, entry bands, stop_loss_abs)
+- src/main.py: _should_scan() gate enabled
+- src/simulator.py: manage_strategy_positions SL assoluto per tutte le direzionali
+  + harvest hold-to-resolution
+- src/strategies.py: entry band filter in whale/momentum/contrarian scan()
+
 ## Session: 2026-07-02 (config aggressivo + momentum strategy)
 
 ### Contesto iniziale (dashboard post-deploy 01/07, ore 07:12)

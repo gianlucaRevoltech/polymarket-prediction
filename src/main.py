@@ -139,6 +139,10 @@ class PolymarketPaperTradingBot:
             )
             # Phase B: ricarica le metriche qualita (win-rate) per il soft-disable
             self.simulator._load_wallet_quality()
+            # Phase CI: reset baseline holdings per non copiare il bag preesistente
+            # dei wallet nuovi (delta vs prev_holdings vecchio = falso delta, dump).
+            # Le posizioni copiate da wallet RIMOSSI non vengono chiuse (fix reconcile).
+            self.prev_holdings = None
         return True
 
     def _maybe_auto_rescan(self) -> None:
@@ -256,6 +260,9 @@ class PolymarketPaperTradingBot:
     # ------------------------------------------------------------------
     def _should_scan(self, strategy_name: str) -> bool:
         cfg = STRATEGIES.get(strategy_name, {})
+        # Phase CC: gate strategia disabilitata (kill perdenti)
+        if not cfg.get("enabled", True):
+            return False
         every = cfg.get("scan_every_cycles", 1)
         if every <= 1:
             return True   # every=1: scan ogni ciclo
@@ -377,7 +384,8 @@ class PolymarketPaperTradingBot:
                     self.simulator.manage_strategy_positions(self.fetcher)
 
                     self.simulator.reconcile(
-                        aggregate, min_wallets, self.fetcher, new_holdings=new_holdings)
+                        aggregate, min_wallets, self.fetcher, new_holdings=new_holdings,
+                        monitored_wallets=set(self.monitored_addresses))
 
                     summary = self.simulator.get_portfolio_summary()
                     print(f"  Equity: ${summary['current_value']:.2f} "

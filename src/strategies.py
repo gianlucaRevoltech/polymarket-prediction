@@ -502,6 +502,12 @@ class MomentumStrategy:
             bid = book.get("best_bid")
             if ask is None or ask <= 0 or ask >= 1:
                 continue
+            # Phase CE: entry band — no prezzi estremi dove 5% move = rumore
+            _mcfg = STRATEGIES.get("momentum", {})
+            ep_min = _mcfg.get("entry_price_min", 0.15)
+            ep_max = _mcfg.get("entry_price_max", 0.85)
+            if ask < ep_min or ask > ep_max:
+                continue
             spread_c = ((ask - bid) * 100) if bid is not None else 99
             if spread_c > self.max_spread * 0.01 * 100:
                 continue
@@ -753,6 +759,12 @@ class WhaleStrategy:
             ask = book.get("best_ask")
             bid = book.get("best_bid")
             if ask is None or ask <= 0 or ask >= 1:
+                continue
+            # Phase CE: entry band — no prezzi estremi dove SL e' rumore-trigger
+            _wcfg = STRATEGIES.get("whale", {})
+            ep_min = _wcfg.get("entry_price_min", 0.15)
+            ep_max = _wcfg.get("entry_price_max", 0.85)
+            if ask < ep_min or ask > ep_max:
                 continue
             spread_c = ((ask - bid) * 100) if bid is not None else 99
             if spread_c > self.max_spread * 0.01 * 100:
@@ -1044,6 +1056,12 @@ class ContrarianStrategy:
                 continue
             ask = book.get("best_ask")
             if ask is None or ask <= 0 or ask >= 1:
+                continue
+            # Phase CE: entry band per il FADE — no longshot a 0.02 dove SL = 1 tick
+            _ccfg = STRATEGIES.get("contrarian", {})
+            ep_min = _ccfg.get("entry_price_min", 0.10)
+            ep_max = _ccfg.get("entry_price_max", 0.90)
+            if ask < ep_min or ask > ep_max:
                 continue
             bid = book.get("best_bid")
             spread_c = ((ask - bid) * 100) if bid else 99

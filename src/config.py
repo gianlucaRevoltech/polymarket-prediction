@@ -31,34 +31,38 @@ POLYMARKET_API = {
 # Budget e Risk Management
 BUDGET = {
     "initial_capital": 300.0,
-    # Phase R: sizing AGGRESSIVO — 6% partenza (backtest valida edge), scala veloce
-    "max_position_size": 0.06,     # floor: 6% (era 3%)
+    # Phase CG: sizing CONSERVATIVO — torna a 3% base finche WR<50%.
+    # Era 6% (Phase R), ma WR 24% non giustifica sizing aggressivo.
+    "max_position_size": 0.03,     # floor: 3% (era 6%, ridotto per WR 24%)
     "sizing_tiers": [
-        # (soglia n_trade_totali, sizing_frac, descr) — Phase R: thresholds bassi
-        (0,   0.06, "avviamento 6% (edge backtest-validato)"),
-        (10,  0.10, "tier1: +10 trade, sizing 10%"),
-        (25,  0.13, "tier2: +25 trade e WR>=55%, sizing 13%"),
-        (50,  0.15, "tier3: +50 trade e WR>=60%, sizing 15% (massimo)"),
+        # (soglia n_trade_totali, sizing_frac, descr) — Phase CG: conservativo
+        (0,   0.03, "avviamento 3% (validare edge prima di scalare)"),
+        (15,  0.05, "tier1: +15 trade e WR>=45%, sizing 5%"),
+        (40,  0.08, "tier2: +40 trade e WR>=50%, sizing 8%"),
+        (80,  0.10, "tier3: +80 trade e WR>=55%, sizing 10% (massimo)"),
     ],
-    "sizing_wr_gate": 0.50,        # Phase R: gate più permissivo (0.55 -> 0.50)
+    "sizing_wr_gate": 0.45,        # Phase CG: gate realistico (era 0.50)
     "min_position_size": 5.0,      # Minimo Polymarket
-    "max_open_positions": 12,      # Phase R: 6 -> 12 (più slot per tutte le strategie)
-    "reserve_ratio": 0.15,         # Phase R: 20% -> 15% (più capitale operativo)
+    "max_open_positions": 8,       # Phase CG: 12 -> 8 (meno esposizione con WR basso)
+    "reserve_ratio": 0.20,         # Phase CG: 15% -> 20% (piu cushion)
     # Risk management (copy): SL/TP
     "stop_loss_pct": -0.08,        # taglia perdenti presto
     "take_profit_pct": 0.20,       # lascia correre vincenti
     "hard_stop_loss_pct": -0.15,   # protezione hard floor
-    # Harvest: SL duro + early TP (Phase T: scalp mode per turnover)
-    "harvest_hard_stop_pct": -0.04,  # -4% (era -3%, più tollerante con fav_min 0.78)
-    "harvest_soft_exit_pct": -0.12,  # se prezzo crolla sotto -12% chiudi (black-swan)
-    "harvest_take_profit_pct": 0.04, # Phase T: early TP +4% → scalp, libera capitale
-    # Phase CC: Trailing stop — lock profit vincenti, segui peak price
-    "trailing_stop_enabled": True,
+    # Harvest: SL assoluto + hold-to-resolution (Phase CF)
+    # Phase CF: SL % era -4% → a 0.985 triggera a 0.946 = rumore. SL assoluto -5 cent.
+    "harvest_hard_stop_pct": -0.05,  # Phase CD: -5% fallback (se assoluto non disponibile)
+    "harvest_hard_stop_abs": -0.05,  # Phase CD: SL assoluto -5 cent (robusto a prezzi estremi)
+    "harvest_soft_exit_pct": -0.15,  # se prezzo crolla sotto -15% chiudi (black-swan)
+    "harvest_soft_exit_abs": -0.15,  # Phase CD: soft exit assoluto -15 cent
+    "harvest_take_profit_pct": 0.0,  # Phase CF: 0.04 -> 0.0 (hold-to-resolution, payout $1)
+    # Phase CC: Trailing stop — DISABILITATO (triggera su rumore a WR 24%)
+    "trailing_stop_enabled": False,
     "trailing_stop_pct": -0.03,      # -3% dal peak → chiudi (lock profit)
     "trailing_activate_pct": 0.03,  # attiva trailing solo dopo +3% gain
-    "trailing_apply_strategies": ["copy", "harvest", "momentum", "whale"],
-    # Phase EE: Kelly fractional sizing — ottimizzazione matematica
-    "kelly_enabled": True,
+    "trailing_apply_strategies": ["copy", "harvest"],
+    # Phase EE: Kelly fractional sizing — DISABILITATO finche WR<50%
+    "kelly_enabled": False,
     "kelly_fraction": 0.25,          # 1/4 Kelly (fractional, anti over-bet)
     "kelly_min_size": 0.03,         # floor sizing Kelly
     "kelly_max_size": 0.20,         # cap sizing Kelly (anti blow-up)
@@ -145,16 +149,20 @@ STRATEGIES = {
         "scan_every_cycles": 1,    # Phase U: 2 -> 1 (ogni ciclo)
     },
     "harvest": {
-        "cap_pct": 0.30,           # Phase T: 12% -> 30% (engine primario per doubling)
-        "max_single": 0.15,        # Phase T: 8% -> 15%
-        "max_positions": 6,        # Phase T: 2 -> 6
-        "fav_min": 0.78,           # Phase T: 0.85 -> 0.78 (più opportunità)
-        "fav_max": 0.985,          # Phase T: 0.975 -> 0.985 (cattura juice residuo)
+        "enabled": True,            # Phase CC: KEEP (38% WR, migliorabile)
+        "cap_pct": 0.25,           # Phase CF: 30% -> 25% (meno rischio con WR 38%)
+        "max_single": 0.10,        # Phase CF: 15% -> 10%
+        "max_positions": 4,        # Phase CF: 6 -> 4
+        "fav_min": 0.85,           # Phase CE: 0.78 -> 0.85 (no zone dove SL -5c = rumore)
+        "fav_max": 0.95,           # Phase CE: 0.985 -> 0.95 (no near-1 dove gain minuscolo)
         "max_days_to_expiry": 30,  # Phase T: 21 -> 30
         "min_book_size": 15.0,     # Phase T: 20 -> 15
-        "max_spread_ticks": 3,     # Phase T: 2 -> 3 (più tollerante)
+        "max_spread_ticks": 3,     # Phase T: 2 -> 3
         "scan_markets": 150,       # Phase T: 80 -> 150
         "scan_every_cycles": 1,    # Phase T: 2 -> 1 (ogni ciclo, 20s)
+        # Phase CF: entry band (doppio controllo con fav_min/max)
+        "entry_price_min": 0.85,
+        "entry_price_max": 0.95,
     },
     "arb_cross": {
         "cap_pct": 0.15,
@@ -168,11 +176,15 @@ STRATEGIES = {
         "scan_every_cycles": 2,    # Phase U: 5 -> 2
     },
     # Phase W: MOMENTUM strategy (trend-following su prezzo Polymarket)
+    # Phase CC: DISABILITATA — 0% WR su 4 trade, entra a prezzi estremi dove
+    # move detection è rumore (5% di 0.008 = 0.0004 assoluti = rumore puro).
+    # Riattivare solo dopo fix entry band 0.15-0.85 + SL assoluto + backtest.
     "momentum": {
+        "enabled": False,           # Phase CC: KILL — 0% WR
         "cap_pct": 0.20,           # alto turnover, sizing significativo
         "max_single": 0.10,
         "max_positions": 3,
-        "min_move_pct": 0.05,      # move >= 5% nella finestra
+        "min_move_pct": 0.08,      # Phase CE: 5% -> 8% (meno rumore)
         "window_cycles": 6,        # ~2min a 20s poll (finestra breve = trend fresco)
         # Phase JJ: multi-timeframe — conferma trend su più finestre
         "windows": [3, 6, 12],     # finestre multiple: 1min, 2min, 4min
@@ -185,15 +197,20 @@ STRATEGIES = {
         "scan_every_cycles": 1,    # ogni ciclo (aggiorna price history)
         "take_profit_pct": 0.06,   # TP +6% (trend continuation)
         "stop_loss_pct": -0.05,    # SL -5% (inversione → esci)
+        "stop_loss_abs": -0.03,    # Phase CD: SL assoluto -3 cent
+        "entry_price_min": 0.15,  # Phase CE: no estremi
+        "entry_price_max": 0.85,
         "min_volume": 2000.0,      # liquidi solo
     },
     # value-betting gated (Phase Q): disattivato
     "value": {"enabled": False},
 
     # Phase BB: WHALE strategy — monitora wallet istituzionali (size enorme)
-    # Tesi: le whale muovono i mercati. Seguire i loro INGRESSI recenti cattura
-    # momentum istituzionale, non correlato con copy (wallet bravi) o momentum (prezzo).
+    # Phase CC: DISABILITATA — 17% WR, -$6.99, entra a prezzi estremi (0.999, 0.036)
+    # dove SL % triggera su rumore. Riattivare solo dopo fix entry band + SL assoluto
+    # + validazione 20 trade a 3% sizing.
     "whale": {
+        "enabled": False,           # Phase CC: KILL — 17% WR, entra a 0.999
         "cap_pct": 0.25,           # 25% portafoglio dedicabile a whale following
         "max_single": 0.12,        # sizing per singolo whale trade
         "max_positions": 4,        # max posizioni whale simultanee
@@ -211,17 +228,21 @@ STRATEGIES = {
         "min_book_size": 50.0,
         "max_spread_ticks": 4,
         "min_volume": 5000.0,
+        # Phase CE: entry band — no prezzi estremi
+        "entry_price_min": 0.15,
+        "entry_price_max": 0.85,
         # risk: TP/SL
         "take_profit_pct": 0.10,    # TP +10% (whale move puo' durare)
         "stop_loss_pct": -0.06,     # SL -6% (whale sbagliata -> esci)
+        "stop_loss_abs": -0.03,    # Phase CD: SL assoluto -3 cent
         "scan_every_cycles": 3,     # ogni ~60s (3 cicli x 20s)
         "scan_markets": 60,         # top mercati per scoperta whale
     },
 
     # Phase DD: SNIPER HARVEST — risoluzione imminente <24h, APR astronomica
-    # Sub-strategia harvest che scan solo mercati con endTime < 24h.
-    # Compra lato vincente 0.85-0.97 → payout $1 a risoluzione (12-24h). APR >1000%.
+    # Phase CC: DISABILITATA — 0 trade, complessità inutile finché harvest base non profitte.
     "sniper": {
+        "enabled": False,           # Phase CC: KILL — 0 trade, non validata
         "cap_pct": 0.20,
         "max_single": 0.12,
         "max_positions": 4,
@@ -236,12 +257,14 @@ STRATEGIES = {
         "min_volume": 1000.0,
         "take_profit_pct": 0.05,      # early TP +5% se prezzo sale prima di resolution
         "stop_loss_pct": -0.05,       # SL -5% (reversal near-certain)
+        "stop_loss_abs": -0.04,    # Phase CD: SL assoluto -4 cent
         "skip_politics": True,        # politics sorprendibili fino all'ultimo
     },
 
     # Phase GG: THETA / time-decay — "Will X by [date]" dove X NON successo
-    # No drifta verso $1 man mano che tempo passa senza evento (theta decay opzioni)
+    # Phase CC: DISABILITATA — 0 trade, non validata.
     "theta": {
+        "enabled": False,           # Phase CC: KILL — 0 trade
         "cap_pct": 0.15,
         "max_single": 0.08,
         "max_positions": 4,
@@ -257,12 +280,15 @@ STRATEGIES = {
         "min_volume": 2000.0,
         "take_profit_pct": 0.08,      # TP +8% (theta matura)
         "stop_loss_pct": -0.06,       # SL -6% (evento accade -> reversal)
+        "stop_loss_abs": -0.04,    # Phase CD: SL assoluto -4 cent
         "min_keyword_score": 1,      # keywords "by/before/until/this month/week"
     },
 
     # Phase II: CONTRARIAN / fade extreme — whale VENDONO mercato estremo 0.95+
-    # Tesi: whale SELL su mercato a 0.97 = sanno qualcosa → fade (compra NO)
+    # Phase CC: DISABILITATA — 0% WR su 3 trade, entra a 0.026-0.061 (longshot)
+    # dove SL % triggera su 1 tick. Riattivare solo con entry band + SL assoluto + backtest.
     "contrarian": {
+        "enabled": False,           # Phase CC: KILL — 0% WR, entra a 0.026
         "cap_pct": 0.10,
         "max_single": 0.06,
         "max_positions": 2,
@@ -277,8 +303,12 @@ STRATEGIES = {
         "scan_every_cycles": 5,       # ogni ~100s
         "scan_markets": 80,
         "min_volume": 5000.0,
+        # Phase CE: entry band per il FADE (no longshot a 0.02)
+        "entry_price_min": 0.10,
+        "entry_price_max": 0.90,
         "take_profit_pct": 0.15,      # TP +15% (reversion estremo = grande)
         "stop_loss_pct": -0.04,       # SL -4% (estremo continua → esci presto)
+        "stop_loss_abs": -0.03,    # Phase CD: SL assoluto -3 cent
     },
 
     # Phase MM: CROSS-MARKET ODDS — gated stub (richiede API odds esterni)
