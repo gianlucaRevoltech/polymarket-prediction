@@ -272,4 +272,129 @@ andrebbero a $1 a resolution, lasciando 96% del juice sul tavolo.
 
 ---
 
+## Studio 3 guide online (2026-07-13, post-deploy COPY 0W/3L) — NON possiamo spendere
+
+Fonte: `guida_modelli_online.txt` (3 guide). Sintesi onesta di cosa è replicabile
+senza spendere un euro in più di infra.
+
+### TESI DI FONDO: le guide descrivono una strategia DIVERSA dalla nostra
+
+La Guida 2 (bot 0x8dxd, $313→$2.38M, 98% WR, 26.738 trade) è un **latency-
+arbitrage bot su contratti crypto 5/15-min Polymarket**. Meccanismo:
+- Bot monitora Binance WebSocket in tempo reale (<50ms latenza).
+- Polymarket lagga il book CLOB vs CEX di ~2.7s (erano 12s nel 2024).
+- Quando BTC si muove 0.6% in 30s → Polymarket ancora a quote vecchie →
+  compra il lato "ovvio" prima che il book si corregga → exit o hold-to-resol.
+- 200–500 trade/giorno, sizing Kelly fractional, kill switch -40% drawdown.
+
+**NON È ciò che fa il nostro bot.** Noi siamo un WALLET-COPY bot (poll 20s) su
+sport/politics/weather. NON possiamo competere su latenza:
+- 20s poll vs 2.7s edge window → gap chiuso 10 volte prima che noi guardiamo.
+- Python non co-locato vs HFT bot con infra dedicata.
+- Paper mode → non piazziamo ordini reali; il fill/non-fill reale non è testabile.
+→ **CONCLUSIONE: NON pivoting al latency arb.** Anche simulandolo in paper, gli
+HFT bot che competono per la stessa gap chiuderebbero sempre prima di noi. La
+finestra sta comunque comprimendosi (12s→2.7s in 2 anni). È un business a tempo.
+
+### Le 4 strategie della Guida 2 (per contesto)
+| Strategia | WR | Infra richiesta | Rilevante per noi? |
+|-----------|-----|----------------|-------------------|
+| Latency arb | 85–98% | Binance WS + sub-100ms + co-lo | ❌ no (velocità) |
+| Oracle arb | 78–85% | Feed Chainlink vs contract | ⚠️ maybe, medio sforzo |
+| News-based | 60–75% | Claude API per ogni news ($$) | ❌ no (spend API) |
+| Market making | 2–5%/mo | FIFO queue priority + real ordini | ❌ no (maker, paper) |
+
+Le 3 strategie non-latency o sono a basso WR (news) o richiedono infra/API a
+pagamento o real-order capability (maker). Combaciando con il vincolo "non
+spendere", restano fuori. Aggiungiamo a "value" gated se tutto il resto fallisce.
+
+### LEZIONI APPLICABILI A NOI SENZA SPENDERE (priority-ordered)
+
+#### L1 — Gestione rischio = unica vera differenza (Claude vs OpenClaw) ★★★★
+Guida 2 è esplicita: la differenza +1322% vs liquidazione NON fu la strategia,
+ma il risk management. Parametri raccomandati:
+- max singola posizione: 8% portafoglio (noi 3% floor, OK più conservativi)
+- daily loss limit: **-20% con stop automatico giornata** (noi NON abbiamo
+  un daily counter: abbiamo equity_floor -5% lifetime e ruin -20% lifetime)
+- kill switch totale: **-40% drawdown** (noi ruin -20%, più stretti — OK)
+- Telegram alert a ogni soglia (noi log_only, mancano notifiche)
+→ **Azione: aggiungere DAILY loss counter + daily halt.** È il gap più concreto.
+
+#### L2 — Filtro liquidità >$50.000 per strategie NON-copy ★★★
+Guida 2: "Opera solo in mercati con >$50.000 di liquidità. I mercati più piccoli
+non possono assorbire uscite pulite, il bid-ask spread si mangia i gain."
+Noi usiamo min_book_size 15–50 USDC (profondità del best level, NON liquidità
+totale mercato) e min_volume 1000–5000 (volume mercato, ma <<$50K).
+→ **Azione: filtro market liquidity/volume >= $50K per harvest + arb.**
+  Per copy non si applica (segue wallet, il wallet ha scelto mercato liquido).
+  Aggiungiamo config `min_market_volume_usdc: 50000` e fetch da gamma volume.
+
+#### L3 — Fee taker su USCITA (slippage+fee su SL/ TP close) ★★★
+Guida 1: taker fee mangia l'edge OGNI volta che crossing il book. Noi modelliamo
+fee solo in INGRESSO: `eff_price_with_fee = price * (1+fee_frac)`. P&L close è
+`pnl = (exit - entry) * shares` → **fee di uscita non dedotta**.
+Per harvest hold-to-resolution (settle $1/$0) NON c'è fee (è settlement, non trade).
+Per copy/sport con SL/TP early-exit: la fee di uscita va dedotta o la P&L è
+ottimistica. Su sport a 0.50 → uscita costa ~1.5% per leg → su $8.95 size = -$0.13
+per trade. Su 3 trade = -$0.40 cumulato “nascosto” che peggiora il nostro -1.72 reale.
+→ **Azione: dedurre taker_fee_fraction anche sull'exit_price nelle chiusure
+  SL/TP (non sulle resolution). Modifica in simulator.close_position.**
+
+#### L4 — Guida 1: fee formula `rate · p · (1−p)` ★★
+Già implementato in categories.taker_fee_fraction (sport rate 0.03).
+- La fee è MAX a p=0.50 (coin-flip) → ~0 agli estremi (0.05/0.95).
+- **CONFIRMA harvest 0.85–0.95: fee minuscola** (rate·0.05·0.95 = 0.0014 = 0.14%).
+  + hold-to-resolution = nessuna exit fee → edge pulito. ✓ BEST allineato.
+- **CONFIRMA arb_binary morto come taker**: gap 2–4c in coin-flip dove
+  fee = 1.5c/leg → su 2 leg fee 3c vs gap 3c = breakeven netto. Spiega 0 opp.
+  Vivo solo come maker (limit order, 0 fee + rebate 25%) — non simulabile onesto
+  in paper (FIFO queue fill non esiste, simuliamo fill istantaneo a best_ask).
+→ **Azione: disabilitare arb_binary in paper (trova 0, complexity inutile)
+  OPPURE tenerlo come monitor-only (log gap without open).** Spiega l'ostilità.
+
+#### L5 — VWAP per arb detection (Guida 3) ★
+Guida 3: non usare last-tick (mente). VWAP = `Σ(price·size) / Σsize` su finestra
+stretta con carry-forward. Flag a 2c, **trade a ≥5c**, skip se qualunque leg >0.95,
+skip se leg senza trade nella finestra. “Detect wide, act narrow.”
+Noi usiamo best_ask dal book (book-ask sum = cost reale per prendere entrambi i
+leg, più conservativo per valutare profitto post-take). Questo è ragionevole; la
+VWAP serve a DETECT mispricing da transazioni reali.
+→ **Azione (bassa priorità): per arb_cross, fetch trades recenti (data-api
+  /trades) e calcola VWAP per confronto con sum-book. Flag-a-2c / act-5c filter.**
+  Priorità bassa: arb trova 0 opp con threshold 20–50c. Se scendiamo a 5–7c
+  come maker servirebbe VWAP per validare. Ma non siamo maker.
+
+#### L6 — Maker vs taker (Guida 1): core, ma non applicabile in paper ★
+Limit order = 0 fee + rebate 25% (crypto 20%). Market order = pay fee. Per arb:
+“maker arb keep gap + rebate; taker arb lose gap.” MA maker richiede vincere la
+FIFO queue, ordini early + hold posizione. In paper non esiste queue / fill reale.
+→ **Azione: DOC. Quando/ se passiamo a real trading, TUTTI gli arb devono essere
+  limit-order (maker). Annotato, non implementabile ora.**
+
+### DIAGNOSI REALE COPY 0W/3L (non dalle guide, dai nostri numeri)
+I 3 trade chiusi sono tennis in-play (Iasi/Swiss) + France-Spain O/U. Entry in
+banda VALIDA (0.42–0.55). Drift filter NON ha skippato: prezzo nostro = avg_price
+wallet (entro 8%). → NON è "ingresso tardivo vs wallet".
+La causa è la Natura del copy su tennis in-play:
+- I wallet che copiamo sono momentum-chaser su match in corso → alta varianza.
+- SL -8% su tennis in-play è TROPPO STRETTO: un break di game muove il prezzo
+  10–15% anche quando il risultato finale è quello previsto inizialmente.
+- SL assoluto (-8% su 0.42 = -3.4 cent) su swing normali di tennis spara subito.
+→ **Azione (non dalle guide): per copy-sport, usare SL più lato (−12% o assoluto
+  −5 cent) OPPURE escludere copy su tennis/ sport in-play, OPPURE time-stop
+  (se non risolve entro N min, esci senza SL%).** Da sperimentare in paper.
+
+### PRIORITÀ DI IMPLEMENTAZIONE (date le guide)
+1. **L1 daily loss limit/halt** — concrete, alto valore, zero sforzo
+2. **L2 liquidity filter ≥$50K** per harvest/arb
+3. **L3 exit fee** nel simulatore (P&L realistica)
+4. **Diagnosi copy-sport SL** (L6 nostro): SL assoluto o esclusione tennis in-play
+5. **L4 disabilitare/monitor-only arb_binary** (spiega 0 opp, semplifica)
+6. **L5 VWAP arb_cross** (bassa, solo se abbassiamo threshold arb)
+
+NO-mapping: latency arb, oracle arb, news-based, market-making, value-betting
+esterno → tutti gated / fuori scope fino a che budget ridotto e paper mode.
+
+---
+
 *Update this file after every 2 view/browser/search operations*

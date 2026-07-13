@@ -50,6 +50,10 @@ class Opportunity:
     max_fill_size: float = 0.0          # USDC riempibili dati book size (min sulle gambe)
     fee_type: str = ""
     score: float = 0.0                  # ranking (profit_per_share o APR)
+    # Phase CI2 (Guida 2: liquidity ≥$50K per uscite pulite). Volume totale
+    # mercato (gamma volumeNum) — non depth best-level. Usato da execute_opportunity
+    # come filtro hard: skip se < min_market_volume_usdc config.
+    market_volume: float = 0.0
 
 
 # ----------------------------------------------------------------------
@@ -58,6 +62,11 @@ class Opportunity:
 def _leg_fee_fraction(fee_type: str, price: float) -> float:
     cat = "sport" if (fee_type and "sport" in fee_type.lower()) else "other"
     return taker_fee_fraction(cat, price)
+
+
+def _min_market_volume_usdc(strategy_name: str) -> float:
+    """Phase CI2 (Guida 2: liquidity ≥$50K per uscite pulite)."""
+    return float(STRATEGIES.get(strategy_name, {}).get("min_market_volume_usdc", 0.0) or 0.0)
 
 
 # ----------------------------------------------------------------------
@@ -80,8 +89,13 @@ class ArbBinaryStrategy:
     def scan(self, fetcher) -> List[Opportunity]:
         """Scansiona top mercati attivi, cerca YES+NO<$1 post-fees+safety."""
         markets = fetcher.get_active_markets(limit=self.scan_markets, min_volume=1000.0)
+        min_market_vol = _min_market_volume_usdc(self.name)
         opps: List[Opportunity] = []
         for m in markets:
+            # Phase CI2 (Guida 2: liquidity ≥$50K): skip mercato se volume < soglia.
+            # Garantita uscita pulita senza bid-ask che mangia il gain residual.
+            if min_market_vol > 0 and m.get("volume", 0) < min_market_vol:
+                continue
             # saltiamo sport: fee mangia quasi tutto lo spread; LNGa olive
             if m.get("category") == "sport":
                 continue
@@ -141,6 +155,7 @@ class ArbBinaryStrategy:
                 max_fill_size=max_fill_size,
                 fee_type=m.get("fee_type", ""),
                 score=profit_per_share,
+                market_volume=m.get("volume", 0.0),
             )
             opps.append(opp)
         opps.sort(key=lambda o: o.score, reverse=True)
@@ -166,8 +181,14 @@ class HarvestStrategy:
 
     def scan(self, fetcher) -> List[Opportunity]:
         markets = fetcher.get_active_markets(limit=self.scan_markets, min_volume=500.0)
+        min_market_vol = _min_market_volume_usdc(self.name)
         opps: List[Opportunity] = []
         for m in markets:
+            # Phase CI2 (Guida 2: liquidity ≥$50K): skip market if volume < threshold.
+            # Gate hard: harvest ha SL -5 cent + hold-to-resolution; vuole uscite
+            # pulite in caso di black-swan reversal, che richiede book profondo.
+            if min_market_vol > 0 and m.get("volume", 0) < min_market_vol:
+                continue
             tokens = m["tokens"]; outcomes = m["outcomes"]
             if len(tokens) < 2 or len(outcomes) < 2:
                 continue
@@ -221,6 +242,7 @@ class HarvestStrategy:
                     max_fill_size=max_fill,
                     fee_type=m.get("fee_type", ""),
                     score=apr,   # meglio APR alto
+                    market_volume=m.get("volume", 0.0),
                 )
                 opps.append(opp)
                 break  # un solo lato per mercato per evitare sovrapposizione
@@ -246,6 +268,7 @@ class ArbCrossStrategy:
 
     def scan(self, fetcher) -> List[Opportunity]:
         events = fetcher.get_active_events(limit=self.scan_events * 2)
+        min_market_vol = _min_market_volume_usdc(self.name)
         opps: List[Opportunity] = []
         seen_events = set()
         for ev in events[:self.scan_events]:
@@ -253,9 +276,19 @@ class ArbCrossStrategy:
             if not slug or slug in seen_events:
                 continue
             seen_events.add(slug)
+            # Phase CI2 (Guida 2: liquidity ≥$50K per uscite pulite su bundle n-leg).
+            # get_active_events espone volume aggregato evento in ev['volume']. In
+            # alternativa prendiamo come proxy il volume del primo sotto-mercato.
+            ev_volume = float(ev.get("volume", 0) or 0)
             markets = fetcher.get_event_markets(slug)
             if not markets:
                 continue
+            if min_market_vol > 0:
+                # se volume evento non popolato, proviamo col max dei sotto-mercati
+                if ev_volume <= 0:
+                    ev_volume = max((m.get("volume", 0) for m in markets), default=0.0)
+                if ev_volume < min_market_vol:
+                    continue
             n = len(markets)
             if n < self.min_outcomes or n > self.max_outcomes:
                 continue
@@ -319,6 +352,7 @@ class ArbCrossStrategy:
                 max_fill_size=max_fill_size,
                 fee_type=fee_type,
                 score=profit_per_share,
+                market_volume=ev_volume,
             )
             opps.append(opp)
         opps.sort(key=lambda o: o.score, reverse=True)

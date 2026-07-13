@@ -1,0 +1,322 @@
+GUIDA NUMERO 1
+Your arb bot wins the trade and still loses money. 
+It's the fees.
+You found a clean 3-cent gap. You took it. You won.
+Then your balance came back smaller than it started.
+That's not a bad strategy. 
+That's a taker fee eating your entire edge.
+Polymarket was free for years but that era is over.
+Here's the execution detail that decides whether your arb prints or bleeds.
+Or how to flip the script and profit like fees does not exist.
+The fee that kills your arb
+
+Through 2026 Polymarket rolled out taker fees across almost every category.
+Crypto first, then sports, then nearly everything by the end of March.
+Only geopolitics and world events are still free on both sides.
+Immagine
+Now do the math on a real arb:
+Your edge on a YES+NO mispricing is usually 2 to 4 cents on the dollar.
+A taker fee on a coin-flip market can be larger than that.
+So you find the gap, you cross the spread to grab it, and the fee quietly takes more than the gap was worth.
+You were right about the mispricing.
+You still lost.
+This is why most "profitable" arb bots are net negative. The edge is real. The execution eats it.
+Maker vs taker, in plain words
+
+Polymarket only charges the taker. That's the whole thing.
+Taker: you hit an order that's already sitting on the book. Instant fill. You pay the fee.
+Maker: you post your own limit order and wait. Someone else hits you. You pay nothing.
+Same trade. Same price. Opposite fee outcome.
+When you click "buy" and take the current price, you are the taker, and you pay for the convenience of being instant.
+Immagine
+When you place a limit order that rests on the book and gets filled later, you added liquidity instead of removing it so the platform charges you zero.
+That is why limit orders = 0 fees.
+It's not a loophole. It's the design. 
+Makers feed the order book, so the book pays them instead of charging them.
+The fee is worst exactly where arb lives
+
+Here's the part that should change how you build.
+The taker fee is not flat. It follows a curve:
+fee = contracts x rate x p x (1 - p)
+That p x (1 - p) term peaks when the price is 50 cents.
+At 50/50, the fee is at its absolute maximum. 
+At the extremes (5 cents, 95 cents), it shrinks toward nothing.
+Immagine
+Now think about where arb gaps show up.
+They cluster in uncertain markets. 
+Coin-flips. Live games. Fresh news. 
+The exact spots where price sits near the middle.
+Which means the taker fee is highest precisely where your arb opportunities are richest.
+The market is built so that taking the obvious gap costs you the most.
+You cannot out-trade that with size or speed. You have to stop being the taker.
+Makers don't just dodge the fee, they get paid
+
+This is the part nobody on your timeline talks about.
+The fees takers pay don't vanish into the platform. 
+A chunk gets handed back to makers.
+Around 25% of collected fees (20% on crypto) gets paid to makers daily.
+It's proportional to your share of filled maker volume in that specific market.
+So when you provide the resting liquidity that an arb fill needs, two things happen:
+You pay zero fee on the trade.
+You collect a cut of what every taker in that market paid.
+Immagine
+Taker arb: you pay to capture the gap.
+Maker arb: you keep the full gap and get a rebate on top.
+Same edge and completely different bottom line.
+But maker means you have to win the queue
+
+Here's the catch, and it's the same wall my other guides keep hitting.
+To get filled as a maker, your limit order has to actually get hit.
+Polymarket fills on a FIFO queue (first in line at a price level gets filled first)
+
+If your order is buried behind fifty others at the same price, you sit there unfilled while the gap closes.
+And when you panic and cross the spread to grab it before it's gone, you just became the taker again. 
+Fee paid, edge gone.
+So the maker advantage is real, but it's gated by execution:
+You need your resting orders in early.
+You need queue priority at the price level where the fill will land.
+You need to hold position instead of canceling and resetting, which sends you to the back of the line.
+The fee discount is free money, but only if your infrastructure can sit at the front of the queue and wait.
+This is where latency and order placement quietly decide the whole game.
+How to set it up
+
+Here's a full guide:
+Place limit orders, never market orders, on any arb leg. The instant you take, the fee model turns against you.
+Pull the fee schedule from the API dynamically. Polymarket has changed rates more than once and warns against hardcoding - read it from the market data, not a number you wrote last month.
+Use your private key to derive L2 credentials, which authenticate all subsequent trading requests.
+python
+from py_clob_client_v2 import ClobClient
+import os
+
+private_key = os.getenv("PRIVATE_KEY")
+
+# Derive L2 API credentials
+temp_client = ClobClient("https://clob.polymarket.com", key=private_key, chain_id=137)
+api_creds = temp_client.create_or_derive_api_key()
+If you ever must take, take in the cheapest categories. Sports is the lowest fee-bearing rate, crypto the highest. Geopolitics is still free on both sides.
+Near the extremes the taker fee is tiny. A fill at 95 cents barely costs anything, so a forced take there hurts far less than one at 50.
+Build your maker orders to rest early and hold their queue spot. The rebate only lands if you actually get filled as the maker.
+Final thoughts and fair conclusion
+
+Everyone obsesses over finding the gap.
+The gap was never the hard part.
+Keeping it is.
+
+Take the trade and the fee takes your edge, worst of all right in the coin-flip markets where the gaps are fattest.
+Rest the order, win the queue, and you pay nothing and get paid on top.
+Stop being the taker.
+I post my own maker fills and rebates they pull in here daily.
+Full setup and daily flow go in my small TG channel first.
+
+
+GUIDA NUMERO 2
+
+Una guía completa sobre el bot de arbitraje que hizo historia en el mundo cripto. Cómo funciona, por qué gana el 98% de sus operaciones, en qué consiste realmente la estrategia y cómo puedes construir el tuyo con un solo prompt de Claude.
+Immagine
+Perfil:https://ares.pro/wallets/0x63ce342161250d705dc0b16df89036c8e5f9ba9a?ref=adiix
+PnL Total: $2,382,780.80 Predicciones: 33,950+ Tasa de acierto: 100.0%
+La billetera que hizo que Crypto Twitter dejara de hacer scroll
+
+En diciembre de 2025, una billetera apareció en Polymarket —el mercado de predicciones más grande del mundo— con un saldo de $313. Nadie se dio cuenta. No había nada inusual en que una cuenta pequeña ingresara a la plataforma; miles lo hacen cada semana. Pero durante los siguientes cuatro meses, ocurrió algo extraordinario: esa billetera realizó 26,738 operaciones individuales, mantuvo una tasa de acierto del 98% en todas ellas y convirtió $313 en $2,382,780.80. Cada transacción es verificable on-chain. Aquí no hay trucos de magia. La cifra es real.
+La dirección de la billetera, 0x8dxd, ejecutaba un bot de trading automatizado impulsado por la IA Claude de Anthropic. Cuando Finbold informó por primera vez la historia a principios de enero de 2026 —con datos on-chain para respaldarlo— el mundo cripto tuvo uno de sus periódicos momentos colectivos de incredulidad. La publicación se volvió viral. Hilos diseccionando la estrategia inundaron X. En cuestión de semanas, los desarrolladores habían aplicado ingeniería inversa al enfoque y le pidieron a Claude que lo reconstruyera.
+Esta es la historia de cómo sucedió, por qué funciona y qué necesitarías hacer para construir algo similar. Cubre el mecanismo completo: desde la ineficiencia de mercado subyacente que hace posible la estrategia, hasta el código que la explota y la gestión de riesgos que la mantiene viva el tiempo suficiente para capitalizarse. No se omite nada. Si lees esto en su totalidad, entenderás el espacio de los bots de arbitraje mejor que la mayoría de las personas que operan actualmente en Polymarket.
+Immagine
+La curva de crecimiento es casi imposible de observar sin cierto grado de escepticismo. Es natural. Un retorno de 7,942 veces el capital inicial en cuatro meses es el tipo de cifra que suele aparecer en anuncios de estafas. Pero la diferencia aquí es la blockchain. Cada operación, cada posición, cada liquidación: todo es público e inmutable. Los paneles de Dune Analytics que rastrearon esta billetera mostraron una actividad constante y de alta frecuencia en contratos de precio a corto plazo de BTC y ETH. No hubo una sola apuesta afortunada. Hubo 26,738.
+Qué es realmente Polymarket y de dónde sale el dinero
+
+Para entender por qué funciona esta estrategia, primero debes comprender la mecánica de Polymarket. Es un mercado de predicción: una plataforma donde los usuarios operan sobre el resultado de eventos del mundo real. La estructura es simple. Para cualquier evento dado — ¿estará Bitcoin más alto o más bajo en 15 minutos?, ¿subirá las tasas la Fed este mes?, ¿ganará el candidato X las elecciones? — los usuarios pueden comprar acciones del "Sí" o del "No".
+Cada acción cotiza entre $0 y $1. El precio refleja la estimación colectiva del mercado sobre la probabilidad. Un contrato que cotiza a $0.73 implica que el mercado cree que hay un 73% de probabilidades de que el resultado sea "Sí". Si aciertas, tu acción se liquida a $1.00. Si fallas, se liquida a $0.00. El mecanismo es elegante, la matemática es directa y los mercados son líquidos: el volumen de negociación semanal de Polymarket superó los $2 mil millones a principios de 2026.
+La categoría clave de la plataforma para el trading automatizado son sus contratos cripto de corta duración: preguntas de subida/bajada de 5 y 15 minutos sobre Bitcoin y Ethereum. Cada pocos minutos, se abre un nuevo contrato preguntando si el BTC estará más alto o más bajo al vencimiento. Estos contratos se resuelven rápido, ofrecen retroalimentación inmediata y, lo más importante, presentan una vulnerabilidad estructural que los bots pueden explotar.
+Polymarket actualiza los precios de sus contratos con mayor lentitud de lo que se mueve el activo subyacente en los exchanges centralizados. Siempre hay un retraso (lag) entre el momento en que ocurre un cambio de precio en Binance o Coinbase y el momento en que ese cambio se refleja en las cuotas de los contratos de Polymarket. En 2024, ese retraso promediaba unos 12 segundos. Para el primer trimestre de 2026, la competencia lo había reducido a aproximadamente 2.7 segundos. Pero incluso 2.7 segundos son una eternidad para una máquina. Y en esos 2.7 segundos, el resultado de un contrato de BTC de 15 minutos ya es, efectivamente, conocido.
+Immagine
+El mecanismo: cómo funciona realmente el arbitraje
+
+Vamos a desglosar una sola operación, paso a paso, a nivel de milisegundos. Comprender esta secuencia es la base fundamental de todo lo demás.
+Immagine
+Se abre un nuevo contrato de subida/bajada de Bitcoin de 15 minutos en Polymarket. Las probabilidades iniciales son de 50/50: ninguna de las partes tiene una ventaja clara al abrirse el contrato. En ese momento, el precio es justo.
+A los diez minutos de vida del contrato, Bitcoin se mueve bruscamente en Binance. Digamos que cae un 0,6% en 30 segundos: un movimiento claro impulsado por el momentum. Basándonos en lo que sabemos sobre la persistencia del precio de BTC en ventanas de 5 minutos, este movimiento implica ahora una probabilidad sustancialmente mayor de que BTC esté más bajo al vencimiento del contrato de lo que sugieren las cuotas actuales de Polymarket. La probabilidad "real" del resultado a la baja podría ser ahora del 78%, pero Polymarket sigue mostrando 54/46.
+El bot que ha estado monitoreando el feed de WebSocket de Binance continuamente, recibiendo actualizaciones de precios con una latencia inferior a 50 ms calcula inmediatamente la discrepancia. La ventaja (edge) es de aproximadamente 24 puntos porcentuales. Es enorme. En un contrato binario, esto es, efectivamente, una apuesta gratuita. El bot calcula el tamaño de la posición utilizando el Criterio de Kelly, ejecuta la operación a través de la API CLOB de Polymarket y espera.
+En 2 o 3 segundos, otros participantes y bots comienzan a actualizar las cuotas de Polymarket para reflejar el movimiento de Binance. Las probabilidades pasan de 54/46 hacia el "verdadero" 78/22. El bot puede salir en este punto para obtener un beneficio inmediato por el cambio de precio, o mantener hasta la resolución del contrato. De cualquier manera, la posición se tomó con una certeza casi absoluta de un resultado positivo.
+Repite esto de 200 a 500 veces al día, con un tamaño de posición disciplinado y un interruptor de apagado (kill switch) estricto ante un drawdown del -40%, y obtendrás el resultado de 0x8dxd. No es magia. No es predicción. Es la explotación a escala industrial de una ineficiencia de mercado que todavía existe hoy, solo que con una ventana de tiempo más corta que hace dos años.
+¿Por qué existe este retraso en Polymarket?
+
+Es una pregunta razonable. Si la ineficiencia es tan obvia, ¿por qué Polymarket no la ha solucionado? La respuesta es estructural. Polymarket es un mercado de predicción descentralizado: utiliza un modelo de CLOB (Libro de Órdenes de Límite Central) donde los precios se mueven solo cuando se colocan y casan órdenes. A diferencia de un exchange centralizado con una mesa de market-making dedicada, los precios de Polymarket solo cambian cuando los traders publican órdenes activamente.
+En la práctica, esto significa que en los segundos posteriores a un movimiento importante en Binance, el lado "inteligente" del contrato de Polymarket —el lado que se beneficiará del movimiento— tiene pocos vendedores dispuestos a operar con cuotas obsoletas. El mercado es temporalmente unilateral. Los bots que reconocen este desequilibrio y lo llenan comprando el lado "obvio" están proporcionando liquidez a cambio de tomar el otro lado. Son recompensados por ser rápidos y por acertar en la dirección del retraso.
+Polymarket ha tomado medidas para acelerar la actualización de precios. El retraso ha bajado de más de 12 segundos en 2024 a unos 2,7 segundos a principios de 2026. Pero cerrar la brecha por completo requeriría creadores de mercado automatizados en tiempo real que estuvieran altamente capitalizados y dirigidos por algoritmos, que es esencialmente lo que ya son los bots de arbitraje. Es una carrera armamentista sin un final evidente.
+Las 4 estrategias: no todos los bots de Claude hacen lo mismo
+
+La billetera 0x8dxd ejecutaba puro arbitraje de latencia. Pero el ecosistema más amplio de bots de Polymarket impulsados por Claude utiliza cuatro estrategias distintas, cada una con diferentes perfiles de tasa de acierto, riesgo y requisitos de capital.
+Arbitraje de Latencia (Tasa de acierto: 85–98%)La estrategia que usó 0x8dxd. Monitorea precios en tiempo real de Binance y Coinbase vía WebSocket. Cuando las cuotas de Polymarket divergen de lo que implican los datos del CEX (Exchange Centralizado) por más de tu umbral (típicamente 3-5%), compra el lado correcto antes de que el mercado corrija. La ventaja es pura velocidad. El riesgo principal es que la ventana de tiempo se siga comprimiendo.
+Arbitraje de Oráculo (Tasa de acierto: 78–85%)Una oportunidad más robusta pero menos frecuente. Redes de oráculos como Chainlink publican precios on-chain que Polymarket usa para la liquidación. Ocasionalmente, estos divergen de los precios implícitos en los contratos. Cuando el feed de Chainlink muestra un precio y el contrato de Polymarket implica otro, la dirección de la liquidación se conoce con casi total certeza.
+Trading basado en Noticias (Tasa de acierto: 60–75%)Aquí es donde la capacidad de razonamiento de Claude es más relevante. El bot ingiere noticias en tiempo real —comunicados oficiales, datos macroeconómicos— y evalúa su impacto en la probabilidad de los contratos. La IA puede actualizar la probabilidad implícita antes de que los humanos terminen de leer el titular.
+Market Making (Retorno: 2–5% mensual)La estrategia más consistente y difícil de arruinar. El bot coloca órdenes de compra y venta simultáneas en ambos lados, capturando el spread (diferencial) entre el precio de compra y venta sin tomar una dirección. El riesgo es el inventario: si el mercado se mueve bruscamente, puedes quedarte atrapado con contratos perdedores.
+Cronología: de $313 a $2.38M
+
+La historia de 0x8dxd no ocurrió de forma aislada. Surgió en medio de una ola de trading con Claude que transformó Polymarket en el primer trimestre de 2026.
+Diciembre de 2025: Lanzamiento ($313)La billetera 0x8dxd aparece en Polymarket. Primeras operaciones en contratos de BTC de 15 min. Fase de calibración con posiciones pequeñas.
+6 de enero de 2026: El reporte de Finbold (~$438,000)En 30 días, la billetera creció 140x. 6,615 predicciones. Tasa de acierto del 98%. El post se vuelve viral y la gente verifica los datos en Dune Analytics.
+10 de marzo de 2026: Claude vs. OpenClaw ($1,000 → $14,216 en 48h)Experimento público: Claude vs OpenClaw bajo condiciones idénticas. Claude: +1,322% de retorno. OpenClaw: liquidación total. La diferencia radicó en la robustez de la gestión de riesgos generada por Claude.
+Abril de 2026: Saldo final verificado ($2,382,780.80)26,738 operaciones en 4 meses. Uno de los resultados de trading automatizado más documentados en la historia de los mercados de predicción.
+Cómo construir el tuyo de la A a la Z
+
+Esta es una guía operativa completa. Si sigues los pasos y no te saltas la gestión de riesgos, tendrás un bot funcionando hoy mismo. Si te saltas los pasos 4 y 5, perderás dinero.
+Configura una billetera de PolymarketVe a polymarket.com y conecta MetaMask o Coinbase Wallet. Fondea con USDC a través de la red Polygon (no Ethereum mainnet). Para pruebas, $100–300 bastan. Para trading real, empieza con $500–1,000. Nota: Polymarket no está disponible para residentes en EE. UU.
+Genera tus credenciales de APIEn docs.polymarket.com, genera una clave API de CLOB firmando un mensaje con tu billetera. Necesitarás tu clave privada para firmar transacciones. Guárdala en una variable de entorno local; nunca la compartas ni la subas a GitHub.
+Usa Claude para construir el botAbre Claude.ai o Claude Code. El prompt adecuado generará un bot en Python con manejo de errores, límites de tasa (rate limiting) y modo de simulación (paper mode). Claude Code es preferible porque puede iterar sobre el código y ejecutarlo directamente.
+Immagine
+Ejecuta el modo de simulación (paper mode) durante al menos una semana 
+
+Este paso no es opcional, y una semana es el mínimo, no el objetivo. El paper trading simula operaciones reales sin usar capital real. Te permite verificar que el cálculo de la ventaja (edge) del bot sea correcto, que la conexión por WebSocket de Binance sea estable, que las llamadas a la API de Polymarket funcionen y que la lógica del tamaño de las posiciones se comporte como se espera bajo diversas condiciones del mercado. Debes ver al menos 200 operaciones completadas en modo simulación con una tasa de acierto superior al 70% antes de considerar pasar a real. Si tu tasa de acierto en papel es consistentemente inferior al 60%, algo en la detección de la ventaja o en la lógica de tiempo necesita ajustes. Lleva los registros de errores (logs) de vuelta a Claude e itera.
+Configura la gestión de riesgos antes de tocar fondos reales
+
+La diferencia entre el bot de Claude (+1,322%) y el bot de OpenClaw (liquidado) en el experimento de marzo de 2026 se debió casi por completo a la calidad de la gestión de riesgos. La configuración de OpenClaw se sobreapalancó en una racha perdedora. El código generado por Claude calculó los tamaños de las posiciones de forma conservadora usando fracciones de Kelly y dejó de operar cuando se superaron los umbrales de pérdida (drawdown). Configura estos parámetros explícitamente: tamaño máximo de posición individual del 8% del total de la cartera; límite de pérdida diaria del -20% con parada automática; interruptor de apagado (kill switch) por pérdida total del -40%; y notificaciones de Telegram para cada umbral de alerta. Ninguno de estos puntos es negociable. Especialmente el interruptor de apagado: si tu bot está funcionando mientras duermes y algo falla, quieres que se detenga, no que siga operando.
+Pasa a real: empieza pequeño y escala solo con evidencias
+
+Comienza con $1–5 USDC por operación. No se trata de la cantidad de dólares, sino de establecer una base de referencia. Observa cada operación durante la primera semana. Compara los resultados en vivo con tus resultados del modo simulación. Si son significativamente diferentes, investiga por qué antes de añadir capital. Si los resultados en vivo y en papel convergen, tienes evidencia de que el sistema funciona según lo diseñado. Entonces puedes escalar gradualmente, duplicando el tamaño de las posiciones cada una o dos semanas, hasta lo que la matemática de Kelly sugiera que es apropiado para el tamaño total de tu cuenta. Opera solo en mercados con más de $50,000 de liquidez. Los mercados más pequeños no pueden absorber salidas limpias, y el diferencial entre compra y venta (bid-ask spread) se comerá tus ganancias.
+Traders humanos vs. bots de Claude: los datos
+
+La brecha de rendimiento entre los operadores humanos y los bots automatizados que ejecutan la misma estrategia en Polymarket es significativa y está documentada. Los datos que comparan a humanos y bots utilizando enfoques de arbitraje de latencia similares mostraron un patrón constante: los bots generaron aproximadamente $206,000 con la estrategia, mientras que los humanos que usaron la misma lógica generaron unos $100,000. Una brecha de 2x; mismo mercado, misma estrategia, mismo periodo de tiempo.
+La diferencia no proviene de una mejor predicción, sino de la ejecución. Los humanos cometen cuatro errores sistemáticos que los bots no:
+Entradas tardías: Para cuando un humano identifica el retraso de Polymarket, verifica su razonamiento y coloca la operación manualmente, la ventana de oportunidad a menudo ya se ha cerrado o estrechado significativamente. Un bot que ejecuta en menos de 100 ms captura oportunidades que los humanos simplemente no pueden alcanzar.
+Tamaño de posición inconsistente: Los humanos tienden a aumentar demasiado el tamaño de las posiciones cuando se sienten "confiados" y a reducirlo cuando están inseguros; exactamente lo contrario a la matemática de Kelly, que asigna más tamaño cuando la ventaja es mayor. El dimensionamiento emocional destruye el valor esperado de forma sistemática a lo largo de miles de operaciones.
+Fatiga: Un humano que monitorea contratos de BTC de 15 minutos durante una sesión de 8 horas toma decisiones cada vez peores. Un bot que funciona durante 72 horas seguidas toma la misma decisión en la hora 72 que la que tomó en la hora 1.
+Psicología del drawdown: Después de una racha perdedora, los humanos suelen abandonar una estrategia ganadora (pánico) o doblar la apuesta intentando recuperarse (tilt). Ambas respuestas destruyen el capital. Un bot con un interruptor de apagado estricto no hace ninguna de las dos.
+Immagine
+Immagine
+Qué puede salir mal: una evaluación honesta
+
+Esta sección es la más importante de todo el artículo. El resultado de 0x8dxd es extraordinario y es real. Pero también es excepcional. La mayoría de las personas que construyan un bot de arbitraje para Polymarket no multiplicarán su dinero por 7,942. Algunos perderán su capital inicial por completo. Antes de ejecutar cualquier cosa con fondos reales, necesitas una visión clara de cuáles son los riesgos reales y cómo se manifiesta cada uno en la práctica.
+La compresión de la ventaja (edge) es el riesgo existencial
+
+La ventana de arbitraje que hizo posible a 0x8dxd era de más de 12 segundos en 2024. Para el primer trimestre de 2026, había caído a 2.7 segundos. La dirección de esa tendencia es clara y no se revierte. A medida que más bots entren en el espacio y la competencia se intensifique, la ventana continuará reduciéndose. En algún momento quizás a los 0.5 segundos, quizás antes la ventana será más pequeña que la latencia de ida y vuelta de la API necesaria para ejecutar una operación, momento en el cual la estrategia dejará de funcionar por completo para operadores minoristas que no cuenten con infraestructura de co-location.
+Esto no es una razón para no empezar. La ventana existe ahora y los retornos mientras exista son sustanciales. Pero debes tratar cualquier operación de arbitraje de latencia como un negocio con tiempo limitado, no como una fuente de ingresos pasivos permanente. Extrae valor mientras la ventaja esté ahí y prepárate para pivotar hacia una estrategia diferente a medida que esta se estreche.
+Los cambios en las reglas pueden invalidar tu modelo de la noche a la mañana
+
+Polymarket puede cambiar la mecánica de los contratos, las reglas de liquidación o los términos de la API en cualquier momento. Un cambio en cómo se valoran los contratos de corta duración, o una actualización en las fuentes de datos del oráculo utilizadas para la liquidación, podría hacer que una estrategia que funcionaba perfectamente ayer produzca pérdidas constantes mañana. Monitorear el historial de cambios (changelog) de Polymarket y sus canales comunitarios en busca de cambios anunciados es un requisito operativo, no algo opcional.
+Un error en tu gestión de riesgos es más peligroso que una estrategia perdedora
+
+Una estrategia con una tasa de acierto del 55% pero con un dimensionamiento de Kelly adecuado hará crecer el capital lentamente. Una estrategia con una tasa de acierto del 98% pero con un error en el cálculo del tamaño de la posición uno que permita que una sola operación represente el 80% de la cartera hará saltar la cuenta por los aires en la inevitable operación perdedora. 
+El modo de fallo más peligroso no es una mala estrategia. Es una estrategia que funciona en modo simulación pero que tiene un caso extremo (edge case) en la operativa real que la simulación en papel no detectó. Por eso, el paso del paper trading al trading real debe ser gradual y supervisado de cerca.
+La mentalidad correcta para empezar
+
+El resultado de 0x8dxd demuestra lo que es posible en el nivel más alto de esta estrategia. Requirió las condiciones de mercado adecuadas (alta volatilidad en BTC durante ese periodo), el tamaño de posición correcto, un tiempo de ejecución ininterrumpido y ningún fallo técnico significativo durante cuatro meses. Esa combinación de factores no se replicará exactamente para nadie más.
+Lo que sí se replicará para un bot bien construido que funcione sobre una infraestructura sólida y con una gestión de riesgos adecuada es un valor esperado positivo constante gracias a la ventaja del arbitraje de latencia que todavía existe en los contratos cripto de corta duración de Polymarket. Que eso produzca retornos de 7,942x o un más modesto 3–5x en un periodo similar depende de factores que varían entre operadores: la calidad de la conexión WebSocket de Binance, la latencia del nodo RPC de Polygon, la precisión en la calibración del umbral de ventaja y cuánto tiempo permanezca la ventana de arbitraje económicamente viable antes de que el bot necesite adaptarse.
+Los bots que ya están funcionando tienen una ventaja compuesta. La ventaja existe ahora. La ventana se está estrechando. El mejor momento para entender esta estrategia fue hace seis meses. El segundo mejor momento es justo ahora.
+Si has llegado hasta aquí, gracias.
+
+Armar esto llevó tiempo y espero que te haya dado algo real: no solo inspiración, sino un camino real desde cero hasta un sistema en funcionamiento.
+El resultado de 0x8dxd es extraordinario. Tus resultados serán los tuyos. Pero el mecanismo está documentado, el prompt está en tus manos y la ventaja todavía existe hoy.
+Si esto te resultó útil, realmente agradecería un repost. No por métricas de vanidad, sino porque cuanta más gente entienda cómo funcionan estas herramientas, más difícil será que la información se quede encerrada en pequeños círculos de desarrolladores que prefieren guardársela para ellos mismos.
+Esta es la primera de una serie. Planeo cubrir cada flujo de ingresos importante que pueda automatizarse con Claude; los mercados de predicción son solo el comienzo. Estrategias de trading, flujos de contenido, arbitraje entre diferentes plataformas, herramientas de investigación automatizadas. Todo desglosado de la misma manera: primero el mecanismo, luego el prompt exacto y finalmente el riesgo.
+Sígueme si quieres ver el resto. Y si construyes algo con esto, realmente me encantaría saber cómo te va.
+Saludos cordiales,
+
+
+
+GUIDA NUMERO 3
+Your arb bot reads the last tick. 
+Your scanner sees YES at 0.48, NO at 0.49, sum 0.97, and screams arb.
+It places the trade, but the gap was never there.
+Or worse. A real 4-cent gap sits open and your bot misses it entirely.
+Both come from the same mistake: trusting a single tick.
+The paper that measured $40M in real Polymarket arb didn't look at prices the way your bot does: arxiv.org/pdf/2508.03474
+It used VWAP. 
+
+Here is the exact method, and why it's the difference between catching gaps and chasing ghosts.
+Why a single tick lies
+
+The last traded price is one trade.
+Maybe it was 5 shares. 
+Maybe it was a fat finger. 
+Maybe it printed an hour ago and nothing has traded since.
+Your bot treats that one number as "the price."
+Immagine
+So when you sum YES + NO off the last tick, you get a number built on two random, possibly stale, possibly tiny trades.
+Sometimes that sum lands at 0.97 and looks like free money, but the real book is sitting at 1.00 and the gap is a mirage.
+Sometimes a true gap is open and your stale ticks hide it.
+Either way you're making a real-money decision off noise.
+One tick is not the price.
+It's the last thing that happened to print.
+Volume-weighting in plain words
+
+VWAP fixes this. 
+Volume-weighted average price.
+Instead of "what was the last trade," it asks "what price did the market actually transact at, weighted by size."
+Immagine
+A 1,000-share fill at 0.42 should count far more than a 5-share fill at 0.40.
+Last-tick treats them the same, VWAP doesn't.
+Here's the whole computation. 
+No plumbing, just the math:
+python
+# tick = (price, token_amount) for each executed bid in your window
+def vwap(ticks):
+    notional = sum(price * size for price, size in ticks)
+    volume   = sum(size for _, size in ticks)
+    if volume == 0:
+        return None          # nothing traded - no real price
+    return notional / volume
+That's it. 
+Sum of price times size, divided by total size.
+Now you have the price the market actually paid, not the last print that happened to land.
+The window
+
+You don't VWAP all of history. 
+You VWAP a slice of time.
+This is the part people get wrong.
+The paper averaged over a single block, then carried the last known price forward for up to about 2.5 hours if a leg went quiet.
+
+And set it to zero if the token truly stopped trading, because a dead token has no value.
+Why so tight?
+Because arb lives in volatility.
+Make your window too wide and you smear across the exact moment the gap opened, averaging it out of existence.
+Make it too narrow and you're back to noise.
+Immagine
+A short rolling window with sensible carry-forward is the balance. You want the price as it is right now, built from real recent fills, not a smooth average of the whole day.
+Tune the window length. It's the single biggest knob on this whole thing.
+The flag
+
+Now you put the legs together and check the gap.
+Sum the VWAP of every position. 
+In a clean market they should sum to a dollar. When they don't, that's your edge.
+python
+def arb_flag(legs, threshold=0.02):
+    vwaps = [vwap(t) for t in legs]   # one tick-list per outcome
+
+    # any leg with no trades this window - skip, not enough info
+    if any(v is None for v in vwaps):
+        return None
+
+    # a leg already above 0.95 means the market is basically resolved
+    # that's settlement, not arb - skip it
+    if any(v > 0.95 for v in vwaps):
+        return None
+
+    gap = abs(1 - sum(vwaps))
+    if gap > threshold:
+        side = "long" if sum(vwaps) < 1 else "short"
+        return {"gap": round(gap, 4), "side": side}
+    return None
+The 0.02 is the paper's detection line - flag when the VWAP sum drifts more than 2 cents off a dollar.
+The 0.95 skip matters as much as the flag. If a leg is already near a dollar, the outcome is decided. 
+Immagine
+There's no real mispricing left, just the market settling. Trading that isn't arb, it's noise dressed as a gap.
+The catch
+
+Two things, or this turns on you.
+First, VWAP from executed bids underestimates the real margin. 
+The paper says so directly because you're averaging trades that already happened, the true gap available right now is usually bigger than what your VWAP shows.
+So treat the flagged gap as a floor, not a ceiling.
+Second, a 2-cent flag is not a 2-cent trade.
+Two cents is enough to notice. It is not enough to act.
+The paper only bothered with opportunities worth at least 5 cents on the dollar, because below that the fees and the non-atomic fill risk eat you alive.
+So: flag at 2 cents, trade at 5-plus, and only as a maker so the fee doesn't take the rest.
+Detect wide and act narrow.
+Final thought
+
+Your bot is probably making decisions off the last print right now.
+The last print is one trade. It lies.
+VWAP is the price the market actually transacted at, and it's the same lens the wallets pulling real arb out of Polymarket look through.
+Weight by volume.
+Window it tight.
+Flag at two cents, trade at five, capture as a maker.
+I run this exact check live and post the gaps it flags on this page.

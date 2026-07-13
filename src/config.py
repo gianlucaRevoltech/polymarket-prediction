@@ -82,6 +82,13 @@ BUDGET = {
     # Drawdown protection: se drawdown>12% dal peak, sizing auto -50%
     "drawdown_halve_threshold": 0.12,
     "drawdown_halve_factor": 0.5,
+    # Phase CI1 (Guida 2: risk mgmt hardening): DAILY loss limit + halt.
+    # Mancava un contatore giornaliero (avevamo solo lifetime floor -5% e
+    # ruin -20%). La differenza tra +1322% e liquidazione (Claude vs OpenClaw)
+    # era solo il risk mgmt. halt nuove aperture se realized_giornaliero <= -8%
+    # e considera -5% come warning. Reset automatico a mezzanotte.
+    "daily_loss_limit_pct": -0.08,
+    "daily_loss_warn_pct": -0.05,
     # Equity floor: -5% da initial → blocca aperture nuove
     "equity_floor_pct": -0.05,
     "hard_ruin_pct": -0.20,        # -20% → stop totale (emergenza)
@@ -137,8 +144,21 @@ STRATEGIES = {
         "cap_pct": 0.40,           # Phase R: copy resta engine ma lascia spazio a harvest
         "max_single": 0.15,        # Phase R: sizing ladder gate tier3 (era 0.12)
         "max_positions": 6,        # Phase R: 4 -> 6 (max_open=12, lascia slot altre)
+        # Phase CI5 (fix 0W/3L tennis in-play): copy su sport ha SL -8% che spara
+        # su swing normali di gioco (break = 10-15% move anche su risultato finale
+        # corretto). -8% su entry 0.42 = -3.4 cent = rumore tennis. Usiamo SL
+        # assoluto -5 cent (come harvest) + hard SL assoluto -10 cent per sport.
+        "sport_stop_loss_abs": -0.05,
+        "sport_hard_stop_loss_abs": -0.10,
     },
     "arb_binary": {
+        # Phase CI4 (Guida 1: fee formula `rate*p*(1-p)` = MAX a 0.50 dove i
+        # gap arb sono più grassi): arb_binary come TAKER in coin-flip è breakeven
+        # netto (fee ~1.5c/leg su 2 leg = -3c vs gap 2-3c). Vivo solo come MAKER
+        # (limit order, 0 fee + rebate 25%) — non simulabile onesto in paper (FIFO
+        # queue non esiste, simuliamo fill istantaneo a best_ask = ottimistico).
+        # Disabilitato in paper;拓to idle complexity senza valore.
+        "enabled": False,           # Phase CI4: KILL in paper (taker fee = edge)
         "cap_pct": 0.30,           # Phase U: 25% -> 30%
         "max_single": 0.15,
         "max_positions": 3,        # Phase U: 1 -> 3
@@ -147,6 +167,8 @@ STRATEGIES = {
         "max_days_to_expiry": 14,
         "scan_markets": 150,       # Phase U: 80 -> 150
         "scan_every_cycles": 1,    # Phase U: 2 -> 1 (ogni ciclo)
+        # Phase CI2 (Guida 2: opera solo in mercati con >$50.000 liquidità)
+        "min_market_volume_usdc": 50000.0,
     },
     "harvest": {
         "enabled": True,            # Phase CC: KEEP (38% WR, migliorabile)
@@ -163,6 +185,10 @@ STRATEGIES = {
         # Phase CF: entry band (doppio controllo con fav_min/max)
         "entry_price_min": 0.85,
         "entry_price_max": 0.95,
+        # Phase CI2 (Guida 2: solo mercati con >$50.000 volume). Harvest ha fee
+        # minuscola a 0.85-0.95 (rate*p*(1-p) -> 0) + hold-to-resolution = zero
+        # exit fee. filtro aggressivo su liquidità per uscite pulite.
+        "min_market_volume_usdc": 50000.0,
     },
     "arb_cross": {
         "cap_pct": 0.15,
@@ -174,6 +200,8 @@ STRATEGIES = {
         "max_outcomes": 12,
         "scan_events": 25,         # Phase U: 12 -> 25
         "scan_every_cycles": 2,    # Phase U: 5 -> 2
+        # Phase CI2 (Guida 2: liquidità >$50K per uscite pulite su bundle n-leg)
+        "min_market_volume_usdc": 50000.0,
     },
     # Phase W: MOMENTUM strategy (trend-following su prezzo Polymarket)
     # Phase CC: DISABILITATA — 0% WR su 4 trade, entra a prezzi estremi dove

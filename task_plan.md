@@ -176,6 +176,78 @@ Obiettivo: con WR 24%, sizing 6-13% è suicidio.
 - [ ] Dopo 30 trade: se WR<40% → kill strategy, se WR>55% → scale sizing
 - **Status:** in_progress
 
+## NUOVO BLOCCO: Phase CI1-CI5 — Lezioni da 3 guide online (2026-07-13)
+
+Obiettivo del blocco: applicare le lezioni delle 3 guide (guida_modelli_online.txt)
+che sono riprodotte SENZA spendere infra/ API. Le guide descrivono latency-arb su
+crypto 5/15-min (bot 0x8dxd, 98% WR) — STRATEGIA DIVERSA dalla nostra (wallet-
+copy su sport/politics). Non possiamo competere su latenza (20s poll vs 2.7s
+edge window). Lezioni azionabili = risk mgmt + liquidity + fee-model + copy-sport.
+Vedi findings.md sez "Studio 3 guide online" per dettagli di ciascuna L1–L6.
+
+### Phase CI1: Daily loss limit + daily halt [L1] — risk management hardening — COMPLETE
+Obiettivo: Guida 2 dice "Claude +1322% vs OpenClaw liquidato = solo differenza
+risk mgmt". Noi abbiamo equity_floor lifetime e ruin, ma non un DAILY counter.
+- [x] simulator.py: tracciare realized_pnl_today (reset a mezzanotte via date.today())
+- [x] config BUDGET: daily_loss_limit_pct = -0.08 / daily_loss_warn_pct = -0.05
+- [x] open_position + execute_opportunity gate: daily_halt blocca nuove aperture
+- [x] config MONITOR: daily_loss_warn_pct = -0.05 (warning a -5% giornata)
+- [x] Persistenza stato halt in data/daily_halt.json + reset a mezzanotte
+- **Status:** complete
+
+### Phase CI2: Filtro liquidità mercato ≥$50K per harvest/arb [L2] — COMPLETE
+Obiettivo: Guida 2 esplicito — "solo mercati con >$50.000 liquidità". Noi usiamo
+min_book_size (profondità best-level 15–50 USDC), NON volume totale mercato.
+- [x] portfolio_sync.py: get_active_markets/get_active_events giá popolano m["volume"]
+- [x] simulator.execute_opportunity: gate hard su opp.market_volume < min_market_volume_usdc
+- [x] config STRATEGIES: min_market_volume_usdc=50000 in harvest/arb_binary/arb_cross
+- [x] Opportunity.market_volume popolato in scan di ArbBinary/Harvest/ArbCross
+- [x] copy: NON applicato (segue wallet, mercato gia scelto dal wallet)
+- **Status:** complete
+
+### Phase CI3: Fee taker su USCITA (SL/TP) nel simulatore [L3] — COMPLETE
+Obiettivo: model)liamo solo fee d'INGRESSO. P&L close `(exit-entry)*shares` non
+deducede fee uscita. Su sport a 0.50 uscita costa ~1.5% per leg → -$0.13/trade
+nascosto. Resolution-hold (harvest) NON paga fee (settlement non trade).
+- [x] simulator._exit_fee_adjusted(pos, exit_price, reason): deduce taker fee per SL/TP/exit
+- [x] close_by_asset + _close_by_pid: pnl ora NETTO (entry_fee + exit_fee); log synch
+- [x] reason == resolved → NO exit fee (settile $1/$0 no crossing book)
+- [x] log: stampa fee_note su riga Exit; trade log usa exit_eff
+- **Status:** complete
+
+### Phase CI4: arb_binary → DISABLE in paper [L4] — COMPLETE
+Obiettivo: Guida 1 formula `rate·p·(1−p)` → fee MAX a 0.50 dove i gap arb sono
+più grassi. arb_binary come TAKER in coin-flip = breakeven netto. Trova 0 opp.
+Vivo solo come maker (limit order) — non simulabile onesto in paper (FIFO queue
+non esiste; simuliamo fill istantaneo a best_ask = ottimistico).
+- [x] config STRATEGIES.arb_binary.enabled=False (taker fee = edge in coin-flip)
+- [x] _should_scan gia gestisce enabled gate (Phase CC) — no code change
+- [x] anche min_market_volume_usdc=50000 aggiunto per quando verrà riattivato
+- Decisione finale: DISABLE (complessità senza valore in paper; maker non simulabile)
+- **Status:** complete
+
+### Phase CI5: copy-sport SL assoluto -5c — fix 0W/3L tennis in-play [L6] — COMPLETE
+Obiettivo: copy 0W/3L causa tennis in-play dove SL -8% spara su swing normali di
+gioco (break = 10–15% move anche su risultato finale corretto). NON è ingresso
+tardivo vs wallet (drift filter ok): è alta varianza del copy-in-play.
+- [x] config STRATEGIES.copy: sport_stop_loss_abs=-0.05, sport_hard_stop_loss_abs=-0.10
+- [x] simulator._copy_sl_tp_decision(pos, cur, sl, tp): helper branch sport vs altri
+- [x] reconcile: entrambi i branch (wallet monitorato + wallet rimosso) usano helper
+- [x] Test: sport -2.8c=hold, -5.8c=stop_loss, -10.8c=hard_sl; other -8.1%=stop_loss
+- [ ] Da validare: se SL assoluto non migliora WR dopo 10 trade sport → fallback
+  a esclusione copy su tennis in-play (vedi decision log)
+- **Status:** complete
+
+### Decisions Made (aggiornamento 2026-07-13)
+| Decision | Rationale |
+|----------|-----------|
+| NON pivoting a latency arb (Guida 2) | 20s poll vs 2.7s edge window; Python no co-lo; paper mode; edge comprime 12s→2.7s in 2 anni |
+| Daily loss limit + halt (CI1) | Guida 2: risk mgmt è l'unica differenza tra +1322% e liqujdatto |
+| Market liquidity ≥$50K (CI2) | Guida 2 esplicito; noi solo best-level depth |
+| Exit fee su SL/TP (CI3) | P&L realistica; -$0.13/trade nascosto su sport |
+| arb_binary DISABLE in paper (CI4) | taker fee = edge in coin-flip; maker non simulabile in paper |
+| copy-sport SL assoluto (CI5) | 0W/3L tennis: SL −8% su in-play = rumore; −5 cent più robusto |
+
 ## Phases precedenti (completate, vedi progress.md)
 - Phase A-Q: copy base + multi-strategy
 - Phase R-BB: config aggressivo + whale/momentum/sniper/theta/contrarian ← MIGLIORATIVO MA FALLITO

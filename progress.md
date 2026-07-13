@@ -1,5 +1,93 @@
 # Progress Log — Polymarket Copy Bot
 
+## Session: 2026-07-13 TARDI (Studio 3 guide online + diagnosi COPY 0W/3L)
+
+### Contesto post-deploy stamattina (dashboard 14:45)
+- Equity $298.28 / $300, P&L realizzato -$1.72 (-0.57%), unrealized +$0.36
+- 2 open (Hercog tennis +0.59%, France-Spain O/U -1.93%) | 3 closed
+- COPY 0W/3L (0% WR) — trade chiusi: Iasi Herea -16.36% SL, Swiss Collignon
+  -9.64% SL, France-Spain O/U -2.28% exit. Tutte entry in banda valida 0.42–0.55.
+- I fix CC–CG reggono (sizing 3%, solo 4 strategie, entry band, no Kelly/trailing)
+- hedge sanguinamento lento (−0.57%) ma insostenibile: a −0.5%/g x 30 = −$25
+
+### Studio guida_modelli_online.txt (3 guide) — completa
+Letta integralmente. Lezioni distillate in findings.md sez "Studio 3 guide online".
+
+**Tesi fondamentale:** le guide descrivono un LATENCY-ARB bot su crypto 5/15-min
+(bot 0x8dxd $313→$2.38M, 98% WR) — strategia DIVERSA dalla nostra (wallet-copy su
+sport/politics). Non possiamo competere su latenza (20s poll vs 2.7s edge window,
+Python non co-locato, paper mode). **NON pivoting** — brucerebbe budget in infra.
+
+**Le 6 lezioni applicabili SENZA spendere:** L1 risk mgmt (daily loss limit),
+L2 liquidity ≥$50K, L3 exit fee su SL/TP, L4 arb_binary dead come taker, L5 VWAP
+arb (bassa), L6 copy-sport SL fix (nostro, non guide). → Phase CI1-CI5 in task_plan.
+
+### Diagnosi COPY 0W/3L (ONESTA, non dalle guide)
+- drift filter NON ha skippato: entriamo a prezzo wallet (avg_price ~price)
+- NON è "ingresso tardivo vs wallet". È varianza alta del copy su sport in-play:
+  SL -8% su tennis spara su break di game (10–15% move normali su risultato finale)
+- Fix (CI5): SL assoluto -5 cent per copy-sport (come harvest), non -8% percentuale
+
+### IMPLEMENTATO Phase CI1-CI5 (tutte e 5, lezioni guide online)
+
+**Phase CI1 — Daily loss limit + halt (risk mgmt hardening)** COMPLETE
+- config BUDGET: daily_loss_limit_pct=-0.08, daily_loss_warn_pct=-0.05
+- simulator: _today_realized_pnl() filtra closed_positions per exit_time.date=today
+  → _daily_halt_check() blocca nuove aperture (copy + execute_opportunity) se
+  realized <= -8% capitale. Reset automatico a mezzanotte (date.today()).
+- Persistenza data/daily_halt.json + alert DAILY_HALT/DAILY_WARN su alerts.log.
+
+**Phase CI2 — Filtro liquidità mercato ≥$50K per harvest/arb** COMPLETE
+- config STRATEGIES: min_market_volume_usdc=50000 in harvest/arb_binary/arb_cross
+- strategies.py: _min_market_volume_usdc() helper; Opportunity.market_volume
+  popolato in scan di ArbBinary/Harvest/ArbCross da gamma volumeNum
+- simulator.execute_opportunity: gate hard su opp.market_volume < min_mv → skip
+- copy NON filtrato (segue wallet, mercato gia scelto)
+
+**Phase CI3 — Fee taker su USCITA (SL/TP) nel simulatore** COMPLETE
+- simulator._exit_fee_adjusted(pos, exit_price, reason): deduce taker fee su uscita
+  (reason != resolved). close_by_asset + _close_by_pid + log ora usano exit_eff.
+- pnl mostrato è NETTO delle fee di ingresso + uscita. stampato fee_note su log.
+- resolved (settile $1/$0) → NO exit fee (no crossing book).
+- Sport a 0.50: uscita costa ~1.5%/leg = -$0.13/trade ora correttamente dedotto.
+
+**Phase CI4 — arb_binary DISABLE in paper** COMPLETE
+- config STRATEGIES.arb_binary.enabled=False (taker fee = edge in coin-flip).
+- _should_scan gia gestiva enabled gate (Phase CC) — no code change ulteriore.
+- Spiega i 0 opp: taker fee = MAX privo dove gap piu grassi; maker non simulabile.
+- Arricchito anche arb_binary di min_market_volume_usdc per futura riattivazione.
+
+**Phase CI5 — copy-sport SL assoluto -5c (fix 0W/3L tennis in-play)** COMPLETE
+- config STRATEGIES.copy: sport_stop_loss_abs=-0.05, sport_hard_stop_loss_abs=-0.10
+- simulator._copy_sl_tp_decision(pos, cur, sl, tp): branch sport (SL assoluto cent)
+  vs altri (SL percentuale legacy). reconcile: entrambi i branch usano helper.
+- Test: sport cur -2.8c=hold, -5.8c=stop_loss, -10.8c=hard_sl; other -8.1%=stop_loss.
+
+### Sintesi modifiche codebase
+- src/config.py: BUDGET (daily_loss_limit/warn), STRATEGIES.arb_binary (enabled=False
+  + min_market_volume_usdc), STRATEGIES.harvest/arb_cross (min_market_volume_usdc),
+  STRATEGIES.copy (sport_stop_loss_abs + sport_hard_stop_loss_abs)
+- src/strategies.py: Opportunity.market_volume; _min_market_volume_usdc() helper;
+  filter volume + populate market_volume in ArbBinary/Harvest/ArbCross scan()
+- src/simulator.py: import `date`; daily_halt tracking + persistence;
+  _today_realized_pnl / _daily_halt_check / _exit_fee_adjusted / _copy_sl_tp_decision;
+  close_by_asset + _close_by_pid usano exit_eff (fee netto); reconcile usa helper;
+  open_position + execute_opportunity gated su daily halt + market_volume
+
+### Validazione
+- py_compile su config/strategies/simulator/main/categories: PASS
+- Import di main.Bot (dipendenze cascata): PASS
+- Test funzioni critiche: CI1/CI3/CI5 — PASS
+  * CI5: sport -2.8c=hold, -5.8c=stop_loss, -10.8c=hard_sl
+  * CI3: sport exit 0.650 -> 0.643 (fee 1.05%); resolved no fee; other = 0 fee
+  * CI1: daily_halt_check con 0 realized oggi = False (aspettato)
+
+### Files modificati (sessione 2026-07-13 tardi)
+- findings.md: sez "Studio 3 guide online" + diagnosi copy-sport (append)
+- task_plan.md: Phase CI1-CI5 marker COMPLETE + Decisions Made (aggiornato)
+- progress.md: questa sessione
+- src/config.py, src/strategies.py, src/simulator.py (codice)
+
 ## Session: 2026-07-13 (FIX EMERGENZA PERFORMANCE: -5.63%, WR 24%)
 
 ### Contesto: dashboard 07/07 mostra disastro

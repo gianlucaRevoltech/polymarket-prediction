@@ -15,7 +15,7 @@ import os
 import tempfile
 import shutil
 from collections import deque
-from datetime import datetime
+from datetime import datetime, date
 from typing import Dict, Optional, List, Set, Tuple
 from models import Trade, Position, Portfolio
 from categories import categorize_market, taker_fee_fraction
@@ -59,6 +59,12 @@ class PaperTradingSimulator:
         self.recent_opens: Dict[str, datetime] = {}
         self._load_recent_opens()
         self._alert_path = getattr(MONITOR, "alert_log_path", LOGS_DIR / "alerts.log")
+        # Phase CI1 (Guida 2: risk mgmt hardening): DAILY loss limit + halt.
+        # Realized P&L delle posizioni chiuse oggi (exit_time.date == today).
+        # Recuperato al volo da closed_positions; reset implicito a mezzanotte.
+        self.daily_halt_date: Optional[date] = None
+        self.daily_halt_active: bool = False
+        self._load_daily_halt()
 
     # ------------------------------------------------------------------
     # Phase K: sizing compounding ladder
@@ -108,6 +114,141 @@ class PaperTradingSimulator:
             factor = 0.0
             self._alert(f"RUIN pnl {pnl_pct:.1%} -> stop totale aperture")
         return factor
+
+    # ------------------------------------------------------------------
+    # Phase CI5 (Guida nostri: copy-sport SL assoluto per tennis in-play)
+    # ------------------------------------------------------------------
+    def _copy_sl_tp_decision(self, pos, cur: float, stop_loss_pct: float,
+                              take_profit_pct: float) -> str:
+        """
+        Restituisce la decisione per una posizione copy: 'hard_sl' | 'stop_loss' |
+        'take_profit' | 'hold'.
+
+        Phase CI5: per category="sport" usiamo SL assoluto (cent) invece del
+        percentuale. Il tennis in-play (Swiss/Iasi) ha swing normali del 10-15%
+        per break di game anche su risultato finale corretto; SL -8% su entry 0.42
+        = -3.4 cent = rumore. SL assoluto -5 cent separa rumore da move reale.
+        Per altre categorie manteniamo SL percentuale (valido in 0.30-0.70).
+        """
+        if pos.entry_price <= 0:
+            return "hold"
+        if (pos.category or "") == "sport":
+            cfg = STRATEGIES.get("copy", {})
+            sl_abs = cfg.get("sport_stop_loss_abs", -0.05)
+            hard_abs = cfg.get("sport_hard_stop_loss_abs", -0.10)
+            delta = cur - pos.entry_price
+            pnl_pct = (cur - pos.entry_price) / pos.entry_price
+            if delta <= hard_abs:
+                return "hard_sl"
+            if delta <= sl_abs:
+                return "stop_loss"
+            if pnl_pct >= take_profit_pct:
+                return "take_profit"
+            return "hold"
+        # altre categorie: SL percentuale legacy
+        pnl_pct = (cur - pos.entry_price) / pos.entry_price
+        hard_sl = BUDGET.get("hard_stop_loss_pct", -0.15)
+        if pnl_pct <= hard_sl:
+            return "hard_sl"
+        if pnl_pct <= stop_loss_pct:
+            return "stop_loss"
+        if pnl_pct >= take_profit_pct:
+            return "take_profit"
+        return "hold"
+
+    # ------------------------------------------------------------------
+    # Phase CI1 (Guida 2: daily loss limit + halt)
+    # ------------------------------------------------------------------
+    def _today_realized_pnl(self) -> Tuple[float, date]:
+        """Realized P&L delle posizioni chiuse oggi (reset a mezzanotte)."""
+        today = date.today()
+        total = 0.0
+        for p in self.portfolio.closed_positions:
+            if p.exit_time and p.exit_time.date() == today:
+                total += p.pnl
+        return total, today
+
+    def _daily_halt_check(self) -> bool:
+        """True se le nuove aperture sono HALT per superamento daily loss limit."""
+        realized, today = self._today_realized_pnl()
+        # reset automatico a mezzanotte (giorno cambiato)
+        if self.daily_halt_date != today:
+            self.daily_halt_date = today
+            self.daily_halt_active = False
+            self._save_daily_halt()
+        # valuta solo se negativo
+        initial = self.portfolio.initial_capital
+        if initial <= 0:
+            return False
+        pnl_pct = realized / initial
+        limit = BUDGET.get("daily_loss_limit_pct", -0.08)
+        warn = BUDGET.get("daily_loss_warn_pct", -0.05)
+        if pnl_pct <= limit:
+            if not self.daily_halt_active:
+                self.daily_halt_active = True
+                self._save_daily_halt()
+                self._alert(f"DAILY_HALT realized oggi ${realized:.2f} ({pnl_pct:+.1%}) "
+                            f"<= {limit:.0%} -> nuove aperture bloccate fino a mezzanotte")
+            return True
+        if pnl_pct <= warn:
+            self._alert(f"DAILY_WARN realized oggi ${realized:.2f} ({pnl_pct:+.1%}) <= {warn:.0%}")
+        return False
+
+    def _daily_halt_file(self):
+        return DATA_DIR / "daily_halt.json"
+
+    def _load_daily_halt(self):
+        try:
+            f = self._daily_halt_file()
+            if f.exists():
+                with open(f) as fh:
+                    d = json.load(fh)
+                today = date.today()
+                stored_date = None
+                ds = d.get("date")
+                if ds:
+                    try:
+                        stored_date = date.fromisoformat(ds)
+                    except Exception:
+                        stored_date = None
+                if stored_date == today:
+                    self.daily_halt_date = stored_date
+                    self.daily_halt_active = bool(d.get("halt", False))
+                else:
+                    # nuovo giorno: reset
+                    self.daily_halt_date = today
+                    self.daily_halt_active = False
+        except Exception:
+            self.daily_halt_date = date.today()
+            self.daily_halt_active = False
+
+    def _save_daily_halt(self):
+        try:
+            with open(self._daily_halt_file(), "w") as f:
+                json.dump({"date": (self.daily_halt_date or date.today()).isoformat(),
+                           "halt": self.daily_halt_active,
+                           "saved_at": datetime.now().isoformat()}, f)
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    # Phase CI3 (Guida 1: fee taker su USCITA per SL/TP/exit; resolution no fee)
+    # ------------------------------------------------------------------
+    def _exit_fee_adjusted(self, pos, exit_price: float, reason: str) -> float:
+        """
+        Applica la fee taker di uscita sul prezzo di chiusura per SL/TP/exit.
+        Per `resolved` non c'è fee (è settlement $1/$0, non crossing order book)
+        e per harvest hold-to-resolution idem.
+        """
+        if reason == "resolved":
+            return exit_price
+        cat = (pos.category or "other")
+        fee_frac = taker_fee_fraction(cat, exit_price)
+        if fee_frac <= 0:
+            return exit_price
+        # l'uscita come taker paga il feelo OPPURE lo incassa se vende;
+        # model: venditore riceve price_minore_fee = price*(1-fee_frac)
+        return exit_price * (1.0 - fee_frac)
 
     def _alert(self, msg: str):
         line = f"[{datetime.now().isoformat()}] {msg}"
@@ -339,6 +480,12 @@ class PaperTradingSimulator:
         # Phase L: equity floor blocca nuove aperture (risk_factor=0 handling gia in sizing)
         if self._risk_factor() <= 0.0:
             return False
+        # Phase CI1: DAILY loss limit + halt (Guida 2: risk mgmt = differenza
+        # tra +1322% e liquidazione). Blocca nuove aperture se realized_giornaliero
+        # <= -8% del capitale iniziale. Reset automatico a mezzanotte.
+        if self._daily_halt_check():
+            print(f"[SKIP] DAILY HALT attivo — nuove aperture copy bloccate")
+            return False
 
         # Guardrail 1 - banda di prezzo (Phase D + J soft):
         price_min = STRATEGY.get("entry_price_min", 0.0)
@@ -510,11 +657,14 @@ class PaperTradingSimulator:
             return False
 
         exit_price = max(0.0, min(1.0, exit_price))
+        # Phase CI3 (Guida 1: taker fee anche su USCITA per SL/TP/exit; no fee per resolved).
+        # Il pnl mostrato è ora NETTO delle fee di ingresso + uscita.
+        exit_eff = self._exit_fee_adjusted(pos, exit_price, reason)
         pos.current_price = exit_price
         pos.close_reason = reason
-        pnl = (exit_price - pos.entry_price) * pos.shares
+        pnl = (exit_eff - pos.entry_price) * pos.shares
 
-        self.portfolio.close_position(pid, exit_price, datetime.now())
+        self.portfolio.close_position(pid, exit_eff, datetime.now())
 
         label = {
             "resolved": "RISOLTA",
@@ -523,12 +673,14 @@ class PaperTradingSimulator:
             "take_profit": "TAKE PROFIT",
         }.get(reason, f"CHIUSA ({reason})")
         outcome_label = "PROFIT" if pnl > 0 else "LOSS"
+        fee_note = "" if exit_eff == exit_price else f" (exit_fee -> {exit_eff:.3f})"
         print(f"\n[POSIZIONE {label}] {outcome_label}")
         print(f"  Mercato: {pos.market_title[:50]} ({pos.outcome})")
-        print(f"  Entry: ${pos.entry_price:.3f} -> Exit: ${exit_price:.3f}")
+        print(f"  Entry: ${pos.entry_price:.3f} -> Exit: ${exit_price:.3f}{fee_note}")
         print(f"  P&L: ${pnl:.2f} | Cash: ${self.portfolio.cash:.2f}")
 
-        self._log_close_trade(pos, exit_price, reason)
+        # Phase CI3: loggaclose con exit NETTO delle fee di uscita (come il pnl)
+        self._log_close_trade(pos, exit_eff, reason)
         # Phase Z: notifica wallet manager per tracking P&L per-wallet (solo copy)
         if (pos.strategy or "copy") == "copy" and self.on_copy_close and pos.source_wallet:
             try:
@@ -617,29 +769,31 @@ class PaperTradingSimulator:
                     # wallet rimosso dalla lista → NON chiudere a exit forzato.
                     # Aggiorna prezzo e gestisci con SL/TP sotto.
                     self.update_price_by_asset(asset, cur)
+                    # Phase CI5: SL assoluto per copy-sport, percentuale per altri.
+                    decision = self._copy_sl_tp_decision(pos, cur, stop_loss, take_profit)
                     pnl_pct = (cur - pos.entry_price) / pos.entry_price if pos.entry_price > 0 else 0
-                    hard_sl = BUDGET.get("hard_stop_loss_pct", -0.15)
-                    if pnl_pct <= hard_sl:
-                        print(f"[HARD SL] {pos.market_title[:40]} P&L {pnl_pct:.1%} <= {hard_sl:.0%} (wallet rimosso)")
+                    if decision == "hard_sl":
+                        print(f"[HARD SL] {pos.market_title[:40]} P&L {pnl_pct:.1%} (wallet rimosso)")
                         self.close_by_asset(asset, cur, "stop_loss")
-                    elif pnl_pct <= stop_loss:
-                        print(f"[STOP LOSS] {pos.market_title[:40]} P&L {pnl_pct:.1%} <= {stop_loss:.0%} (wallet rimosso)")
+                    elif decision == "stop_loss":
+                        print(f"[STOP LOSS] {pos.market_title[:40]} P&L {pnl_pct:.1%} (wallet rimosso)")
                         self.close_by_asset(asset, cur, "stop_loss")
-                    elif pnl_pct >= take_profit:
-                        print(f"[TAKE PROFIT] {pos.market_title[:40]} P&L {pnl_pct:.1%} >= {take_profit:.0%} (wallet rimosso)")
+                    elif decision == "take_profit":
+                        print(f"[TAKE PROFIT] {pos.market_title[:40]} P&L {pnl_pct:.1%} (wallet rimosso)")
                         self.close_by_asset(asset, cur, "take_profit")
                     continue
             self.update_price_by_asset(asset, cur)
+            # Phase CI5: SL assoluto per copy-sport, percentuale per altri.
+            decision = self._copy_sl_tp_decision(pos, cur, stop_loss, take_profit)
             pnl_pct = (cur - pos.entry_price) / pos.entry_price if pos.entry_price > 0 else 0
-            hard_sl = BUDGET.get("hard_stop_loss_pct", -0.15)
-            if pnl_pct <= hard_sl:
-                print(f"[HARD SL] {pos.market_title[:40]} P&L {pnl_pct:.1%} <= {hard_sl:.0%}")
+            if decision == "hard_sl":
+                print(f"[HARD SL] {pos.market_title[:40]} P&L {pnl_pct:.1%}")
                 self.close_by_asset(asset, cur, "stop_loss")
-            elif pnl_pct <= stop_loss:
-                print(f"[STOP LOSS] {pos.market_title[:40]} P&L {pnl_pct:.1%} <= {stop_loss:.0%}")
+            elif decision == "stop_loss":
+                print(f"[STOP LOSS] {pos.market_title[:40]} P&L {pnl_pct:.1%}")
                 self.close_by_asset(asset, cur, "stop_loss")
-            elif pnl_pct >= take_profit:
-                print(f"[TAKE PROFIT] {pos.market_title[:40]} P&L {pnl_pct:.1%} >= {take_profit:.0%}")
+            elif decision == "take_profit":
+                print(f"[TAKE PROFIT] {pos.market_title[:40]} P&L {pnl_pct:.1%}")
                 self.close_by_asset(asset, cur, "take_profit")
 
         # 2) Apri nuove posizioni COPY solo su asset presenti in new_holdings
@@ -880,18 +1034,21 @@ class PaperTradingSimulator:
             return False
         pos = self.portfolio.positions[pid]
         exit_price = max(0.0, min(1.0, exit_price))
+        # Phase CI3: taker fee su USCITA per SL/TP/exit; no fee per resolved.
+        exit_eff = self._exit_fee_adjusted(pos, exit_price, reason)
         pos.current_price = exit_price
         pos.close_reason = reason
-        pnl = (exit_price - pos.entry_price) * pos.shares
-        self.portfolio.close_position(pid, exit_price, datetime.now())
+        pnl = (exit_eff - pos.entry_price) * pos.shares
+        self.portfolio.close_position(pid, exit_eff, datetime.now())
         label = {"resolved": "RISOLTA", "stop_loss": "STOP LOSS",
                  "take_profit": "TAKE PROFIT", "exit": "CHIUSA"}.get(reason, reason)
         outcome_label = "PROFIT" if pnl > 0 else "LOSS"
+        fee_note = "" if exit_eff == exit_price else f" (exit_fee -> {exit_eff:.3f})"
         print(f"\n[{pos.strategy.upper()} {label}] {outcome_label}")
         print(f"  Mercato: {pos.market_title[:50]} ({pos.outcome})")
-        print(f"  Entry: ${pos.entry_price:.3f} -> Exit: ${exit_price:.3f}")
+        print(f"  Entry: ${pos.entry_price:.3f} -> Exit: ${exit_price:.3f}{fee_note}")
         print(f"  P&L: ${pnl:.2f} | Cash: ${self.portfolio.cash:.2f}")
-        self._log_close_trade(pos, exit_price, reason)
+        self._log_close_trade(pos, exit_eff, reason)
         self._save_state()
         return True
 
@@ -952,7 +1109,18 @@ class PaperTradingSimulator:
         """Esegue un'opportunita di strategia arb/harvest/arb_cross."""
         if self._risk_factor() <= 0.0:
             return False
+        # Phase CI1: DAILY loss limit + halt (vale per ogni strategia)
+        if self._daily_halt_check():
+            print(f"[SKIP] DAILY HALT attivo — execute_opportunity {opp.strategy} bloccato")
+            return False
         strat = opp.strategy
+        # Phase CI2 (Guida 2: liquidity ≥$50K per uscite pulite). Controllo hard
+        # anche su opp.market_volume (popolato in scan da gamma volumeNum).
+        min_mv = float(STRATEGIES.get(strat, {}).get("min_market_volume_usdc", 0.0) or 0.0)
+        if min_mv > 0 and float(getattr(opp, 'market_volume', 0.0) or 0.0) < min_mv:
+            print(f"[SKIP] Liquidità mercato {getattr(opp,'market_volume',0):.0f} < "
+                  f"{min_mv:.0f} per {strat}: {opp.market_title[:40]}")
+            return False
         # cap per strategia: max posizioni simultanee
         cfg = STRATEGIES.get(strat, {})
         max_pos = cfg.get("max_positions", 99)
