@@ -18,22 +18,43 @@ from typing import List, Tuple
 SPORTS_FEE_RATE = 0.03  # da Gamma feeSchedule (sports_fees_v2, taker-only)
 
 # Parole chiave per categoria (ordine = priorita di match dopo lo sport)
+# Phase CJ: keyword ampliate — prima molte finivano in "other" per match mancato.
+# ATTENZIONE: keyword corte senza spazi generano false positive ("eth" = Ethiopia).
+# Teniamo solo token univoci o con delimitatori ($eth, eth/, eth-).
 _KEYWORDS = {
     "crypto": [
-        "bitcoin", "btc", "ethereum", " eth ", "solana", " sol ", "crypto",
-        "dogecoin", " xrp", " bnb", "cardano", "binance", "stablecoin",
+        # Token names (univoci o con delimiter per evitare false positive)
+        "bitcoin", "btc", "ethereum", "solana", "crypto", "dogecoin",
+        "doge", "xrp", "bnb", "cardano", "binance", "stablecoin",
         "altcoin", "memecoin", "satoshi", "blockchain",
+        "pepe", "shiba", "litecoin", "ltc", "tron", "avalanche",
+        "avax", "polygon", "matic", "chainlink", "polkadot",
+        "uniswap", "aptos", "coinbase", "microstrategy", "saylor",
+        # Pattern con simbolo/ticker per ETH/SOL/LINK/DOT (corti, evitano false positive)
+        "$eth", "$sol", "$link", "$dot", "$uni", "$near", "$apt", "$sui",
+        "eth/", "sol/", "link/", "dot/", "uni/", "near/",
+        "eth-", "sol-", "link-", "dot-", "uni-", "near-",
+        # Concept keywords
+        "halving", "etf", "spot bitcoin", "price target", "close above",
+        "close below", "dip to", "reach $", "hit $", "mining", "hashrate",
+        "deFi", "nft", "token", "coin", "airdrop", "staking", "liquidity pool",
     ],
     "politics": [
         "election", "president", "nominee", "democratic", "republican",
         "senate", "congress", "governor", "prime minister", "parliament",
         "vote", "poll ", "candidate", "primary", "referendum", "cabinet",
         "minister", "chancellor", "mayor", "impeach", "nomination",
+        "trump", "biden", "harris", "desantis", "newsom", "whitmer",
+        "gop", "inauguration", "caucus", "midterm",
+        "legislature", "congressman", "senator",
     ],
     "weather": [
         "temperature", "weather", "rain", "hurricane", "snow", "climate",
         "degrees", "noaa", "celsius", "fahrenheit", "storm", "tornado",
-        "heatwave", "wildfire",
+        "heatwave", "wildfire", "heat", "cold", "freeze", "frost",
+        "drought", "flood", "wind", "forecast", "°f", "°c",
+        "high of", "low of", "precipitation", "humidity", "barometric",
+        "snowfall", "rainfall", "wind speed", "mph", "heat index",
     ],
     "sport": [
         "world cup", "fifa", " nba", " nfl", " nhl", "soccer", "football",

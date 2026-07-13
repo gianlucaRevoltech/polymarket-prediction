@@ -60,6 +60,25 @@ percentuale = macchina da perdita garantita.
 
 ## Piano di Fix (Phase CC-CG)
 
+### Phase CJ: Fix categorizzazione mercati — crypto/weather = 0 [DIAGNOSTICA]
+Obiettivo: lo scanner mostrava crypto=0, weather=0, politics=84, sport=5 su 300
+mercati. Gli altri 211 finivano in "other". Cause:
+1. Keyword crypto troppo strette: " eth " (con spazi) non matcha "ETH/USD", "$ETH"
+2. Keyword corte ambigue in politics: "mp" matcha "temperature" (teMPerature),
+   "dem" matcha troppe parole. Sopra categorizzava weather come politics!
+3. Mancavano token popolari (pepe, shiba, ltc, avax, matic, etc.) e pattern
+   comuni (etf, halving, dip to, reach $, close above)
+4. Mancavano keyword weather (heat, cold, flood, drought, forecast, °f)
+5. Nessun log diagnostico per vedere cosa c'era in "other"
+
+- [x] categories.py: keyword crypto ampliate (token + pattern $eth/eth-/eth/)
+- [x] categories.py: rimosse keyword politics ambigue ("mp", "dem")
+- [x] categories.py: keyword weather ampliate (heat, cold, flood, drought, °f)
+- [x] categories.py: keyword politics ampliate (trump, biden, gop, midterm, caucus)
+- [x] scanner.py: log diagnostico — stampa primi 15 mercati "other" per debug
+- [x] Test: "temperature in NYC" ora weather (era politics per "mp" match)
+- **Status:** complete
+
 ### Phase CI: Fix wallet orfani — posizioni copy dopo wallet rotation [EMERGENZA]
 Obiettivo: quando un wallet copiato sparisce dalla lista monitorati
 (rotazione 3h, quality swap 15min), le posizioni copy NON devono essere

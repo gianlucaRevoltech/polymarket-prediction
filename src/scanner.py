@@ -444,6 +444,12 @@ class PolymarketScanner:
             by_cat[m["category"]].append(m)
         for cat in cfg["active"]:
             print(f"  {cat:9}: {len(by_cat.get(cat, []))} mercati")
+        # Phase CJ: diagnostica — stampa esempi "other" per identificare keyword mancanti
+        other_markets = by_cat.get("other", [])
+        if other_markets:
+            print(f"  {'other':9}: {len(other_markets)} mercati (primi 15 esempi per debug):")
+            for m in other_markets[:15]:
+                print(f"    vol={m.get('volume',0):>12.0f}  {m.get('question','')[:75]}")
 
         per_cat = cfg["specialists_per_category"]
         results_by_cat: Dict[str, List[Dict]] = {}
