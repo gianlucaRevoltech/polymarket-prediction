@@ -60,6 +60,21 @@ percentuale = macchina da perdita garantita.
 
 ## Piano di Fix (Phase CC-CG)
 
+### Phase CK: Fix wallet DISABLED non swappato — swap_losers senza riserve [BUG]
+Obiettivo: wallet con status='disabled' (WR<0.45 o nostro P&L<0) restava nella
+lista monitorati perche swap_losers ritornava la lista inalterata se non
+aveva riserve. Il wallet DISABLED occupava uno slot sprecando risorse e
+generando trade perdenti (soft-disable dimezza size ma continua a copiare).
+
+- [x] wallet_manager.py swap_losers: RIMUOVE SEMPRE i losers dalla lista, anche
+      senza riserve. Meglio 9 wallet attivi che 10 con 1 perdente.
+- [x] wallet_manager.py swap_losers: se la lista scende sotto top_active, stampa
+      avviso "rescan necessario"
+- [x] main.py _maybe_wallet_quality_refresh: se lista < top_active dopo swap,
+      triggera _run_wallet_scan + _reload_monitored_wallets per rifornire la lista
+- [x] Sintassi verificata
+- **Status:** complete
+
 ### Phase CJ: Fix categorizzazione mercati — crypto/weather = 0 [DIAGNOSTICA]
 Obiettivo: lo scanner mostrava crypto=0, weather=0, politics=84, sport=5 su 300
 mercati. Gli altri 211 finivano in "other". Cause:

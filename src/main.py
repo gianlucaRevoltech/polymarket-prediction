@@ -166,7 +166,7 @@ class PolymarketPaperTradingBot:
         # report
         n_disabled = sum(1 for q in qualities.values() if q.get("status") == "disabled")
         if n_disabled:
-            print(f"[WALLET-MGR] {n_disabled} wallet perdenti rilevati -> swap")
+            print(f"[WALLET-MGR] {n_disabled} wallet perdenti rilevati -> rimozione/swap")
         new_list, losers = self.wallet_mgr.swap_losers(self.monitored_addresses, qualities)
         if losers:
             self.monitored_addresses = new_list
@@ -175,6 +175,14 @@ class PolymarketPaperTradingBot:
             # reset baseline holdings per non copiare bag preesistente dei nuovi wallet
             self.prev_holdings = None
             print(f"[WALLET-MGR] Lista wallet aggiornata: {len(new_list)} attivi (reset baseline)")
+            # Phase CK: se la lista è scesa sotto top_active (rimozione senza riserva),
+            # triggera un rescan per scoprire wallet freschi e rifornire la lista.
+            from config import WALLET_MONITOR
+            top_active = WALLET_MONITOR.get("top_active", 15)
+            if len(new_list) < top_active:
+                print(f"[WALLET-MGR] Lista sotto top_active ({len(new_list)}/{top_active}) -> rescan")
+                if self._run_wallet_scan():
+                    self._reload_monitored_wallets()
         else:
             print(f"[WALLET-MGR] Tutti i wallet attivi, nessuno swap necessario")
 

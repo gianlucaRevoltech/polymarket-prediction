@@ -156,6 +156,9 @@ class WalletManager:
     def swap_losers(self, monitored_addresses: List[str], qualities: Dict[str, Dict]) -> Tuple[List[str], List[str]]:
         """
         Rimpiazza wallet con status='disabled' con riserve dalla reserve pool.
+        Phase CK: RIMUOVE SEMPRE i losers, anche senza riserve. Meglio meno
+        wallet attivi che tenere un perdente che spreca slot e genera trade negativi.
+        Se la lista scende sotto top_active, il main loop triggera un rescan.
         Returns (new_monitored_list, swapped_out_addresses)
         """
         if not WALLET_MONITOR.get("enabled", True):
@@ -166,22 +169,28 @@ class WalletManager:
             return monitored_addresses, []
         # riserve: wallet in scan_results oltre i top_active, con status != disabled
         reserves = self._get_reserve_pool(exclude=set(a.lower() for a in monitored_addresses))
-        if not reserves:
-            print(f"[WALLET-MGR] {len(losers)} wallet perdenti ma nessuna riserva disponibile")
-            return monitored_addresses, losers
+        # Phase CK: rimuovi SEMPRE i losers dalla lista, anche senza riserve.
+        # Un wallet DISABLED (WR<0.45 o nostro P&L<0) non genera edge, spreca slot,
+        # e con soft-disable dimezza solo size ma continua a copiare ingressi perdenti.
         new_list = [a for a in monitored_addresses if a.lower() not in set(l.lower() for l in losers)]
         n_swap = 0
-        for loser in losers:
-            if not reserves:
-                break
-            replacement = reserves.pop(0)
-            new_list.append(replacement)
-            n_swap += 1
-            print(f"[WALLET-MGR] SWAP: {loser[:10]}... (WR {qualities[loser.lower()]['win_rate']:.0%}, "
-                  f"our P&L ${qualities[loser.lower()].get('our_pnl',0):.2f}) -> {replacement[:10]}...")
+        if reserves:
+            for loser in losers:
+                if not reserves:
+                    break
+                replacement = reserves.pop(0)
+                new_list.append(replacement)
+                n_swap += 1
+                print(f"[WALLET-MGR] SWAP: {loser[:10]}... (WR {qualities[loser.lower()]['win_rate']:.0%}, "
+                      f"our P&L ${qualities[loser.lower()].get('our_pnl',0):.2f}) -> {replacement[:10]}...")
+        else:
+            print(f"[WALLET-MGR] {len(losers)} wallet perdenti RIMOSSI senza riserva (rescan rifornira')")
         # trim a top_active
         new_list = new_list[:top_active]
-        print(f"[WALLET-MGR] {n_swap} wallet swappati, {len(new_list)} attivi")
+        if n_swap:
+            print(f"[WALLET-MGR] {n_swap} wallet swappati, {len(new_list)} attivi")
+        if len(new_list) < top_active:
+            print(f"[WALLET-MGR] Lista sotto top_active ({len(new_list)}/{top_active}) — rescan necessario")
         return new_list, losers
 
     def _get_reserve_pool(self, exclude: set) -> List[str]:
