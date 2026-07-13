@@ -248,6 +248,38 @@ tardivo vs wallet (drift filter ok): è alta varianza del copy-in-play.
 | arb_binary DISABLE in paper (CI4) | taker fee = edge in coin-flip; maker non simulabile in paper |
 | copy-sport SL assoluto (CI5) | 0W/3L tennis: SL −8% su in-play = rumore; −5 cent più robusto |
 
+## BLOCCO Phase CJ: Latency Arbitrage Step 0 (validazione su feed reali)
+
+Obiettivo: validare edge Guida 2 (Polymarket lagga ~2.7s vs Binance su contratti
+crypto 5/15min) SENZA capitale. VPS IONOS Germania gia nota, Step 1 VPS = €0.
+
+### Phase CJ0: Modulo validatore `latency_arb.py` — COMPLETE
+- [x] BinanceFeed (REST polling BTC/ETH + momentum 5min, no API key)
+- [x] PolymarketContractFeed (gamma markets crypto up/down + scadenza 0.5–15min)
+- [x] LatencyArbDetector (expected_p(UP)=0.5+K·delta_5min, edge vs p_yes,
+      signal when |edge|>10pt; log jsonl; resolve auto con esito gamma)
+- [x] Stats persistente + bucket edge + opt-in POLYMARKET_INSECURE per locale
+- [x] py_compile OK, smoke test locale: Binance OK (gamma 403 da Windows via CF)
+
+### Phase CJ1: Deploy + run validazione 5–7 giorni — PENDING
+- [ ] Deploy modulo su VPS IONOS (git pull + pip install -r requirements.txt)
+- [ ] nohup python -u src/latency_arb.py > logs/latency_arb.log 2>&1 &
+- [ ] Monitoring giornaliero per 5–7 giorni via `data/latency_arb_stats.json`
+- [ ] Target: 200+ signal resolved con WR virt > 70% (soglia Guida 2)
+- [ ] Stop condition: se WR < 60% a 100 signal → tuning K/threshold o pivot WS
+- [ ] Logbook in `ARBITRAGE_LATENCY_PLAN.md` compilato dopo ogni step
+
+### Phase CJ2: Trading reale $50 su VPS IONOS (se CJ1 OK) — PENDING
+- [ ] Wallet Polymarket MetaMask + fund $50 USDC su Polygon
+- [ ] pip install py-clob-client>=0.21 + derive L2 creds via private key
+- [ ] LatencyArbTrader: estensione modulo per piazzare ordini reali
+- [ ] Sizing fractional Kelly 1/4, cap 5%/trade, $1.5/trade (3% di $50)
+- [ ] Kill switch: -8% daily (CI1 riuso) + -20% total + Telegram alert
+- [ ] Comparison paper vs live: slippage + fill_failure su primi 30 trade
+- [ ] Target onesto: +5-15%/mese (NON 7942x — quello è caso eccezionale)
+
+Vedi `ARBITRAGE_LATENCY_PLAN.md` per Step 2/3 (scaling + diversificazione oracle/MM).
+
 ## Phases precedenti (completate, vedi progress.md)
 - Phase A-Q: copy base + multi-strategy
 - Phase R-BB: config aggressivo + whale/momentum/sniper/theta/contrarian ← MIGLIORATIVO MA FALLITO

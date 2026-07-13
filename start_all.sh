@@ -73,9 +73,11 @@ stop_services() {
   echo "[STOP] Arresto servizi ..."
   kill_pidfile "$DATA_DIR/bot.pid"
   kill_pidfile "$DATA_DIR/dashboard.pid"
+  kill_pidfile "$DATA_DIR/latency_arb.pid"
   # Fallback mirato (non tocca altri processi Python)
   pkill -f "src/main.py" 2>/dev/null || true
   pkill -f "src/dashboard.py" 2>/dev/null || true
+  pkill -f "src/latency_arb.py" 2>/dev/null || true
   echo "[STOP] Fatto."
 }
 
@@ -126,6 +128,14 @@ start_services() {
   nohup "$(venv_py)" -u src/main.py >"$LOGS_DIR/bot.log" 2>&1 &
   sleep 3
 
+  # Phase CJ0 (Guida 2: latency arb Step 0). Validatore standalone, NESSUN ordine
+  # reale, solo signal detection su feed reali (Binance + Polymarket). Log
+  # dedicato logs/latency_arb.log + stats in data/latency_arb_stats.json.
+  echo "[START] Latency-arb validator (Step 0, PAPER detection, no ordini) ..."
+  nohup "$(venv_py)" -u src/latency_arb.py >"$LOGS_DIR/latency_arb.log" 2>&1 &
+  echo $! > "$DATA_DIR/latency_arb.pid"
+  sleep 2
+
   show_status
   echo ""
   echo "Log live:  ./start_all.sh logs"
@@ -155,10 +165,15 @@ clear_trading_state() {
   rm -rf "$DATA_DIR"/backup_*
   # Alert log (Phase L) — riparte vuoto
   rm -f "$LOGS_DIR/alerts.log"
+  # Phase CJ0: latency arb validator — azzera signal log + stats + pending
+  # resolution (i signal "open" vecchi non si riferiscono al nuovo run).
+  rm -f "$DATA_DIR/latency_arb_signals.jsonl" "$DATA_DIR/latency_arb_stats.json" "$DATA_DIR/daily_halt.json"
+  rm -f "$LOGS_DIR/latency_arb.log" "$LOGS_DIR/latency_arb.log.*"
   echo "[RESET] Stato completamente azzerato."
   echo "[RESET] Mantenuti: scan_results.json (serve come seed; verra' aggiornato con 'scan')."
   echo "[RESET] Cancellati: portfolio_state, trades_log, equity_curve, peak_equity,"
-  echo "       recent_opens, *.bak, backup_*, alerts.log"
+  echo "       recent_opens, *.bak, backup_*, alerts.log,"
+  echo "       latency_arb_signals/stats, daily_halt"
 }
 
 has_trading_history() {
@@ -201,10 +216,11 @@ restart_services() {
 show_status() {
   echo ""
   echo "=================== STATO ==================="
-  for svc in bot dashboard; do
+  for svc in bot dashboard latency_arb; do
     pidfile="$DATA_DIR/$svc.pid"
     if [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile" 2>/dev/null)" 2>/dev/null; then
-      echo "  $svc: IN ESECUZIONE (PID $(cat "$pidfile"))"
+      pid_val="$(cat "$pidfile" 2>/dev/null)"
+      echo "  $svc: IN ESECUZIONE (PID $pid_val)"
     else
       echo "  $svc: fermo"
     fi
@@ -240,6 +256,6 @@ case "$ACTION" in
   scan)    run_wallet_scan ;;
   reset)   reset_state ;;
   status)  show_status ;;
-  logs)    tail -f "$LOGS_DIR/bot.log" "$LOGS_DIR/dashboard.log" ;;
+  logs)    tail -f "$LOGS_DIR/bot.log" "$LOGS_DIR/dashboard.log" "$LOGS_DIR/latency_arb.log" ;;
   *) echo "Uso: $0 [start|stop|restart|install|reset|status|logs|scan] [scan] [reset]"; exit 1 ;;
 esac
