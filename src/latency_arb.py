@@ -201,16 +201,28 @@ class PolymarketContractFeed:
         return False
 
     def _refresh_active(self) -> List[Dict]:
-        """Fetch gamma markets attive, filtra pattern crypto up/down + scadenza breve."""
+        """Fetch gamma markets attive, filtra pattern crypto up/down + scadenza breve.
+
+        Usa end_date_min/max (filtro per scadenza ravvicinata) invece di
+        ordering per volume: i contratti 5/15min hanno volume basso e non
+        compaiono nei top-100 per volumeNum (gamma hard-cappa a 100 risultati).
+        """
         now_ts = time.time()
         if now_ts - self._fetch_ts < CONTRACTS_CACHE_TTL:
             return self._contracts
         self._fetch_ts = now_ts
         try:
-            # pull attivi per volume, limit generoso (i contratti 5/15min sono tanti)
+            # Filtro per scadenza: now -> now + max_minutes + margine.
+            # gamma ritorna solo mercati entro questa finestra, bypassando
+            # l'ordering per volume che nasconde i contratti niche.
+            now = datetime.now(timezone.utc)
+            end_min = now.isoformat()
+            end_max = (now + timedelta(
+                minutes=LATENCY_ARB["max_minutes_to_expiry"] + 5)).isoformat()
             r = self.s.get(f"{self.gamma}/markets",
                            params={"closed": "false", "active": "true",
-                                   "order": "volumeNum", "ascending": "false",
+                                   "end_date_min": end_min,
+                                   "end_date_max": end_max,
                                    "limit": 500}, timeout=15)
             if not r.ok:
                 return self._contracts
