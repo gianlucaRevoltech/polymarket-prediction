@@ -74,4 +74,85 @@ for c in cs[:25]:
           (d5 * 100, edge, p_yes, c["title"][:50]))
     print("      | %s" % flag)
 
+# ---------------------------------------------------------------------------
+# DIAGNOSTICA AVANZATA: capiamo perche' CONTRACTS=0
+# ---------------------------------------------------------------------------
+import requests as _rq
+from latency_arb import _parse_json_list, _days_to_expiry
+
+from config import POLYMARKET_API
+gamma_url = POLYMARKET_API["gamma"]
+s = pf.s
+r = s.get(f"{gamma_url}/markets",
+         params={"closed": "false", "active": "true",
+                 "order": "volumeNum", "ascending": "false",
+                 "limit": 500}, timeout=20)
+print("=== GAMMA raw response ok:", r.ok, "status:", r.status_code, "len:", len(r.text))
+all_m = r.json() if r.ok else []
+print("=== GAMMA total markets:", len(all_m))
+
+# (1) Quanti matchano il pattern (senza filtro scadenza)
+match_pattern = 0
+samples = []
+for m in all_m:
+    t = (m.get("question") or m.get("title") or "").lower()
+    if any(p in t for p in LATENCY_ARB["contract_patterns"]):
+        match_pattern += 1
+        if len(samples) < 10:
+            end = m.get("endDate", "")
+            days = _days_to_expiry(end)
+            mins = (days * 1440.0) if days is not None else None
+            samples.append((t[:70], str(end), mins))
+print("=== MATCH PATTERN (qualsiasi scadenza):", match_pattern)
+for t, end, mins in samples:
+    print("  [%s min] %s" % ("?" if mins is None else "%.1f" % mins, t))
+print()
+
+# (2) Titoli che parlano di bitcoin/btc/eth/ethereum (pattern vasto)
+crypto_broad = 0
+broad_samples = []
+for m in all_m:
+    t = (m.get("question") or m.get("title") or "").lower()
+    if any(k in t for k in ["bitcoin", "btc", "ethereum", "eth"]):
+        crypto_broad += 1
+        if len(broad_samples) < 15:
+            end = m.get("endDate", "")
+            days = _days_to_expiry(end)
+            mins = (days * 1440.0) if days is not None else None
+            broad_samples.append((t[:70], str(end), mins))
+print("=== CRYPTO BROAD (bitcoin/btc/eth/ethereum):", crypto_broad)
+for t, end, mins in broad_samples:
+    print("  [%s min] %s end=%s" % ("?" if mins is None else "%.1f" % mins, t, end[:19]))
+print()
+
+# (3) Qualsiasi mercato con scadenza < 15 min (indipendentemente dal pattern)
+short_expiry = 0
+short_samples = []
+for m in all_m:
+    end = m.get("endDate", "")
+    days = _days_to_expiry(end)
+    if days is None:
+        continue
+    mins = days * 1440.0
+    if 0 <= mins <= 15:
+        short_expiry += 1
+        if len(short_samples) < 15:
+            t = (m.get("question") or m.get("title") or "")[:70]
+            short_samples.append((mins, t))
+print("=== SHORT EXPIRY (<=15min, qualsiasi mercato):", short_expiry)
+for mins, t in short_samples:
+    print("  [%.1f min] %s" % (mins, t))
+print()
+
+# (4) Probe diretto: search by slug "bitcoin-up-or-down"
+print("=== PROBE slug 'bitcoin-up-or-down' ===")
+try:
+    r2 = s.get(f"{gamma_url}/markets",
+              params={"slug": "bitcoin-up-or-down"}, timeout=10)
+    print("  status:", r2.status_code, "len:", len(r2.text))
+    if r2.ok:
+        print("  body[:,400]:", r2.text[:400])
+except Exception as ex:
+    print("  error:", ex)
+
 print("\n=== FINE DIAGNOSTICA ===")
