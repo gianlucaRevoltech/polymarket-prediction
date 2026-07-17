@@ -37,13 +37,17 @@ def _show_market(feed: PolymarketContractFeed, cid: str, idx: int,
     if m is None:
         print("  NO market trovato — cid non in gamma closed markets?")
         return
-    # campi chiave da capire
+    # campi chiave da capire (CLOB ha `tokens`, gamma ha `outcomes`/`outcomePrices`)
     interesting = [
+        # gamma fields
         "conditionId", "question", "slug", "closed", "acceptingOrders",
         "closedTime", "endDate", "resolvedBy", "umaResolutionStatus",
-        "outcome", "outcomes", "outcomePrices", "outcomeMetas",
-        "clobTokenIds", "bestBid", "bestAsk", "lastTradePrice",
+        "outcomes", "outcomePrices", "outcomeMetas", "clobTokenIds",
+        "bestBid", "bestAsk", "lastTradePrice",
         "volumeNum", "active", "archived",
+        # CLOB fields
+        "condition_id", "market_slug", "end_date_iso", "accepting_orders",
+        "tokens",
     ]
     print("  --- raw fields ---")
     for k in interesting:
@@ -58,10 +62,30 @@ def _show_market(feed: PolymarketContractFeed, cid: str, idx: int,
         kl = k.lower()
         if any(t in kl for t in ("price", "resolve", "win", "outcome", "uma")):
             print(f"  {k}: {json.dumps(v)[:200]}")
-    # prova la derivazione del nuovo resolver
+    # --- CLOB tokens path (primario) ---
+    tokens = m.get("tokens")
+    closed = bool(m.get("closed", m.get("closed", False)))
+    print("  --- resolver derivation ---")
+    if isinstance(tokens, list) and tokens and isinstance(tokens[0], dict):
+        print(f"  tokens (CLOB): {json.dumps(tokens)[:400]}")
+        any_w = any(bool(t.get("winner")) for t in tokens if isinstance(t, dict))
+        print(f"  any_winner_flag={any_w} closed={closed}")
+        up_w = any(("up" in (t.get("outcome") or "").lower() or
+                   "yes" in (t.get("outcome") or "").lower())
+                  and bool(t.get("winner"))
+                  for t in tokens if isinstance(t, dict))
+        down_w = any(("down" in (t.get("outcome") or "").lower() or
+                      "no" in (t.get("outcome") or "").lower())
+                     and bool(t.get("winner"))
+                     for t in tokens if isinstance(t, dict))
+        if any_w:
+            print(f"  -> RESOLVED via tokens: UP_won={up_w} DOWN_won={down_w}")
+            print(f"  RESULT: resolve_contract() → {'True (UP won)' if up_w else 'False (DOWN won)' if down_w else 'None (unmappable)'}")
+        else:
+            print("  -> NOT YET RESOLVED (no winner flag set)")
+    # --- gamma outcomes+prices fallback ---
     outcomes = _parse_json_list(m.get("outcomes"))
     prices_raw = _parse_json_list(m.get("outcomePrices"))
-    print("  --- resolver derivation ---")
     print(f"  outcomes(parsed) = {outcomes}")
     print(f"  outcomePrices(parsed) = {prices_raw}")
     if len(outcomes) >= 2 and len(prices_raw) >= 2:

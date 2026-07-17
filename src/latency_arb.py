@@ -279,18 +279,36 @@ class PolymarketContractFeed:
         except Exception:
             return None
 
+    # ----- CLOB path: /markets/{condition_id} diretto, niente filtri ---------
+    def _fetch_clob_market(self, condition_id: str) -> Optional[Dict]:
+        """CLOB GET /markets/{condition_id} — recupera diretto per condition_id.
+
+        Funziona per qualsiasi stato (live/closed/resolved): gamma non supporta
+        filtro condition_ids, e i crypto 5/15min non sono raggiungibili via
+        closed=true&active=false (non paginano). La CLOB ritorna sempre il
+        mercato per cid, con `tokens` che hanno `outcome` (nome), `price`
+        (0/1 post-resolution) e `winner` (bool). Piu robusto di gamma."""
+        try:
+            r = self.s.get(f"{self.clob}/markets/{condition_id}", timeout=15)
+            if not r.ok:
+                return None
+            m = r.json()
+            if not isinstance(m, dict) or not m:
+                return None
+            return m
+        except Exception:
+            return None
+
     def _fetch_market(self, condition_id: str,
                        market_id: Optional[int] = None) -> Optional[Dict]:
-        """Recupera un singolo mercato gamma per condition_id.
-
-        gamma NON supporta filtro `condition_ids` (ritorna [] silenziosamente).
-        Strategia:
-          1) se abbiamo market_id (intero interno gamma), query `?id=<int>` (preciso)
-          2) fallback: fetch batch closed=true&active=false e filtra localmente
-             per conditionId == cid (piu lento ma robusto per signal legacy
-             senza market_id). Paginato fino a trovare o esaurire.
-        """
-        # 1) query diretta per id intero (se noto)
+        """Recupera un singolo mercato per condition_id. Path primario: CLOB
+        (direzionale, niente filtri gamma roti). Fallback gamma ?id=<int> se
+        disponibile, poi scan closed (per legacy senza market_id)."""
+        # 1) CLOB diretto (sempre, niente filtri)
+        m = self._fetch_clob_market(condition_id)
+        if m is not None:
+            return m
+        # 2) gamma ?id=<int> (se noto)
         if market_id is not None:
             try:
                 r = self.s.get(f"{self.gamma}/markets",
@@ -301,11 +319,11 @@ class PolymarketContractFeed:
                         return arr[0]
             except Exception:
                 pass
-        # 2) fallback: scan closed markets, match per conditionId
+        # 3) fallback: scan closed markets (gamma), match locale conditionId
         try:
             offset = 0
             limit = 200
-            for _ in range(10):  # max ~2000 markets
+            for _ in range(10):
                 r = self.s.get(f"{self.gamma}/markets",
                                params={"closed": "true", "active": "false",
                                        "limit": limit, "offset": offset},
@@ -319,7 +337,7 @@ class PolymarketContractFeed:
                     if (m.get("conditionId") or "") == condition_id:
                         return m
                 if len(arr) < limit:
-                    break  # paginazione esaurita
+                    break
                 offset += limit
         except Exception:
             pass
@@ -327,30 +345,52 @@ class PolymarketContractFeed:
 
     def resolve_contract(self, condition_id: str,
                          market_id: Optional[int] = None) -> Optional[bool]:
-        """Fetch gamma per il mercato risolto. Return True=UP_won o False=DOWN_won
-        oppure None se ancora non risolto.
+        """Resolve mercato CLOB: True=UP_won, False=DOWN_won, None=non risolto.
 
-        Metodo robusto: gamma NON espone "outcome" come free-text. Dopo la
-        risoluzione, "outcomePrices" diventa ["1","0"] o ["0","1"]: l'index
-        con valore ~1 indica l'outcome vincitore (in sistemi "Up/Down").
-        Usiamo il matching per nome di outcomes per stabilire chi ha vinto, NON
-        assumendo outcomes[0]=Up (Polymarket ordina spesso alfabeticamente)."""
+        Path primario: CLOB /markets/{cid}. La CLOB ritorna `tokens` array dove
+        ogni token ha `outcome` (nome: "Up"/"Down"), `price` (0.0 o 1.0 post-res),
+        `winner` (bool). Derivazione diretta dal `winner` flag — piu robusto di
+        parsare outcomePrices (CLOB non li espone). Fallback gamma se CLOB fail.
+        """
         try:
             m = self._fetch_market(condition_id, market_id)
             if m is None:
                 return None
-            # necessario closed=true (gamma finalizza poi)
             closed = bool(m.get("closed", False))
+            tokens = m.get("tokens")
+            # --- CLOB path: tokens con `winner` flag ---
+            if isinstance(tokens, list) and tokens and isinstance(tokens[0], dict):
+                if not closed:
+                    return None  # ancora live
+                up_won = None
+                down_won = None
+                any_winner = False
+                for t in tokens:
+                    if not isinstance(t, dict):
+                        continue
+                    name = (t.get("outcome") or "").lower()
+                    won = bool(t.get("winner", False))
+                    if won:
+                        any_winner = True
+                    if ("up" in name or "yes" in name) and won:
+                        up_won = True
+                    elif ("down" in name or "no" in name) and won:
+                        down_won = True
+                if not any_winner:
+                    # ancora non finalizzato (nessun winner=True)
+                    return None
+                if up_won:
+                    return True
+                if down_won:
+                    return False
+                # winner flag su outcome non Up/Down (es. "Same") → non mappabile
+                return None
+            # --- gamma fallback: outcomes + outcomePrices ---
             outcomes = _parse_json_list(m.get("outcomes"))
             prices_raw = _parse_json_list(m.get("outcomePrices"))
-            # fallback accept: outcomeMetas (raro) potrebbe contenere prices numerici
-            if len(outcomes) < 2:
-                return None
-            if len(prices_raw) < 2:
-                # non ancora finalizzato? ancora trading?
+            if len(outcomes) < 2 or len(prices_raw) < 2:
                 if not closed:
                     return None
-                # proviamo `umaResolutionStatus` o timestamp closedTime
                 return None
             try:
                 prices = [float(p) if p is not None else 0.0 for p in prices_raw]
@@ -360,16 +400,13 @@ class PolymarketContractFeed:
             lo_idx = min(range(len(prices)), key=lambda i: prices[i])
             hi = prices[hi_idx]
             lo = prices[lo_idx]
-            # soglia risoluzione: un outcome a ~1, l'altro a ~0
             if not (hi >= 0.95 and lo <= 0.05):
-                # ancora non finalizzato (prezzo frazionario durante settlement)
                 return None
             winner_name = (outcomes[hi_idx] or "").lower()
             if "up" in winner_name or "yes" in winner_name:
                 return True
             if "down" in winner_name or "no" in winner_name:
                 return False
-            # esotici (es. "Same"): non sappiamo mappare → senza judizio
             return None
         except Exception:
             return None
