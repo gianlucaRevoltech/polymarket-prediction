@@ -278,31 +278,67 @@ class PolymarketContractFeed:
 
     def resolve_contract(self, condition_id: str) -> Optional[bool]:
         """Fetch gamma per il mercato risolto. Return True=UP_won o False=DOWN_won
-        oppure None se ancora non risolto."""
+        oppure None se ancora non risolto.
+
+        Metodo robusto: gamma NON espone "outcome" come free-text. Dopo la
+        risoluzione, "outcomePrices" diventa ["1","0"] o ["0","1"]: l'index
+        con valore ~1 indica l'outcome vincitore (in sistemi "Up/Down").
+        Usiamo il matching per nome di outcomes per stabilire chi ha vinto, NON
+        assumendo outcomes[0]=Up (Polymarket ordina spesso alfabeticamente)."""
         try:
             r = self.s.get(f"{self.gamma}/markets",
                            params={"condition_ids": condition_id}, timeout=10)
-            if not r.ok or not r.json():
+            if not r.ok:
                 return None
-            m = r.json()[0]
-            if not m.get("closed"):
+            arr = r.json()
+            if not arr:
                 return None
-            # gamma espone 'outcome' o 'resolved' (debug: approssimiamo)
-            txt = (m.get("outcome") or m.get("resolutionSource") or "").lower()
-            # TENTATIVO euristico: legge 'yes' come UP vincente; 'no' come DOWN
-            if "yes" in txt or "up" in txt:
-                return True
-            if "no" in txt or "down" in txt:
-                return False
-            # fallback: prezzo finale YES = 1 → UP vinto
+            m = arr[0]
+            # necessario closed=true (gamma finalizza poi)
+            closed = bool(m.get("closed", False))
             outcomes = _parse_json_list(m.get("outcomes"))
-            tokens = _parse_json_list(m.get("clobTokenIds"))
-            if len(tokens) >= 1 and len(outcomes) >= 1:
-                # ask book mid alla resolution… non affidabile. Skip.
-                pass
+            prices_raw = _parse_json_list(m.get("outcomePrices"))
+            # fallback accept: outcomeMetas (raro) potrebbe contenere prices numerici
+            if len(outcomes) < 2:
+                return None
+            if len(prices_raw) < 2:
+                # non ancora finalizzato? ancora trading?
+                if not closed:
+                    return None
+                # proviamo `umaResolutionStatus` o timestamp closedTime
+                return None
+            try:
+                prices = [float(p) if p is not None else 0.0 for p in prices_raw]
+            except Exception:
+                return None
+            hi_idx = max(range(len(prices)), key=lambda i: prices[i])
+            lo_idx = min(range(len(prices)), key=lambda i: prices[i])
+            hi = prices[hi_idx]
+            lo = prices[lo_idx]
+            # soglia risoluzione: un outcome a ~1, l'altro a ~0
+            if not (hi >= 0.95 and lo <= 0.05):
+                # ancora non finalizzato (prezzo frazionario durante settlement)
+                return None
+            winner_name = (outcomes[hi_idx] or "").lower()
+            if "up" in winner_name or "yes" in winner_name:
+                return True
+            if "down" in winner_name or "no" in winner_name:
+                return False
+            # esotici (es. "Same"): non sappiamo mappare → senza judizio
             return None
         except Exception:
             return None
+
+
+def _find_outcome_idx(outcomes, needles) -> Optional[int]:
+    """Trova l'index di outcomes il cui nome (lowercased) contiene uno dei needles.
+    None se niente matcha."""
+    for i, name in enumerate(outcomes or []):
+        n = (name or "").lower()
+        for k in needles:
+            if k in n:
+                return i
+    return None
 
 
 def _parse_json_list(raw):
@@ -418,22 +454,34 @@ class LatencyArbDetector:
             if mom is None:
                 continue
             delta_5m, p_binance = mom
-            # YES token = outcomes[0] solitamente "Up" su Polymarket
-            # in gamma normalizzato outcomes = ["Up","Down"] o ["Yes","No"]
-            token_yes = c["tokens"][0]
-            p_yes = self.poly.book_yes(token_yes)
-            if p_yes is None or p_yes <= 0 or p_yes >= 1:
+            # Match outcomes per NOME invece di assumere outcomes[0]="Up".
+            # Polymarket spesso ordina alfabeticamente → ["Down","Up"],
+            # in quel caso tokens[0] e' il token DOWN e p_yes e' p(DOWN).
+            up_idx = _find_outcome_idx(c.get("outcomes") or [], ("up", "yes"))
+            down_idx = _find_outcome_idx(c.get("outcomes") or [], ("down", "no"))
+            if up_idx is None or down_idx is None or up_idx == down_idx:
+                # non riusciamo a label-izzare (es. "Same"): skip
                 continue
-            # model: expected p(UP) da momentum
+            if len(c["tokens"]) <= max(up_idx, down_idx):
+                continue
+            token_up = c["tokens"][up_idx]
+            # book_yes chiama /midpoint sul token_id: prezzo del token specifico
+            p_up_market = self.poly.book_yes(token_up)
+            if p_up_market is None or p_up_market <= 0 or p_up_market >= 1:
+                continue
+            # model: expected p(UP) da momentum Binance
             K = LATENCY_ARB["momentum_k"]
             expected_up = 0.5 + K * delta_5m
             expected_up = max(0.05, min(0.95, expected_up))
-            edge = expected_up - p_yes
+            # edge = expected p(UP) - prezzo mercato del token UP (p(UP)_market)
+            edge = expected_up - p_up_market
             if abs(edge) < LATENCY_ARB["edge_threshold_pct"]:
                 continue
             action = "LONG_YES" if edge > 0 else "LONG_NO"
-            # virtual entry at ask (taker ottimistico) per il lato scelto
-            entry_price = p_yes if action == "LONG_YES" else (1.0 - p_yes)
+            # virtual entry at ask (taker ottimistico) sul lato scelto
+            # LONG_YES → compra token UP a p_up_market
+            # LONG_NO  → compra token DOWN a (1 - p_up_market)
+            entry_price = p_up_market if action == "LONG_YES" else (1.0 - p_up_market)
             rec = {
                 "ts_open": datetime.now(timezone.utc).isoformat(),
                 "status": "open",
@@ -445,7 +493,12 @@ class LatencyArbDetector:
                 "binance_price": round(p_binance, 2),
                 "delta_5m_pct": round(delta_5m * 100, 3),
                 "expected_p_up": round(expected_up, 4),
-                "p_yes": round(p_yes, 4),
+                "p_up_market": round(p_up_market, 4),
+                # alias legacy p_yes = p_up_market (per compat report)
+                "p_yes": round(p_up_market, 4),
+                "up_idx": up_idx,
+                "down_idx": down_idx,
+                "outcomes": c.get("outcomes") or [],
                 "edge": round(edge, 4),
                 "action": action,
                 "entry_price": round(entry_price, 4),
@@ -523,6 +576,15 @@ class LatencyArbDetector:
                   f"pnl={pnl:+.4f} | tol WR={wr*100:.1f}% "
                   f"({self.stats['n_win']}/{self.stats['n_resolved']})")
 
+    def heartbeat_save_stats(self):
+        """Save stats.json anche senza nuovi RESOLVE — cosi pending/n_resolved e'
+        visibile da cat senza RESOLVE. Chiamato dal loop ogni ~60s.
+        Fix Bug #3: stats_file prima d'ora mai scritto fino al primo RESOLVE."""
+        # include pending count e ts per audit
+        self.stats["pending"] = len(self.pending)
+        self.stats["ts_last_save"] = datetime.now(timezone.utc).isoformat()
+        self._save_stats()
+
     def print_stats(self):
         n_res = self.stats["n_resolved"]
         wr = self.stats["n_win"] / n_res if n_res > 0 else 0.0
@@ -545,6 +607,7 @@ def run_loop(detector: Optional[LatencyArbDetector] = None,
     interval = LATENCY_ARB["poll_interval_sec"]
     start = time.time()
     stats_every = 60  # stampa stats ogni 60 cicli (~1min)
+    save_every = 60   # persist stats.json ogni 60 cicli (anche se 0 resolved)
     cycle = 0
     print(f"[LATENCY-ARB] loop start | poll={interval}s | "
           f"edge_threshold={LATENCY_ARB['edge_threshold_pct']} | "
@@ -557,6 +620,8 @@ def run_loop(detector: Optional[LatencyArbDetector] = None,
                 cycle += 1
                 if cycle % stats_every == 0:
                     det.print_stats()
+                if cycle % save_every == 0:
+                    det.heartbeat_save_stats()
                 if duration_min > 0 and time.time() - start > duration_min * 60:
                     print("[LATENCY-ARB] duration reached, stop.")
                     det.print_stats()
