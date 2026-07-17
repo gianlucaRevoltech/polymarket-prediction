@@ -247,6 +247,9 @@ class PolymarketContractFeed:
                 event_slug = events[0].get("slug", "") if events else ""
                 out.append({
                     "condition_id": m.get("conditionId", ""),
+                    # gamma "id" (intero interno) — serve per resolve_contract:
+                    # gamma NON supporta filtro condition_ids, ma ?id=<int> funziona.
+                    "market_id": m.get("id"),
                     "title": title,
                     "slug": m.get("slug", ""),
                     "event_slug": event_slug,
@@ -276,7 +279,54 @@ class PolymarketContractFeed:
         except Exception:
             return None
 
-    def resolve_contract(self, condition_id: str) -> Optional[bool]:
+    def _fetch_market(self, condition_id: str,
+                       market_id: Optional[int] = None) -> Optional[Dict]:
+        """Recupera un singolo mercato gamma per condition_id.
+
+        gamma NON supporta filtro `condition_ids` (ritorna [] silenziosamente).
+        Strategia:
+          1) se abbiamo market_id (intero interno gamma), query `?id=<int>` (preciso)
+          2) fallback: fetch batch closed=true&active=false e filtra localmente
+             per conditionId == cid (piu lento ma robusto per signal legacy
+             senza market_id). Paginato fino a trovare o esaurire.
+        """
+        # 1) query diretta per id intero (se noto)
+        if market_id is not None:
+            try:
+                r = self.s.get(f"{self.gamma}/markets",
+                               params={"id": int(market_id)}, timeout=10)
+                if r.ok:
+                    arr = r.json()
+                    if isinstance(arr, list) and arr:
+                        return arr[0]
+            except Exception:
+                pass
+        # 2) fallback: scan closed markets, match per conditionId
+        try:
+            offset = 0
+            limit = 200
+            for _ in range(10):  # max ~2000 markets
+                r = self.s.get(f"{self.gamma}/markets",
+                               params={"closed": "true", "active": "false",
+                                       "limit": limit, "offset": offset},
+                               timeout=15)
+                if not r.ok:
+                    break
+                arr = r.json()
+                if not isinstance(arr, list) or not arr:
+                    break
+                for m in arr:
+                    if (m.get("conditionId") or "") == condition_id:
+                        return m
+                if len(arr) < limit:
+                    break  # paginazione esaurita
+                offset += limit
+        except Exception:
+            pass
+        return None
+
+    def resolve_contract(self, condition_id: str,
+                         market_id: Optional[int] = None) -> Optional[bool]:
         """Fetch gamma per il mercato risolto. Return True=UP_won o False=DOWN_won
         oppure None se ancora non risolto.
 
@@ -286,14 +336,9 @@ class PolymarketContractFeed:
         Usiamo il matching per nome di outcomes per stabilire chi ha vinto, NON
         assumendo outcomes[0]=Up (Polymarket ordina spesso alfabeticamente)."""
         try:
-            r = self.s.get(f"{self.gamma}/markets",
-                           params={"condition_ids": condition_id}, timeout=10)
-            if not r.ok:
+            m = self._fetch_market(condition_id, market_id)
+            if m is None:
                 return None
-            arr = r.json()
-            if not arr:
-                return None
-            m = arr[0]
             # necessario closed=true (gamma finalizza poi)
             closed = bool(m.get("closed", False))
             outcomes = _parse_json_list(m.get("outcomes"))
@@ -486,6 +531,9 @@ class LatencyArbDetector:
                 "ts_open": datetime.now(timezone.utc).isoformat(),
                 "status": "open",
                 "condition_id": cid,
+                # market_id (intero gamma) per resolve_contract robusto:
+                # gamma NON filtra per condition_ids, ma ?id=<int> si.
+                "market_id": c.get("market_id"),
                 "title": c["title"],
                 "end_date": c["end_date"],
                 "minutes_left": round(c["minutes_left"], 2),
@@ -510,7 +558,7 @@ class LatencyArbDetector:
             self._append_signal(rec)
             n_open += 1
             print(f"[SIGNAL] {action} | {c['title'][:45]} | edge={edge:+.2f} | "
-                  f"p_yes={p_yes:.3f} | Δ5m Binance={delta_5m*100:+.2f}% | "
+                  f"p_up={p_up_market:.3f} | Δ5m Binance={delta_5m*100:+.2f}% | "
                   f"{c['minutes_left']:.1f}min")
         # risolvi pending
         self._resolve_pending()
@@ -524,8 +572,8 @@ class LatencyArbDetector:
             if days is None or days > 0:
                 # ancora non scaduto
                 continue
-            # scaduto: prova a leggere il risultato
-            result = self.poly.resolve_contract(cid)
+            # scaduto: prova a leggere il risultato (passa market_id se noto)
+            result = self.poly.resolve_contract(cid, sig.get("market_id"))
             if result is None:
                 # non ancora risolto/known; resta pending fino a fetch riuscita
                 # limit retry: dopo ~5 min ancora non risolto → close come stale

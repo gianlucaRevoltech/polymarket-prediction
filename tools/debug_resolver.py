@@ -29,19 +29,14 @@ def _pick_keyword(path):
     return ""
 
 
-def _show_market(feed: PolymarketContractFeed, cid: str, idx: int):
-    print(f"\n=== [{idx}] condition_id={cid} ===")
-    s = feed.s
-    r = s.get(f"{feed.gamma}/markets",
-              params={"condition_ids": cid}, timeout=15)
-    if not r.ok:
-        print(f"  HTTP {r.status_code} body[:200]={r.text[:200]}")
+def _show_market(feed: PolymarketContractFeed, cid: str, idx: int,
+                market_id=None):
+    print(f"\n=== [{idx}] condition_id={cid} market_id={market_id} ===")
+    # usa il nuovo metodo robusto (gamma NON supporta condition_ids filter)
+    m = feed._fetch_market(cid, market_id)
+    if m is None:
+        print("  NO market trovato — cid non in gamma closed markets?")
         return
-    arr = r.json()
-    if not arr:
-        print("  NO market returned — condition_ids filter non supportato? cid errato?")
-        return
-    m = arr[0]
     # campi chiave da capire
     interesting = [
         "conditionId", "question", "slug", "closed", "acceptingOrders",
@@ -105,15 +100,17 @@ def main():
 
     feed = PolymarketContractFeed()
 
-    # raccogli condition_id unici da signals.jsonl
+    # raccogli (condition_id, market_id) da signals.jsonl o fallback gamma
     seen_cids = []
     seen_set = set()
+    market_ids = {}   # cid -> market_id (se presente nel log)
     p = Path(args.jsonl)
     if not p.exists():
         print(f"!! {p} non esistente — provo fetch diretta gamma ( ultimi "
               f"mercati crypto up/down scaduti).")
         # refresh_active filtra solo attivi → qui serve closed. Fallback:
         # query markets con closed=true filter per pattern crypto up/down
+        # + raccogli market_id (intero) per risoluzione robusta
         try:
             now = datetime.now(timezone.utc)
             r = feed.s.get(f"{feed.gamma}/markets",
@@ -130,6 +127,9 @@ def main():
                         if cid and cid not in seen_set:
                             seen_set.add(cid)
                             seen_cids.append(cid)
+                            mid = m.get("id")
+                            if mid is not None:
+                                market_ids[cid] = mid
         except Exception as e:
             print(f"fallback fetch failed: {e}")
     else:
@@ -151,6 +151,10 @@ def main():
                 if cid not in seen_set:
                     seen_set.add(cid)
                     seen_cids.append(cid)
+                # raccogli market_id se presente (anche da record resolved/stale)
+                mid = rec.get("market_id")
+                if mid is not None:
+                    market_ids[cid] = mid
 
     if not seen_cids:
         print("Nessun condition_id scaduto trovato.")
@@ -158,7 +162,7 @@ def main():
 
     print(f"Trovati {len(seen_cids)} condition_id scaduti unici.")
     for i, cid in enumerate(seen_cids[:args.max]):
-        _show_market(feed, cid, i + 1)
+        _show_market(feed, cid, i + 1, market_ids.get(cid))
 
 
 if __name__ == "__main__":
