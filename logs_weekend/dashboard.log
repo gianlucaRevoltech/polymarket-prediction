@@ -1,0 +1,676 @@
+
+============================================================
+  POLYMARKET DASHBOARD
+  http://0.0.0.0:5000
+============================================================
+
+ * Serving Flask app 'dashboard'
+ * Debug mode: off
+[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://217.154.205.44:5000
+[33mPress CTRL+C to quit[0m
+87.121.79.59 - - [17/Jul/2026 09:28:43] "[33mGET /src/bot.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:28:53] "[33mGET /server/README.md HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:28:55] "[33mGET /server/src/app.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:28:59] "[33mGET /db.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:29:12] "[33mGET /src/index.ts HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:29:51] "[33mGET /bot/.env HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:29:52] "[33mGET /SETUP.md HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:29:56] "[33mGET /bot/server.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:31:15] "[33mGET /dist/server.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:32:10] "[33mGET /backend/backend.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:32:33] "[33mGET /polymarket/README.md HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:32:45] "[33mGET /bot/bot.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:33:09] "[33mGET /backend/src/server.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:33:09] "[33mGET /src/api/server.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:33:11] "[33mGET /src/server.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:33:15] "[33mGET /polymarket/package.json HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:33:22] "[33mGET /apps/api/server.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:33:57] "[33mGET /src/backend/index.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:34:32] "[33mGET /server/poly-bot.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:36:08] "[33mGET /server/requirements.txt HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:36:27] "[33mGET /backend.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:36:31] "[33mGET /polymarket/requirements.txt HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:37:13] "[33mGET /api/.env HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:37:27] "[33mGET /dist/index.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:38:05] "[33mGET /poly.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:38:06] "[33mGET /pull.sh HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:38:09] "[33mGET /server/bot.js HTTP/1.1[0m" 404 -
+192.253.248.180 - - [17/Jul/2026 09:38:28] code 400, message Bad HTTP/0.9 request type ('\x03\x00\x00/*à\x00\x00\x00\x00\x00Cookie:')
+192.253.248.180 - - [17/Jul/2026 09:38:28] "[31m[1m\x03\x00\x00/*à\x00\x00\x00\x00\x00Cookie: mstshash=Administr[0m" 400 -
+87.121.79.59 - - [17/Jul/2026 09:38:33] "[33mGET /src/main.py HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:38:43] "[33mGET /swagger HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:39:04] "[33mGET /bot/package.json HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:39:11] "[33mGET /bot/docker-compose.yml HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:39:25] "[33mGET /api/Dockerfile HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:39:26] "[33mGET /docs HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:39:29] "[33mGET /backend/server.ts HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:39:52] "[33mGET /bot.mjs HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:39:55] "[33mGET /polymarket.mjs HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:39:56] "[33mGET /apps/api/src/server.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:40:27] "[33mGET /packages/backend/src/index.ts HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:40:35] "[33mGET /backend/src/server.ts HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:40:41] "[33mGET /src/backend/server.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:41:03] "[33mGET /docker-compose.yaml HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:41:05] "[33mGET /app/index.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:41:12] "[33mGET /src/server/index.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:41:55] "[33mGET /v1/swagger HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:41:56] "[33mGET /apps/server/server.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:42:20] "[33mGET /api/index.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:42:34] "[33mGET /src/package.json HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:43:06] "[33mGET /server/.git/config HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:43:10] "[33mGET /src/app/server.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:43:25] "[33mGET /.env.prod HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:43:33] "[33mGET /api/bot.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:43:51] "[33mGET /backend/.env HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:44:03] "[33mGET /app/backend.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:44:06] "[33mGET /config/settings.py HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:44:06] "[33mGET /server/util.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:44:07] "[33mGET /backend/package.json HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:44:30] "[33mGET /polybot.py HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:44:42] "[33mGET /backend/.gitignore HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:45:34] "[33mGET /api-docs HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:45:47] "[33mGET /app.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:45:57] "[33mGET /src/manage.py HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:46:13] "[33mGET /api/requirements.txt HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:46:13] "[33mGET /wallet.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:46:14] "[33mGET /poly/package.json HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:46:34] "[33mGET /polymarket.py HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:46:46] "[33mGET /src/app.ts HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:46:51] "[33mGET /server/src/backend.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:47:13] "[33mGET /server/manage.py HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:47:25] "[33mGET /packages/api/server.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:48:01] "[33mGET /polymarket.ts HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:48:20] "[33mGET /polymarket.cjs HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:48:50] "[33mGET /src/api/index.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:49:00] "[33mGET /wallet/.env HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:49:53] "[33mGET /.env HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:50:08] "[33mGET /node/app.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:50:15] "[33mGET /settings.py HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:50:18] "[33mGET /bot/.git/config HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:50:35] "[33mGET /env.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:50:38] "[33mGET /.env.example HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:50:46] "[33mGET /src/ecosystem.config.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:50:55] "[33mGET /lib/server.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:51:16] "[33mGET /bot.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:51:48] "[33mGET /api/.gitignore HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:51:53] "[33mGET /backend/docker-compose.yml HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:53:12] "[33mGET /build.sh HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:53:19] "[33mGET /poly.py HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:53:45] "[33mGET /api.py HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:53:54] "[33mGET /api/docs HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:54:18] "[33mGET /server/.gitignore HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:54:20] "[33mGET /poly/.gitignore HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:54:22] "[33mGET /index.mjs HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:54:25] "[33mGET /app/app.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:54:43] "[33mGET /poly-bot.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:55:12] "[33mGET /production.env HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:55:12] "[33mGET /api/clob.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:55:38] "[33mGET /util.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:55:39] "[33mGET /server/package.json HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:55:43] "[33mGET /server.mjs HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:55:46] "[33mGET /backend/README.md HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:56:12] "[33mGET /bot/index.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:56:16] "[33mGET /api/server.ts HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:56:21] "[33mGET /docker-compose.prod.yml HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:56:31] "[33mGET /bot/ecosystem.config.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:56:46] "GET / HTTP/1.1" 200 -
+87.121.79.59 - - [17/Jul/2026 09:56:49] "[33mGET /app/bot.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:56:51] "[33mGET /bot/app.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:56:56] "[33mGET /.git/config HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:57:06] "[33mGET /Dockerfile HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:57:07] "[33mGET /src/README.md HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:57:29] "[33mGET /api/src/server.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:57:35] "[33mGET /src/index.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:57:38] "[33mGET /bot.py HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:57:46] "[33mGET /config.py HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:57:52] "[33mGET /packages/server/src/index.ts HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:58:08] "[33mGET /apps/backend/src/server.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:58:14] "[33mGET /backend/bot.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:58:40] "[33mGET /dist/app.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:58:50] "[33mGET /server/db.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:59:06] "[33mGET /lib/index.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:59:19] "[33mGET /temp/.env HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:59:20] "[33mGET /poly/README.md HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:59:22] "[33mGET /DEPLOY.md HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:59:25] "[33mGET /bin/www HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 09:59:44] "[33mGET /packages/api/src/server.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:00:13] "[33mGET /scripts/server.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:00:22] "[33mGET /packages/backend/server.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:00:56] "[33mGET /server/server.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:01:04] "[33mGET /node/backend.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:01:27] "[33mGET /apps/backend/server.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:01:34] "[33mGET /bot/server.ts HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:01:35] "[33mGET /server/index.ts HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:02:01] "[33mGET /api/swagger HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:02:53] "[33mGET /app/server.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:02:54] "[33mGET /manage.py HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:03:17] "[33mGET /bot/backend.js HTTP/1.1[0m" 404 -
+95.215.0.144 - - [17/Jul/2026 10:03:34] "GET / HTTP/1.1" 200 -
+45.91.64.7 - - [17/Jul/2026 10:03:34] "GET /api/equity HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $300.00 cash, 0 aperte, 0 chiuse
+5.101.64.6 - - [17/Jul/2026 10:03:34] "GET /api/status HTTP/1.1" 200 -
+45.91.64.7 - - [17/Jul/2026 10:03:34] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:03:34] "[33mGET /v1/docs HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:03:35] "[33mGET /api/v1/swagger-ui HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:03:35] "[33mGET /build/server.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:03:39] "[33mGET /api/package.json HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:03:42] "[33mGET /api/README.md HTTP/1.1[0m" 404 -
+46.161.50.108 - - [17/Jul/2026 10:03:44] "GET /api/equity HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $300.00 cash, 0 aperte, 0 chiuse
+45.91.64.8 - - [17/Jul/2026 10:03:44] "GET /api/status HTTP/1.1" 200 -
+95.215.0.144 - - [17/Jul/2026 10:03:45] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:03:55] "[33mGET /poly/server.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:04:09] "[33mGET /src/functions/index.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:05:15] "[33mGET /server/polybot.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:05:27] "[33mGET /polymarket/server.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:05:31] "[33mGET /server/clob.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:05:35] "[33mGET /poly/bot.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:06:03] "[33mGET /INSTALL.md HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:06:38] "[33mGET /bot/requirements.txt HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:06:41] "[33mGET /api/db.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:07:22] "[33mGET /server.py HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:07:26] "[33mGET /CODEX.md HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:07:31] "[33mGET /ecosystem.config.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:07:52] "[33mGET /app.py HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:08:11] "[33mGET /CLAUDE.md HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:08:11] "[33mGET /api/polymarket.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:08:26] "[33mGET /.env.production HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:09:48] "[33mGET /api/app.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:09:50] "[33mGET /requirements.txt HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:10:03] "[33mGET /polymarket/.gitignore HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:10:05] "[33mGET /docker-compose.yml HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:10:26] "[33mGET /backend/ecosystem.config.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:10:33] "[33mGET /bot.cjs HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:10:33] "[33mGET /index.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:11:16] "[33mGET /api/poly-bot.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:11:28] "[33mGET /api/v1/swagger HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:11:43] "[33mGET /server.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:11:46] "[33mGET /apps/api/src/server.ts HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:12:02] "[33mGET /bot/index.ts HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:12:02] "[33mGET /bot/src/index.ts HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:12:09] "[33mGET /config.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:12:42] "[33mGET /backend/index.ts HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:12:42] "[33mGET /server/src/server.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:12:44] "[33mGET /backend/Dockerfile HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:12:47] "[33mGET /bin/server.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:13:01] "[33mGET /.gitignore HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:13:09] "[33mGET /api/v1/docs HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:13:48] "[33mGET /api/polybot.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:14:02] "[33mGET /backend/index.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:14:27] "[33mGET /bot.ts HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:14:32] "[33mGET /.dockerignore HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:14:41] "[33mGET /api/util.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:14:43] "[33mGET /server/server.ts HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:14:58] "[33mGET /server/app.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:15:06] "[33mGET /.env HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:15:26] "[33mGET /wallets.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:15:47] "[33mGET /backend/requirements.txt HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:15:56] "[33mGET /packages/api/src/index.ts HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:16:59] "[33mGET /server.ts HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:17:22] "[33mGET /src/app.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:18:13] "[33mGET /test/.env HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:18:25] "[33mGET /polybot.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:18:25] "[33mGET /src/backend.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:18:44] "[33mGET /app/.gitignore HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:18:46] "[33mGET /api/config.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:19:04] "[33mGET /api/swagger-ui HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:19:05] "[33mGET /bot/src/server.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:19:31] "[33mGET /poly/requirements.txt HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:19:48] "[33mGET /api/v1/apidocs HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:20:28] "[33mGET /server/src/bot.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:20:56] "[33mGET /server.cjs HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:21:33] "[33mGET /DEPLOY.sh HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:21:49] "[33mGET /README.md HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:22:21] "[33mGET /index.cjs HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:23:12] "[33mGET /api/backend.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:23:36] "[33mGET /server/index.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:23:56] "[33mGET /server/poly.js HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:24:23] "[33mGET /docker-compose.production.yml HTTP/1.1[0m" 404 -
+87.121.79.59 - - [17/Jul/2026 10:24:24] "[33mGET /polymarket.js HTTP/1.1[0m" 404 -
+134.195.101.12 - - [17/Jul/2026 11:33:58] "GET / HTTP/1.1" 200 -
+121.199.174.173 - - [17/Jul/2026 11:45:59] "GET / HTTP/1.0" 200 -
+121.199.174.173 - - [17/Jul/2026 11:46:07] "[33mPOST /sdk HTTP/1.1[0m" 404 -
+121.199.174.173 - - [17/Jul/2026 11:46:07] "GET / HTTP/1.0" 200 -
+121.199.174.173 - - [17/Jul/2026 11:46:07] "[33mGET /nmaplowercheck1784288767 HTTP/1.1[0m" 404 -
+121.199.174.173 - - [17/Jul/2026 11:46:07] "[33mGET /evox/about HTTP/1.1[0m" 404 -
+121.199.174.173 - - [17/Jul/2026 11:46:09] code 400, message Bad request version ('\x87ÌR\x00\x00Ú\x00\x05\x00\x04\x00\x02\x00\x01\x00\x16\x003\x009\x00:\x00\x18\x005\x00')
+121.199.174.173 - - [17/Jul/2026 11:46:09] "[31m[1m\x16\x03\x01\x02\x00\x01\x00\x01ü\x03\x03Þh\x10ü%L4¡¸*L\x09gâFÄia\x84¨u{aéÓ\x89\x99ä\x0d\x87ÌR\x00\x00Ú\x00\x05\x00\x04\x00\x02\x00\x01\x00\x16\x003\x009\x00:\x00\x18\x005\x00[0m" 400 -
+121.199.174.173 - - [17/Jul/2026 11:46:18] code 400, message Bad HTTP/0.9 request type ('\x16\x03\x01\x02\x00\x01\x00\x01ü\x03\x03\x8au4Öc')
+121.199.174.173 - - [17/Jul/2026 11:46:18] "[31m[1m\x16\x03\x01\x02\x00\x01\x00\x01ü\x03\x03\x8au4Öc\x09\x9fûi·Cùð\x17\x10\x82\\¿Â\x0fgü\x11ÅZL\x0f1z¾Bp\x00\x00Ú\x00\x05\x00\x04\x00\x02\x00\x01\x00\x16\x003\x009\x00:\x00\x18\x005\x00[0m" 400 -
+121.199.174.173 - - [17/Jul/2026 11:46:19] code 400, message Bad request syntax ('\x16\x03\x01\x02\x00\x01\x00\x01ü\x03\x03+7Ã+h\x11Sw\x11\x94ç_°\x16\\©\x90RK©\x12\x95íu\xad')
+121.199.174.173 - - [17/Jul/2026 11:46:19] "[31m[1m\x16\x03\x01\x02\x00\x01\x00\x01ü\x03\x03+7Ã+h\x11Sw\x11\x94ç_°\x16\\©\x90RK©\x12\x95íu­[0m" 400 -
+121.199.174.173 - - [17/Jul/2026 11:46:19] "GET / HTTP/1.0" 200 -
+121.199.174.173 - - [17/Jul/2026 11:46:19] "GET / HTTP/1.1" 200 -
+134.195.101.14 - - [17/Jul/2026 13:01:39] "GET / HTTP/1.1" 200 -
+168.93.202.52 - - [17/Jul/2026 13:15:38] "GET / HTTP/1.1" 200 -
+74.82.47.3 - - [17/Jul/2026 13:33:43] "GET / HTTP/1.1" 200 -
+74.82.47.3 - - [17/Jul/2026 13:34:45] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+115.231.78.11 - - [17/Jul/2026 13:54:42] "GET / HTTP/1.1" 200 -
+115.231.78.11 - - [17/Jul/2026 13:54:43] "GET / HTTP/1.1" 200 -
+115.231.78.11 - - [17/Jul/2026 13:54:44] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+115.231.78.11 - - [17/Jul/2026 13:54:45] "[33mGET /robots.txt HTTP/1.1[0m" 404 -
+185.12.59.118 - - [17/Jul/2026 15:49:39] "[33mGET /v404/exec?jwt=29075 HTTP/1.1[0m" 404 -
+121.43.116.22 - - [17/Jul/2026 16:51:50] "GET / HTTP/1.1" 200 -
+121.43.116.22 - - [17/Jul/2026 16:51:51] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+121.43.116.22 - - [17/Jul/2026 16:51:51] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+45.91.64.7 - - [17/Jul/2026 17:14:21] code 400, message Bad request version ('À\x13À')
+45.91.64.7 - - [17/Jul/2026 17:14:21] "[31m[1m\x16\x03\x01\x05¨\x01\x00\x05¤\x03\x03ãËÎ\x89\x9f\x9fÿ3ßØ\x94\x05róyË²cVÑ=<'8\x13]ÝUIâÝî ¬0Í÷ëõf5x\x1e\x86\x8bEö=3\x89\x97$`\x0døA}>+\x97û|l4X\x00\x1aÀ+À/À,À0Ì©Ì¨À\x09À\x13À[0m" 400 -
+45.91.64.7 - - [17/Jul/2026 17:14:21] "[33mGET /v2/_catalog HTTP/1.1[0m" 404 -
+45.91.64.7 - - [17/Jul/2026 17:14:26] code 400, message Bad HTTP/0.9 request type ('\x16\x03\x01\x05¨\x01\x00\x05¤\x03\x03)½)\x0fNýÄëIi\x86Ó¯rß#IöV#ë\x9d\x15\x95Ñ¤\x84QÔõ%h')
+45.91.64.7 - - [17/Jul/2026 17:14:26] "[31m[1m\x16\x03\x01\x05¨\x01\x00\x05¤\x03\x03)½)\x0fNýÄëIi\x86Ó¯rß#IöV#ë\x9d\x15\x95Ñ¤\x84QÔõ%h 3eÐh\x15.r4A{¢?\x9eZVç[0m" 400 -
+45.91.64.7 - - [17/Jul/2026 17:14:26] "[33mGET /v2/_catalog HTTP/1.1[0m" 404 -
+104.248.168.67 - - [17/Jul/2026 18:12:30] code 400, message Bad request syntax ('JDWP-Handshake')
+104.248.168.67 - - [17/Jul/2026 18:12:30] "[31m[1mJDWP-Handshake[0m" 400 -
+[SIMULATOR] Stato ripristinato: $252.85 cash, 5 aperte, 4 chiuse
+81.57.84.214 - - [17/Jul/2026 19:47:22] "GET /api/equity HTTP/1.1" 200 -
+81.57.84.214 - - [17/Jul/2026 19:47:22] "GET /api/status HTTP/1.1" 200 -
+81.57.84.214 - - [17/Jul/2026 19:47:22] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+81.57.84.214 - - [17/Jul/2026 19:47:23] "GET / HTTP/1.1" 200 -
+81.57.84.214 - - [17/Jul/2026 19:47:23] "GET /api/equity HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $252.85 cash, 5 aperte, 4 chiuse
+81.57.84.214 - - [17/Jul/2026 19:47:23] "GET /api/status HTTP/1.1" 200 -
+81.57.84.214 - - [17/Jul/2026 19:47:25] "GET /api/equity HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $252.85 cash, 5 aperte, 4 chiuse
+81.57.84.214 - - [17/Jul/2026 19:47:33] "GET /api/equity HTTP/1.1" 200 -
+81.57.84.214 - - [17/Jul/2026 19:47:33] "GET /api/status HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $252.85 cash, 5 aperte, 4 chiuse
+81.57.84.214 - - [17/Jul/2026 19:47:43] "GET /api/status HTTP/1.1" 200 -
+81.57.84.214 - - [17/Jul/2026 19:47:43] "GET /api/equity HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $252.85 cash, 5 aperte, 4 chiuse
+81.57.84.214 - - [17/Jul/2026 19:47:53] "GET /api/equity HTTP/1.1" 200 -
+81.57.84.214 - - [17/Jul/2026 19:47:53] "GET /api/status HTTP/1.1" 200 -
+89.248.172.9 - - [17/Jul/2026 20:04:18] code 400, message Bad request version ("¯nãY»bhlÿ(=':©\x82ÙoÈ¢×\x93\x98´ï\x80å¹\x90\x00(À")
+89.248.172.9 - - [17/Jul/2026 20:04:18] "[31m[1m\x16\x03\x02\x01o\x01\x00\x01k\x03\x02RHÅ\x1a#÷:Nßâ´\x82/ÿ\x09T\x9f§Äy°hÆ\x13\x8c¤\x1c="á\x1a\x98 \x84´,\x85¯nãY»bhlÿ(=':©\x82ÙoÈ¢×\x93\x98´ï\x80å¹\x90\x00(À[0m" 400 -
+45.205.1.241 - - [18/Jul/2026 00:12:03] "GET / HTTP/1.1" 200 -
+45.205.1.241 - - [18/Jul/2026 00:12:04] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+45.79.115.59 - - [18/Jul/2026 00:38:58] "GET / HTTP/1.1" 200 -
+172.236.228.245 - - [18/Jul/2026 00:41:00] "GET / HTTP/1.1" 200 -
+198.235.24.104 - - [18/Jul/2026 01:02:51] "GET / HTTP/1.0" 200 -
+45.79.207.252 - - [18/Jul/2026 01:47:10] "GET / HTTP/1.1" 200 -
+172.236.228.222 - - [18/Jul/2026 02:04:04] "GET / HTTP/1.1" 200 -
+167.94.146.63 - - [18/Jul/2026 02:09:15] code 400, message Bad request version ('À\x14À')
+167.94.146.63 - - [18/Jul/2026 02:09:15] "[31m[1m\x16\x03\x01\x00î\x01\x00\x00ê\x03\x03\x84°¸ñ_\x91%\x8bî\x18|8GäBÄ\x0eè\x14\x1a\x91äá\x87\x17Î\x15õ[\x9a¦  ,\x08r0Mf \x91G \x0d\x1cúLË±Ó/*XÍÂK\x11SeÕiHÔ\x17Ú\x00&Ì¨Ì©À/À0À+À,À\x13À\x09À\x14À[0m" 400 -
+167.94.146.63 - - [18/Jul/2026 02:09:19] "GET / HTTP/1.1" 200 -
+167.94.146.63 - - [18/Jul/2026 02:09:22] code 400, message Bad request version ('À\x14À')
+167.94.146.63 - - [18/Jul/2026 02:09:22] "[31m[1m\x16\x03\x01\x00î\x01\x00\x00ê\x03\x03t*\x18µ¼\x85ò÷¹£?e\x99Ð-Äú 0\x02Ú\x1e\x8cíkå\x02\x075\x00?^ Ì¯òXI¸D\x97²\x09\x1foÓ\x93\x07º INÀ÷ÔÄ±/aXÏ'^Dx\x00&Ì¨Ì©À/À0À+À,À\x13À\x09À\x14À[0m" 400 -
+167.94.146.63 - - [18/Jul/2026 02:09:22] "GET / HTTP/1.1" 200 -
+167.94.146.63 - - [18/Jul/2026 02:09:22] code 505, message Invalid HTTP version (2.0)
+167.94.146.63 - - [18/Jul/2026 02:09:22] "[35m[1mPRI * HTTP/2.0[0m" 505 -
+167.94.146.63 - - [18/Jul/2026 02:09:22] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+167.94.146.63 - - [18/Jul/2026 02:09:25] code 400, message Bad request version ('À\x14À')
+167.94.146.63 - - [18/Jul/2026 02:09:25] "[31m[1m\x16\x03\x01\x00î\x01\x00\x00ê\x03\x03ñC\x12\x1b\x11)<\x15½¨Ð\x97\x8e0^\x19\x7fÑ/o\x93\x8aEì\x14~²\x96×°×ì X¿¯À`ò\x05¯£¦º\x17XÏ\x88\x99,\x08}/,\x1c!Ñ]/¡\x92\x03]¢4\x00&Ì¨Ì©À/À0À+À,À\x13À\x09À\x14À[0m" 400 -
+167.94.146.63 - - [18/Jul/2026 02:09:25] "[33mGET /security.txt HTTP/1.1[0m" 404 -
+66.228.62.150 - - [18/Jul/2026 02:59:23] "GET / HTTP/1.1" 200 -
+146.190.134.221 - - [18/Jul/2026 02:59:59] "GET / HTTP/1.1" 200 -
+45.79.181.251 - - [18/Jul/2026 03:12:15] "GET / HTTP/1.1" 200 -
+205.210.31.232 - - [18/Jul/2026 03:29:21] "GET / HTTP/1.1" 200 -
+69.5.169.174 - - [18/Jul/2026 04:00:26] "GET / HTTP/1.1" 200 -
+69.5.169.191 - - [18/Jul/2026 04:00:26] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+69.5.169.168 - - [18/Jul/2026 04:00:26] "[33mPOST /mcp HTTP/1.1[0m" 404 -
+69.5.169.167 - - [18/Jul/2026 04:00:26] "[31m[1mPOST / HTTP/1.1[0m" 405 -
+69.5.169.225 - - [18/Jul/2026 04:00:27] "[33mGET /sse HTTP/1.1[0m" 404 -
+45.194.67.30 - - [18/Jul/2026 04:04:12] "GET / HTTP/1.1" 200 -
+45.194.67.30 - - [18/Jul/2026 04:04:12] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+81.57.84.214 - - [18/Jul/2026 06:14:13] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+81.57.84.214 - - [18/Jul/2026 06:14:13] "GET /api/equity HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $244.04 cash, 6 aperte, 5 chiuse
+81.57.84.214 - - [18/Jul/2026 06:14:13] "GET /api/status HTTP/1.1" 200 -
+81.57.84.214 - - [18/Jul/2026 06:14:16] "GET / HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $244.04 cash, 6 aperte, 5 chiuse
+81.57.84.214 - - [18/Jul/2026 06:14:16] "GET /api/equity HTTP/1.1" 200 -
+81.57.84.214 - - [18/Jul/2026 06:14:16] "GET /api/status HTTP/1.1" 200 -
+81.57.84.214 - - [18/Jul/2026 06:14:26] "GET /api/equity HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $244.04 cash, 6 aperte, 5 chiuse
+81.57.84.214 - - [18/Jul/2026 06:14:26] "GET /api/status HTTP/1.1" 200 -
+194.165.16.162 - - [18/Jul/2026 06:28:26] code 400, message Bad HTTP/0.9 request type ('\x03\x00\x00/*à\x00\x00\x00\x00\x00Cookie:')
+194.165.16.162 - - [18/Jul/2026 06:28:26] "[31m[1m\x03\x00\x00/*à\x00\x00\x00\x00\x00Cookie: mstshash=Administr[0m" 400 -
+119.200.230.22 - - [18/Jul/2026 06:34:01] "GET / HTTP/1.0" 200 -
+216.218.206.69 - - [18/Jul/2026 07:52:51] "GET / HTTP/1.1" 200 -
+216.218.206.69 - - [18/Jul/2026 07:53:41] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+118.194.248.142 - - [18/Jul/2026 08:00:15] code 400, message Bad request version ('\x00\x9eÌ¨Ìª\x003\x00=\x00\x16À')
+118.194.248.142 - - [18/Jul/2026 08:00:15] "[31m[1m\x16\x03\x01\x00ü\x01\x00\x00ø\x03\x03Â³®¿=_\x83v\x1a¬\x1cÓ\x82Ê-ï$Äüßmþj3 Ä<c\x09\x80££ dÒõ\x81\x8bhl4 \x86'éXûSÓØºh#¨¹\x06[\x08¤i\x15t\x7fïc\x004Ì¨Ì©À/À0À+À,À\x09\x00\x9eÌ¨Ìª\x003\x00=\x00\x16À[0m" 400 -
+118.194.248.142 - - [18/Jul/2026 08:00:26] "GET / HTTP/1.1" 200 -
+118.194.248.142 - - [18/Jul/2026 08:00:27] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+118.194.248.142 - - [18/Jul/2026 08:00:28] "[33mGET /robots.txt HTTP/1.1[0m" 404 -
+118.194.248.142 - - [18/Jul/2026 08:00:28] "[33mGET /sitemap.xml HTTP/1.1[0m" 404 -
+118.194.248.142 - - [18/Jul/2026 08:00:29] "[33mGET /config.json HTTP/1.1[0m" 404 -
+112.94.253.210 - - [18/Jul/2026 08:49:26] "GET / HTTP/1.1" 200 -
+223.166.206.125 - - [18/Jul/2026 08:49:48] "GET / HTTP/1.1" 200 -
+182.138.158.123 - - [18/Jul/2026 08:49:49] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+64.226.100.77 - - [18/Jul/2026 11:59:00] "GET / HTTP/1.0" 200 -
+81.57.84.214 - - [18/Jul/2026 12:44:43] "GET / HTTP/1.1" 200 -
+81.57.84.214 - - [18/Jul/2026 12:44:44] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+81.57.84.214 - - [18/Jul/2026 12:44:44] "GET /api/equity HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $235.19 cash, 7 aperte, 5 chiuse
+81.57.84.214 - - [18/Jul/2026 12:44:44] "GET /api/status HTTP/1.1" 200 -
+185.12.59.118 - - [18/Jul/2026 15:48:33] "[33mGET /v404/exec?jwt=29075 HTTP/1.1[0m" 404 -
+45.205.1.245 - - [18/Jul/2026 16:15:40] "GET / HTTP/1.1" 200 -
+45.205.1.245 - - [18/Jul/2026 16:15:41] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+139.162.173.209 - - [18/Jul/2026 16:27:39] "GET / HTTP/1.0" 200 -
+139.162.173.209 - - [18/Jul/2026 16:27:39] code 400, message Bad request version ('RTSP/1.0')
+139.162.173.209 - - [18/Jul/2026 16:27:39] "[31m[1mOPTIONS / RTSP/1.0[0m" 400 -
+139.162.173.209 - - [18/Jul/2026 16:27:44] code 400, message Bad HTTP/0.9 request type ('\x00')
+139.162.173.209 - - [18/Jul/2026 16:27:44] "[31m[1m\x00\x1e\x00\x06\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x07version\x04bind\x00\x00\x10\x00\x03[0m" 400 -
+139.162.173.209 - - [18/Jul/2026 16:27:49] code 400, message Bad request version ('0.12\x00')
+139.162.173.209 - - [18/Jul/2026 16:27:49] "[31m[1m\x00\x00\x00¤ÿSMBr\x00\x00\x00\x00\x08\x01@\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00@\x06\x00\x00\x01\x00\x00\x81\x00\x02PC NETWORK PROGRAM 1.0\x00\x02MICROSOFT NETWORKS 1.03\x00\x02MICROSOFT NETWORKS 3.0\x00\x02LANMAN1.0\x00\x02LM1.2X002\x00\x02Samba\x00\x02NT LANMAN 1.0\x00\x02NT LM 0.12\x00[0m" 400 -
+139.162.173.209 - - [18/Jul/2026 16:27:54] code 400, message Bad request version ('GetClassName\x00\x00\x00\x02\x04\x00\x00\x00\x00\x01\x00')
+139.162.173.209 - - [18/Jul/2026 16:27:54] "[31m[1m\x00\x00\x00\x1f\x00\x00\x00\x00\x00\x00\x00\x0cGetClassName\x00\x00\x00\x02\x04\x00\x00\x00\x00\x01\x00[0m" 400 -
+139.162.173.209 - - [18/Jul/2026 16:27:54] "OPTIONS / HTTP/1.0" 200 -
+139.162.173.209 - - [18/Jul/2026 16:27:59] code 400, message Bad request version ('\x00\x01\x97|\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00')
+139.162.173.209 - - [18/Jul/2026 16:27:59] "[31m[1m\x80\x00\x00(rþ\x1d\x13\x00\x00\x00\x00\x00\x00\x00\x02\x00\x01\x86 \x00\x01\x97|\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00[0m" 400 -
+139.162.173.209 - - [18/Jul/2026 16:28:04] code 400, message Bad HTTP/0.9 request type ('\x00')
+139.162.173.209 - - [18/Jul/2026 16:28:04] "[31m[1m\x00\x0c\x00\x00\x10\x00\x00\x00\x00\x00\x00\x00\x00\x00[0m" 400 -
+139.162.173.209 - - [18/Jul/2026 16:28:04] code 400, message Bad request syntax ('HELP')
+139.162.173.209 - - [18/Jul/2026 16:28:04] "[31m[1mHELP[0m" 400 -
+139.162.173.209 - - [18/Jul/2026 16:28:05] code 400, message Bad request syntax ('\x16\x03\x00\x00S\x01\x00\x00O\x03\x00?G×÷º,îê²`~ó\x00ý\x82{¹Õ\x96Èw\x9bæÄÛ<=Ûoï\x10n\x00\x00(\x00\x16\x00\x13\x00')
+139.162.173.209 - - [18/Jul/2026 16:28:05] "[31m[1m\x16\x03\x00\x00S\x01\x00\x00O\x03\x00?G×÷º,îê²`~ó\x00ý\x82{¹Õ\x96Èw\x9bæÄÛ<=Ûoï\x10n\x00\x00(\x00\x16\x00\x13\x00[0m" 400 -
+139.162.173.209 - - [18/Jul/2026 16:28:05] code 400, message Bad HTTP/0.9 request type ('\x03\x00\x00*%à\x00\x00\x00\x00\x00Cookie:')
+139.162.173.209 - - [18/Jul/2026 16:28:05] "[31m[1m\x03\x00\x00*%à\x00\x00\x00\x00\x00Cookie: mstshash=nmap[0m" 400 -
+139.162.173.209 - - [18/Jul/2026 16:28:05] code 400, message Bad request version ('\x00/\x00')
+139.162.173.209 - - [18/Jul/2026 16:28:05] "[31m[1m\x16\x03\x00\x00i\x01\x00\x00e\x03\x03U\x1c§ärandom1random2random3random4\x00\x00\x0c\x00/\x00[0m" 400 -
+139.162.173.209 - - [18/Jul/2026 16:28:05] code 400, message Bad request syntax ('\x00\x00\x00qj\x81n0\x81k¡\x03\x02\x01\x05¢\x03\x02\x01')
+139.162.173.209 - - [18/Jul/2026 16:28:05] "[31m[1m\x00\x00\x00qj\x81n0\x81k¡\x03\x02\x01\x05¢\x03\x02\x01[0m" 400 -
+139.162.173.209 - - [18/Jul/2026 16:28:10] code 400, message Bad HTTP/0.9 request type ('l\x00')
+139.162.173.209 - - [18/Jul/2026 16:28:10] "[31m[1ml\x00\x0b\x00\x00\x00\x00\x00\x00\x00\x00\x00[0m" 400 -
+139.162.173.209 - - [18/Jul/2026 16:28:10] "[33mGET /nice%20ports,/Trinity.txt.bak HTTP/1.0[0m" 404 -
+139.162.173.209 - - [18/Jul/2026 16:28:10] code 400, message Bad request syntax ('\x01default')
+139.162.173.209 - - [18/Jul/2026 16:28:10] "[31m[1m\x01default[0m" 400 -
+139.162.173.209 - - [18/Jul/2026 16:28:10] code 400, message Bad request syntax ('0\x84\x00\x00\x00-\x02\x01\x07c\x84\x00\x00\x00$\x04\x00')
+139.162.173.209 - - [18/Jul/2026 16:28:10] "[31m[1m0\x84\x00\x00\x00-\x02\x01\x07c\x84\x00\x00\x00$\x04\x00[0m" 400 -
+139.162.173.209 - - [18/Jul/2026 16:28:15] code 400, message Bad HTTP/0.9 request type ('0')
+139.162.173.209 - - [18/Jul/2026 16:28:15] "[31m[1m0\x0c\x02\x01\x01`\x07\x02\x01\x02\x04\x00\x80\x00[0m" 400 -
+139.162.173.209 - - [18/Jul/2026 16:28:15] code 400, message Bad request version ('SIP/2.0')
+139.162.173.209 - - [18/Jul/2026 16:28:15] "[31m[1mOPTIONS sip:nm SIP/2.0[0m" 400 -
+139.162.173.209 - - [18/Jul/2026 16:28:20] code 400, message Bad request syntax ('TNMP\x04\x00\x00\x00TNME\x00\x00\x04\x00')
+139.162.173.209 - - [18/Jul/2026 16:28:20] "[31m[1mTNMP\x04\x00\x00\x00TNME\x00\x00\x04\x00[0m" 400 -
+139.162.173.209 - - [18/Jul/2026 16:28:25] code 400, message Bad HTTP/0.9 request type ('\x03\x00\x00')
+139.162.173.209 - - [18/Jul/2026 16:28:25] "[31m[1m\x03\x00\x00\x0b\x06à\x00\x00\x00\x00\x00[0m" 400 -
+139.162.173.209 - - [18/Jul/2026 16:28:30] code 400, message Bad request syntax ('DmdT\x00\x00\x00\x17\x00\x00\x00\x01\x00\x00\x00\x00\x11\x11\x00ÿ\x01ÿ\x13')
+139.162.173.209 - - [18/Jul/2026 16:28:30] "[31m[1mDmdT\x00\x00\x00\x17\x00\x00\x00\x01\x00\x00\x00\x00\x11\x11\x00ÿ\x01ÿ\x13[0m" 400 -
+139.162.173.209 - - [18/Jul/2026 16:28:35] code 400, message Bad HTTP/0.9 request type (':\x00\x00\x00/\x00\x00\x00\x02\x00\x00@\x02\x0f\x00\x01\x00=\x05\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00/\x00\x00\x00\x00\x00\x00\x00\x00\x00@')
+139.162.173.209 - - [18/Jul/2026 16:28:35] "[31m[1m:\x00\x00\x00/\x00\x00\x00\x02\x00\x00@\x02\x0f\x00\x01\x00=\x05\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00/\x00\x00\x00\x00\x00\x00\x00\x00\x00@\x1f\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00[0m" 400 -
+139.162.173.209 - - [18/Jul/2026 16:28:40] code 400, message Bad request syntax ('JRMI\x00\x02K')
+139.162.173.209 - - [18/Jul/2026 16:28:40] "[31m[1mJRMI\x00\x02K[0m" 400 -
+139.162.173.209 - - [18/Jul/2026 16:28:45] code 400, message Bad request version ('\x00{\x000\x000\x000\x000\x00A\x00A\x000\x000\x00-\x000\x00A\x000\x000\x00-\x000\x000\x00a\x000\x00-\x00A\x00A\x000\x00A\x00-\x000\x000\x000\x000\x00A\x000\x00A\x00A\x000\x00A\x00A\x000\x00}\x00\x00\x00àmß_')
+139.162.173.209 - - [18/Jul/2026 16:28:45] "[31m[1m\x01\x00\x00ýÎú\x0b° \x00\x00\x00MMS\x14\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x12\x00\x00\x00\x01\x00\x03\x00ðððð\x0b\x00\x04\x00\x1c\x00\x03\x00N\x00S\x00P\x00l\x00a\x00y\x00e\x00r\x00/\x009\x00.\x000\x00.\x000\x00.\x002\x009\x008\x000\x00;\x00 \x00{\x000\x000\x000\x000\x00A\x00A\x000\x000\x00-\x000\x00A\x000\x000\x00-\x000\x000\x00a\x000\x00-\x00A\x00A\x000\x00A\x00-\x000\x000\x000\x000\x00A\x000\x00A\x00A\x000\x00A\x00A\x000\x00}\x00\x00\x00àmß_[0m" 400 -
+139.162.173.209 - - [18/Jul/2026 16:28:50] code 400, message Bad HTTP/0.9 request type ('\x00Z\x00\x00\x01\x00\x00\x00\x016\x01,\x00\x00\x08\x00\x7fÿ\x7f\x08\x00\x00\x00\x01\x00')
+139.162.173.209 - - [18/Jul/2026 16:28:50] "[31m[1m\x00Z\x00\x00\x01\x00\x00\x00\x016\x01,\x00\x00\x08\x00\x7fÿ\x7f\x08\x00\x00\x00\x01\x00 \x00:\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x004æ\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00(CONNECT_DATA=(COMMAND=version))[0m" 400 -
+139.162.173.209 - - [18/Jul/2026 16:28:55] code 400, message Bad request version ('\x03\x00(\x00\x04ÿ\x08\x00\x01U\x00\x00\x00MSSQLServer\x00H\x0f\x00\x00')
+139.162.173.209 - - [18/Jul/2026 16:28:55] "[31m[1m\x12\x01\x004\x00\x00\x00\x00\x00\x00\x15\x00\x06\x01\x00\x1b\x00\x01\x02\x00\x1c\x00\x0c\x03\x00(\x00\x04ÿ\x08\x00\x01U\x00\x00\x00MSSQLServer\x00H\x0f\x00\x00[0m" 400 -
+139.162.173.209 - - [18/Jul/2026 16:29:00] code 400, message Bad request syntax ('\x00\x03\x00\x01\x00\x00\x00\x00\x00\x00\x00\x02\x00\x00\x00\x00\x0f\x00')
+139.162.173.209 - - [18/Jul/2026 16:29:00] "[31m[1m\x00\x03\x00\x01\x00\x00\x00\x00\x00\x00\x00\x02\x00\x00\x00\x00\x0f\x00[0m" 400 -
+139.162.173.209 - - [18/Jul/2026 16:29:05] code 400, message Bad request syntax ('GIOP\x01\x00\x01\x00$\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x01\x00\x00\x00\x06\x00\x00\x00abcdef\x00\x00\x04\x00\x00\x00get\x00\x00\x00\x00\x00')
+139.162.173.209 - - [18/Jul/2026 16:29:05] "[31m[1mGIOP\x01\x00\x01\x00$\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x01\x00\x00\x00\x06\x00\x00\x00abcdef\x00\x00\x04\x00\x00\x00get\x00\x00\x00\x00\x00[0m" 400 -
+139.162.173.209 - - [18/Jul/2026 16:29:10] code 400, message Bad HTTP/0.9 request type ('AMQP\x00\x00')
+139.162.173.209 - - [18/Jul/2026 16:29:10] "[31m[1mAMQP\x00\x00\x09\x01[0m" 400 -
+139.162.173.209 - - [18/Jul/2026 16:29:10] "[33mGET /devicedesc.xml HTTP/1.1[0m" 404 -
+139.162.173.209 - - [18/Jul/2026 16:29:10] code 400, message Bad request syntax ('CONNECT')
+139.162.173.209 - - [18/Jul/2026 16:29:10] "[31m[1mCONNECT[0m" 400 -
+139.162.173.209 - - [18/Jul/2026 16:29:15] code 400, message Bad HTTP/0.9 request type ('¤\x00\x00\x00\x00\x00\x00\x00')
+139.162.173.209 - - [18/Jul/2026 16:29:15] "[31m[1m¤\x00\x00\x00\x00\x00\x00\x00\x0b\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00¤\x00\x00\x00\x00\x00\x00\x00\x08\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00[0m" 400 -
+139.162.173.209 - - [18/Jul/2026 16:29:20] code 400, message Bad request syntax ('\x01\x00\x00\x00')
+139.162.173.209 - - [18/Jul/2026 16:29:20] "[31m[1m\x01\x00\x00\x00[0m" 400 -
+139.162.173.209 - - [18/Jul/2026 16:29:25] code 400, message Bad request syntax ('c\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00ÁÞ¾Ñ\x00\x00\x00\x00')
+139.162.173.209 - - [18/Jul/2026 16:29:25] "[31m[1mc\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00ÁÞ¾Ñ\x00\x00\x00\x00[0m" 400 -
+139.162.173.209 - - [18/Jul/2026 16:29:25] code 400, message Bad request version ('\x00/\x00')
+139.162.173.209 - - [18/Jul/2026 16:29:25] "[31m[1m\x16\x03\x00\x00i\x01\x00\x00e\x03\x03U\x1c§ärandom1random2random3random4\x00\x00\x0c\x00/\x00[0m" 400 -
+139.162.173.209 - - [18/Jul/2026 16:29:30] "GET / HTTP/1.1" 200 -
+139.162.173.209 - - [18/Jul/2026 16:29:35] code 400, message Bad request version ("æ¼'\x00\x9c\x13\x02\x13\x03\x13\x01\x003\x009\x005\x00/À,À0\x00£\x00\x9fÌ©Ì¨ÌªÀ¯À\xadÀ£À\x9fÀ]ÀaÀWÀSÀ+À/\x00¢\x00\x9eÀ®À¬À¢À\x9eÀ\\À`ÀVÀRÀ$À(\x00k\x00jÀsÀw\x00Ä\x00ÃÀ#À'\x00g\x00@ÀrÀv\x00¾\x00½À")
+139.162.173.209 - - [18/Jul/2026 16:29:35] "[31m[1m\x16\x03\x01\x02\x00\x01\x00\x01ü\x03\x03^ê¹ð\x99\x85ótÝå\x1cÇÙñ\x8eÈ\x13÷0VÜôèv?â`¢"\x11\x10Ì \x83 lzïs\x82|Ù¥z]BÂÂ\x84«Ò\x9a.6«ª\x19\x10\x0fhm\x0cæ¼'\x00\x9c\x13\x02\x13\x03\x13\x01\x003\x009\x005\x00/À,À0\x00£\x00\x9fÌ©Ì¨ÌªÀ¯À­À£À\x9fÀ]ÀaÀWÀSÀ+À/\x00¢\x00\x9eÀ®À¬À¢À\x9eÀ\\À`ÀVÀRÀ$À(\x00k\x00jÀsÀw\x00Ä\x00ÃÀ#À'\x00g\x00@ÀrÀv\x00¾\x00½À[0m" 400 -
+139.162.173.209 - - [18/Jul/2026 16:29:36] code 400, message Bad request version ('\x00\x00\x00\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00')
+139.162.173.209 - - [18/Jul/2026 16:29:36] "[31m[1m\x80\x00\x00(\x1e¿¾è\x00\x00\x00\x00\x00\x00\x00\x02\x00\x01\x86 \x00\x00\x00\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00[0m" 400 -
+85.217.149.15 - - [18/Jul/2026 17:16:52] "GET / HTTP/1.1" 200 -
+85.217.149.15 - - [18/Jul/2026 17:16:52] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+104.248.168.67 - - [18/Jul/2026 18:13:20] "HEAD / HTTP/1.1" 200 -
+18.116.101.220 - - [18/Jul/2026 18:27:48] "GET / HTTP/1.1" 200 -
+18.116.101.220 - - [18/Jul/2026 18:29:15] "GET / HTTP/1.1" 200 -
+18.116.101.220 - - [18/Jul/2026 18:30:55] code 400, message Bad request version ('À\x14À')
+18.116.101.220 - - [18/Jul/2026 18:30:55] "[31m[1m\x16\x03\x01\x01\x00\x01\x00\x00ü\x03\x03+±\x1d¤\x10ÔúS\x89ßô\x95^Ø©\x06É5\x81ÄY¬.£-BtTR\x81\x9aë \x147qR×Î*\x13:dDã³fÑ@Ò\x07Ô)é§¤bøk\x91ª¶¯\\î\x00&Ì¨Ì©À/À0À+À,À\x13À\x09À\x14À[0m" 400 -
+18.116.101.220 - - [18/Jul/2026 18:33:02] code 400, message Bad request version ('À\x14À')
+18.116.101.220 - - [18/Jul/2026 18:33:02] "[31m[1m\x16\x03\x01\x00î\x01\x00\x00ê\x03\x03å[`a\x0ccå\x1aL\x8cAµ\x1d¶E\x8d\x83\x80ïË¹g 7Ì'¤àÖû×6 OúL\x1dT[\x8aÛuÜ@|^9ïJ\x05\x80\x8e\x96fS¨I\x05Ïu^9\x80{h\x00&Ì¨Ì©À/À0À+À,À\x13À\x09À\x14À[0m" 400 -
+104.248.168.67 - - [18/Jul/2026 18:52:39] "HEAD / HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $226.32 cash, 8 aperte, 5 chiuse
+81.57.84.214 - - [18/Jul/2026 19:09:08] "GET /api/equity HTTP/1.1" 200 -
+81.57.84.214 - - [18/Jul/2026 19:09:08] "GET /api/status HTTP/1.1" 200 -
+81.57.84.214 - - [18/Jul/2026 19:09:08] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+81.57.84.214 - - [18/Jul/2026 19:09:09] "GET / HTTP/1.1" 200 -
+81.57.84.214 - - [18/Jul/2026 19:09:09] "GET /api/equity HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $226.32 cash, 8 aperte, 5 chiuse
+81.57.84.214 - - [18/Jul/2026 19:09:09] "GET /api/status HTTP/1.1" 200 -
+81.57.84.214 - - [18/Jul/2026 19:09:11] "GET /api/equity HTTP/1.1" 200 -
+81.57.84.214 - - [18/Jul/2026 19:24:36] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+[SIMULATOR] Stato ripristinato: $226.32 cash, 8 aperte, 5 chiuse
+81.57.84.214 - - [18/Jul/2026 19:24:36] "GET /api/equity HTTP/1.1" 200 -
+81.57.84.214 - - [18/Jul/2026 19:24:36] "GET /api/status HTTP/1.1" 200 -
+135.148.121.176 - - [18/Jul/2026 20:03:07] "HEAD / HTTP/1.1" 200 -
+45.194.67.27 - - [18/Jul/2026 21:39:29] "GET / HTTP/1.1" 200 -
+45.194.67.27 - - [18/Jul/2026 21:39:29] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+135.148.121.176 - - [18/Jul/2026 22:31:02] "HEAD / HTTP/1.1" 200 -
+147.185.132.79 - - [18/Jul/2026 23:03:52] "GET / HTTP/1.1" 200 -
+205.210.31.206 - - [19/Jul/2026 00:46:02] "[33mGET /.well-known/security.txt HTTP/1.1[0m" 404 -
+156.225.1.114 - - [19/Jul/2026 00:54:22] code 400, message Bad request syntax ('ÿ\x00\x00\x00\x00\x00\x00\x00\x00\x7f\x03\x01NULL\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00')
+156.225.1.114 - - [19/Jul/2026 00:54:22] "[31m[1mÿ\x00\x00\x00\x00\x00\x00\x00\x00\x7f\x03\x01NULL\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00[0m" 400 -
+156.225.1.114 - - [19/Jul/2026 00:54:43] code 400, message Bad request syntax ('ÿ\x00\x00\x00\x00\x00\x00\x00\x00\x7f\x03\x01NULL\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00')
+156.225.1.114 - - [19/Jul/2026 00:54:43] "[31m[1mÿ\x00\x00\x00\x00\x00\x00\x00\x00\x7f\x03\x01NULL\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00[0m" 400 -
+156.225.1.114 - - [19/Jul/2026 00:55:06] code 400, message Bad request syntax ('ÿ\x00\x00\x00\x00\x00\x00\x00\x00\x7f\x03\x01NULL\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00')
+156.225.1.114 - - [19/Jul/2026 00:55:06] "[31m[1mÿ\x00\x00\x00\x00\x00\x00\x00\x00\x7f\x03\x01NULL\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00[0m" 400 -
+156.225.1.114 - - [19/Jul/2026 00:55:16] "GET / HTTP/1.1" 200 -
+156.225.1.114 - - [19/Jul/2026 00:55:17] "GET / HTTP/1.1" 200 -
+156.225.1.114 - - [19/Jul/2026 00:55:19] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+45.205.1.247 - - [19/Jul/2026 01:38:40] "GET / HTTP/1.1" 200 -
+45.205.1.247 - - [19/Jul/2026 01:38:40] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+50.116.26.161 - - [19/Jul/2026 01:46:52] "GET / HTTP/1.1" 200 -
+198.74.56.66 - - [19/Jul/2026 01:49:52] "GET / HTTP/1.1" 200 -
+147.185.132.25 - - [19/Jul/2026 01:59:15] "GET / HTTP/1.0" 200 -
+66.132.195.95 - - [19/Jul/2026 02:47:42] code 400, message Bad request version ('À\x14À')
+66.132.195.95 - - [19/Jul/2026 02:47:42] "[31m[1m\x16\x03\x01\x00î\x01\x00\x00ê\x03\x03\x08Ñè\x8cäÐÒ4c¯´\x12ÐCÌDgl¹ÄBz;e\x9b_çÌ-5"\x86 I1\x85\x9f¦\x1dòx¯[\x9c!»#\x9fn\x99'\x09®\x8c\x16+Îh\x11ñG^v\x88ð\x00&Ì¨Ì©À/À0À+À,À\x13À\x09À\x14À[0m" 400 -
+66.132.195.95 - - [19/Jul/2026 02:47:43] "GET / HTTP/1.1" 200 -
+66.132.195.95 - - [19/Jul/2026 02:47:44] code 505, message Invalid HTTP version (2.0)
+66.132.195.95 - - [19/Jul/2026 02:47:44] "[35m[1mPRI * HTTP/2.0[0m" 505 -
+66.132.195.95 - - [19/Jul/2026 02:47:44] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+66.132.195.95 - - [19/Jul/2026 02:49:14] code 400, message Bad request version ('À\x14À')
+66.132.195.95 - - [19/Jul/2026 02:49:14] "[31m[1m\x16\x03\x01\x00î\x01\x00\x00ê\x03\x03ÉÖüZÍ0_¦ÊïSÆô r\x84\x8f,³U\x1aýl\x7fæÅàôým¼v \x079[F{b¦\x09]°+\x16Zg´\x1do\x1f.`\x11\x93°§À\x1e÷¿ø¯\x85í\x00&Ì¨Ì©À/À0À+À,À\x13À\x09À\x14À[0m" 400 -
+66.132.195.95 - - [19/Jul/2026 02:49:16] "[33mGET /security.txt HTTP/1.1[0m" 404 -
+173.255.221.189 - - [19/Jul/2026 02:53:05] "GET / HTTP/1.1" 200 -
+198.74.56.66 - - [19/Jul/2026 02:54:26] "GET / HTTP/1.1" 200 -
+91.238.181.10 - - [19/Jul/2026 03:15:47] code 400, message Bad HTTP/0.9 request type ('\x03\x00\x00/*à\x00\x00\x00\x00\x00Cookie:')
+91.238.181.10 - - [19/Jul/2026 03:15:47] "[31m[1m\x03\x00\x00/*à\x00\x00\x00\x00\x00Cookie: mstshash=Administr[0m" 400 -
+69.5.169.173 - - [19/Jul/2026 04:13:04] "GET / HTTP/1.1" 200 -
+69.5.169.160 - - [19/Jul/2026 04:13:04] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+193.124.20.252 - - [19/Jul/2026 04:13:04] "[33mPOST /mcp HTTP/1.1[0m" 404 -
+69.5.169.141 - - [19/Jul/2026 04:13:14] "[33mGET /sse HTTP/1.1[0m" 404 -
+45.205.1.244 - - [19/Jul/2026 04:54:43] "GET / HTTP/1.1" 200 -
+45.205.1.244 - - [19/Jul/2026 04:54:43] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+65.49.1.212 - - [19/Jul/2026 05:02:58] "GET / HTTP/1.1" 200 -
+65.49.1.220 - - [19/Jul/2026 05:03:53] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+104.131.118.0 - - [19/Jul/2026 05:08:41] "GET / HTTP/1.1" 200 -
+104.131.118.0 - - [19/Jul/2026 05:08:41] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+35.203.210.146 - - [19/Jul/2026 05:30:37] code 400, message Bad request version ('RTSP/1.0')
+35.203.210.146 - - [19/Jul/2026 05:30:37] "[31m[1mOPTIONS * RTSP/1.0[0m" 400 -
+88.214.25.124 - - [19/Jul/2026 06:48:53] code 400, message Bad HTTP/0.9 request type ('\x03\x00\x00/*à\x00\x00\x00\x00\x00Cookie:')
+88.214.25.124 - - [19/Jul/2026 06:48:53] "[31m[1m\x03\x00\x00/*à\x00\x00\x00\x00\x00Cookie: mstshash=Administr[0m" 400 -
+48.216.244.43 - - [19/Jul/2026 07:21:34] "[33mGET /v2/ HTTP/1.1[0m" 404 -
+20.163.78.59 - - [19/Jul/2026 07:26:25] "GET / HTTP/1.1" 200 -
+20.163.78.59 - - [19/Jul/2026 07:28:32] "[33mGET /./../../../../../../../../../../etc/passwd HTTP/1.1[0m" 404 -
+20.163.78.59 - - [19/Jul/2026 07:28:32] "[33mGET /../../../../../../../../../etc/passwd HTTP/1.1[0m" 404 -
+80.66.83.43 - - [19/Jul/2026 07:33:47] code 400, message Bad HTTP/0.9 request type ('\x03\x00\x00/*à\x00\x00\x00\x00\x00Cookie:')
+80.66.83.43 - - [19/Jul/2026 07:33:47] "[31m[1m\x03\x00\x00/*à\x00\x00\x00\x00\x00Cookie: mstshash=Administr[0m" 400 -
+91.238.181.10 - - [19/Jul/2026 10:36:05] code 400, message Bad HTTP/0.9 request type ('\x03\x00\x00/*à\x00\x00\x00\x00\x00Cookie:')
+91.238.181.10 - - [19/Jul/2026 10:36:05] "[31m[1m\x03\x00\x00/*à\x00\x00\x00\x00\x00Cookie: mstshash=Administr[0m" 400 -
+71.6.134.228 - - [19/Jul/2026 10:49:51] code 400, message Bad request version ('UÌN÷\x00ÑÔhÒ\x13.\x94Scl¹ÁjÑi\x0e»+9iyìö>SEÃ\x00')
+71.6.134.228 - - [19/Jul/2026 10:49:51] "[31m[1m\x16\x03\x01\x00ì\x01\x00\x00è\x03\x03\x1e\x7fý43 8¡³ì\x10\x84\\\x9fIÅ¨\x00íå\x86\x10¶c\x15`¯\x10\x9e(8\x99 UÌN÷\x00ÑÔhÒ\x13.\x94Scl¹ÁjÑi\x0e»+9iyìö>SEÃ\x00 [0m" 400 -
+66.132.186.160 - - [19/Jul/2026 11:03:41] code 400, message Bad request version ('À\x14À')
+66.132.186.160 - - [19/Jul/2026 11:03:41] "[31m[1m\x16\x03\x01\x00î\x01\x00\x00ê\x03\x03\x16\x00\x0c£í\x80ë&y¶\x11¨h0\x13\x06Y\x8e;\x99ñ\x17iÃt·x\x0d \\h( Ú£ÃT¶\x8a£¼À|`9Û=\\ùRº£åa»%8\x0c0Wá\x13\x9a\x12\x00\x00&Ì¨Ì©À/À0À+À,À\x13À\x09À\x14À[0m" 400 -
+66.132.186.160 - - [19/Jul/2026 11:03:56] "GET / HTTP/1.1" 200 -
+66.132.186.160 - - [19/Jul/2026 11:04:05] code 400, message Bad request version ('À\x14À')
+66.132.186.160 - - [19/Jul/2026 11:04:05] "[31m[1m\x16\x03\x01\x00î\x01\x00\x00ê\x03\x03RÔcØ³\x1c\x86ª0\x94$ÂºCµ½\x99C¬\x90\x1bÙ9ò³Ö÷â×\x00\x16õ \x8d¿×\x12MÀTÞÂ\x86\x05R¬û\x95_Áå¤K\x1b&4¯Je¿\x9c\x97]{P\x00&Ì¨Ì©À/À0À+À,À\x13À\x09À\x14À[0m" 400 -
+66.132.186.160 - - [19/Jul/2026 11:04:06] "GET / HTTP/1.1" 200 -
+66.132.186.160 - - [19/Jul/2026 11:04:07] code 505, message Invalid HTTP version (2.0)
+66.132.186.160 - - [19/Jul/2026 11:04:07] "[35m[1mPRI * HTTP/2.0[0m" 505 -
+66.132.186.160 - - [19/Jul/2026 11:04:09] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+66.132.186.160 - - [19/Jul/2026 11:04:24] code 400, message Bad request version ('À\x14À')
+66.132.186.160 - - [19/Jul/2026 11:04:24] "[31m[1m\x16\x03\x01\x00î\x01\x00\x00ê\x03\x03(\x00\x13&4¨ê\x82Öç=Ìo/wòz\x11ªx#è«³s.\x99¯\x9cöÇ\x05 vÃ0\x9d7Ø×é\x84;\x88|C¡)`,dÏ\x1fH\x15-\x0c}4\x0fâß\x10W\x1d\x00&Ì¨Ì©À/À0À+À,À\x13À\x09À\x14À[0m" 400 -
+66.132.186.160 - - [19/Jul/2026 11:04:25] "[33mGET /sitemap.xml HTTP/1.1[0m" 404 -
+71.6.134.228 - - [19/Jul/2026 11:05:22] "GET / HTTP/1.1" 200 -
+71.6.134.228 - - [19/Jul/2026 11:05:53] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+35.203.211.128 - - [19/Jul/2026 11:27:34] code 400, message Bad request version ('À\x13À')
+35.203.211.128 - - [19/Jul/2026 11:27:34] "[31m[1m\x16\x03\x01\x05Æ\x01\x00\x05Â\x03\x03\x93k°(\x81yÊé\x93\x06\x99ê\x9eÈª¤\x81eóÔ$9í\x8a¿\x82põ\x88¡í' &©»{ÍPÒÔ\x8a»äò?\x11\x1cï.J{Ì,\x13\x9c0t\x9b\x16}@Ç6d\x00\x1aÀ+À/À,À0Ì©Ì¨À\x09À\x13À[0m" 400 -
+35.203.211.128 - - [19/Jul/2026 11:27:34] code 400, message Bad request version ('À(À$À\x14À')
+35.203.211.128 - - [19/Jul/2026 11:27:34] "[31m[1m\x16\x03\x01\x00Ê\x01\x00\x00Æ\x03\x03\x9dê\x03+]\x05wË+q ;¾âõ5\x9fü\x90&\x14n T\x9dît\x8e¬þ\x1a\x1f\x00\x00hÌ\x14Ì\x13À/À+À0À,À\x11À\x07À'À#À\x13À\x09À(À$À\x14À[0m" 400 -
+66.132.172.187 - - [19/Jul/2026 12:10:28] code 400, message Bad request version ('À\x14À')
+66.132.172.187 - - [19/Jul/2026 12:10:28] "[31m[1m\x16\x03\x01\x00î\x01\x00\x00ê\x03\x03\x0dª·r&âñDÄ\x95\x9cÑ±\x0f \x0fÓLMl\x04Ù\x0fÎ\x96\x02¤yjoìW ä\x16ÑpîU\\dâåM·\x1cM¤ãÊ©i\x9e/ß\x97¾\x1fxOÛÂÛV$\x00&Ì¨Ì©À/À0À+À,À\x13À\x09À\x14À[0m" 400 -
+66.132.172.187 - - [19/Jul/2026 12:10:33] "GET / HTTP/1.1" 200 -
+66.132.172.187 - - [19/Jul/2026 12:10:39] code 400, message Bad request version ('À\x14À')
+66.132.172.187 - - [19/Jul/2026 12:10:39] "[31m[1m\x16\x03\x01\x00î\x01\x00\x00ê\x03\x03|1³Æõ\x84{p\x1b@þ\x0b>Ö\x12ºêö\x09ü\x0eæ³($ãLºØRÕJ ê.k\x13Y\x85(\x08e®Dzé\x13¡í.e\x8fÅ\x0b\x93ò\x04=¬ÞÝ8ÀtE\x00&Ì¨Ì©À/À0À+À,À\x13À\x09À\x14À[0m" 400 -
+66.132.172.187 - - [19/Jul/2026 12:10:40] "GET / HTTP/1.1" 200 -
+66.132.172.187 - - [19/Jul/2026 12:10:41] code 505, message Invalid HTTP version (2.0)
+66.132.172.187 - - [19/Jul/2026 12:10:41] "[35m[1mPRI * HTTP/2.0[0m" 505 -
+66.132.172.187 - - [19/Jul/2026 12:10:43] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+66.132.172.187 - - [19/Jul/2026 12:10:54] code 400, message Bad request version ('À\x14À')
+66.132.172.187 - - [19/Jul/2026 12:10:54] "[31m[1m\x16\x03\x01\x00î\x01\x00\x00ê\x03\x03=p¿\x80±C\x09]¡\x96\x87ó¿i_\x10?k\x8f\x93\x9dðYdºÖè\x0bû®\x02\x8e \x09èìc60GZ\x97ÊUDí\x185YÖ|íÄ\x84. s¥$V\x82r¸6á\x00&Ì¨Ì©À/À0À+À,À\x13À\x09À\x14À[0m" 400 -
+66.132.172.187 - - [19/Jul/2026 12:10:57] "[33mGET /login HTTP/1.1[0m" 404 -
+94.154.43.243 - - [19/Jul/2026 13:20:23] "[33mGET /SDK/webLanguage HTTP/1.1[0m" 404 -
+91.231.89.223 - - [19/Jul/2026 13:22:41] code 400, message Bad request version ('À#À¬À®À+À')
+91.231.89.223 - - [19/Jul/2026 13:22:41] "[31m[1m\x16\x03\x03\x02c\x01\x00\x02_\x03\x032Ã\x97öÑ\x04\x9fdA.Ê\x84ã\x09òÛ¨Ð¼'Ú½à\x93aø¹¥\x16N\x94® ò\x1fs\x13Ò¶N¢¾¾ã@\x81\x8a ù)×>O\x8aþìOü:¼ÿâ(ò¶\x00\x8a\x00\x16\x003\x00gÀ\x9eÀ¢\x00\x9e\x009\x00kÀ\x9fÀ£\x00\x9f\x00E\x00¾\x00\x88\x00Ä\x00\x9aÀ\x08À\x09À#À¬À®À+À[0m" 400 -
+91.231.89.31 - - [19/Jul/2026 13:22:44] "GET / HTTP/1.1" 200 -
+91.231.89.50 - - [19/Jul/2026 13:25:19] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+112.172.249.41 - - [19/Jul/2026 15:09:29] "GET / HTTP/1.0" 200 -
+159.223.148.134 - - [19/Jul/2026 15:32:22] "GET / HTTP/1.0" 200 -
+159.223.148.134 - - [19/Jul/2026 15:33:02] code 400, message Bad request version ('À\x14À')
+159.223.148.134 - - [19/Jul/2026 15:33:02] "[31m[1m\x16\x03\x01\x00î\x01\x00\x00ê\x03\x03è\x87eu2l°\x9fd\x93p2 Æ\x89d#\x05ÝL\x04\x84%r»O&Tø\x12W\x8f í¾\x884\x13a\x96WW%M?f\x93}ä\x160xûl¯Â@Î¡ÛIy \x98'\x00&Ì¨Ì©À/À0À+À,À\x13À\x09À\x14À[0m" 400 -
+185.12.59.118 - - [19/Jul/2026 15:49:41] "[33mGET /v404/exec?jwt=29075 HTTP/1.1[0m" 404 -
+147.185.132.79 - - [19/Jul/2026 18:27:36] "GET / HTTP/1.1" 200 -
+87.236.176.98 - - [19/Jul/2026 18:47:40] "GET / HTTP/1.1" 200 -
+45.194.67.28 - - [19/Jul/2026 19:48:14] "GET / HTTP/1.1" 200 -
+45.194.67.28 - - [19/Jul/2026 19:48:14] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+103.137.184.126 - - [19/Jul/2026 20:17:28] code 400, message Bad request syntax ('\x05\x01\x00')
+103.137.184.126 - - [19/Jul/2026 20:17:28] "[31m[1m\x05\x01\x00[0m" 400 -
+103.137.184.126 - - [19/Jul/2026 20:17:37] "[33mCONNECT ip.ifconfig.dpdns.org:443 HTTP/1.1[0m" 404 -
+81.57.84.214 - - [19/Jul/2026 20:28:51] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+[SIMULATOR] Stato ripristinato: $253.94 cash, 5 aperte, 11 chiuse
+81.57.84.214 - - [19/Jul/2026 20:28:51] "GET /api/equity HTTP/1.1" 200 -
+81.57.84.214 - - [19/Jul/2026 20:28:51] "GET /api/status HTTP/1.1" 200 -
+81.57.84.214 - - [19/Jul/2026 20:28:55] "GET /api/equity HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $253.94 cash, 5 aperte, 11 chiuse
+81.57.84.214 - - [19/Jul/2026 20:29:01] "GET /api/equity HTTP/1.1" 200 -
+81.57.84.214 - - [19/Jul/2026 20:29:01] "GET /api/status HTTP/1.1" 200 -
+81.57.84.214 - - [19/Jul/2026 20:29:12] "GET /api/equity HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $253.94 cash, 5 aperte, 11 chiuse
+81.57.84.214 - - [19/Jul/2026 20:29:12] "GET /api/status HTTP/1.1" 200 -
+167.71.51.213 - - [19/Jul/2026 21:08:07] "[33mGET /solr/admin/info/system HTTP/1.1[0m" 404 -
+167.71.51.213 - - [19/Jul/2026 21:08:08] "[33mGET /solr/admin/cores?action=STATUS&wt=json HTTP/1.1[0m" 404 -
+45.205.1.247 - - [19/Jul/2026 21:26:47] "GET / HTTP/1.1" 200 -
+45.205.1.247 - - [19/Jul/2026 21:26:48] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+34.67.73.54 - - [19/Jul/2026 21:54:18] code 400, message Bad request syntax ('JDWP-Handshake')
+34.67.73.54 - - [19/Jul/2026 21:54:18] "[31m[1mJDWP-Handshake[0m" 400 -
+194.110.115.57 - - [19/Jul/2026 23:25:47] "GET / HTTP/1.1" 200 -
+46.101.236.241 - - [19/Jul/2026 23:49:16] code 400, message Bad request version ('À\x14À')
+46.101.236.241 - - [19/Jul/2026 23:49:16] "[31m[1m\x16\x03\x01\x00È\x01\x00\x00Ä\x03\x03Ù*¬ä\x1bÜ\x16\x12/dã_\x9f"Z\x091z\x14AÅâS$ñ¿0Ê\x1c\x8dìg\x00\x00PÀ/À+À\x11À\x07À\x13À\x09À\x14À[0m" 400 -
+46.101.236.241 - - [19/Jul/2026 23:49:16] "GET / HTTP/1.1" 200 -
+128.199.144.103 - - [19/Jul/2026 23:49:18] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+147.185.132.67 - - [20/Jul/2026 00:48:08] "GET / HTTP/1.0" 200 -
+194.165.16.166 - - [20/Jul/2026 07:18:23] code 400, message Bad HTTP/0.9 request type ('\x03\x00\x00/*à\x00\x00\x00\x00\x00Cookie:')
+194.165.16.166 - - [20/Jul/2026 07:18:23] "[31m[1m\x03\x00\x00/*à\x00\x00\x00\x00\x00Cookie: mstshash=Administr[0m" 400 -
+81.57.84.214 - - [20/Jul/2026 07:34:41] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+[SIMULATOR] Stato ripristinato: $247.62 cash, 6 aperte, 14 chiuse
+81.57.84.214 - - [20/Jul/2026 07:34:52] "GET /api/status HTTP/1.1" 200 -
+81.57.84.214 - - [20/Jul/2026 07:34:52] "GET /api/equity HTTP/1.1" 200 -
+81.57.84.214 - - [20/Jul/2026 07:35:02] "GET /api/equity HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $247.62 cash, 6 aperte, 14 chiuse
+81.57.84.214 - - [20/Jul/2026 07:35:02] "GET /api/status HTTP/1.1" 200 -
+81.57.84.214 - - [20/Jul/2026 07:35:12] "GET /api/equity HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $247.62 cash, 6 aperte, 14 chiuse
+81.57.84.214 - - [20/Jul/2026 07:35:12] "GET /api/status HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $247.62 cash, 6 aperte, 14 chiuse81.57.84.214 - - [20/Jul/2026 07:35:22] "GET /api/equity HTTP/1.1" 200 -
+
+81.57.84.214 - - [20/Jul/2026 07:35:22] "GET /api/status HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $247.62 cash, 6 aperte, 14 chiuse
+81.57.84.214 - - [20/Jul/2026 07:35:32] "GET /api/equity HTTP/1.1" 200 -
+81.57.84.214 - - [20/Jul/2026 07:35:32] "GET /api/status HTTP/1.1" 200 -
+81.57.84.214 - - [20/Jul/2026 07:35:42] "GET /api/equity HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $247.62 cash, 6 aperte, 14 chiuse
+81.57.84.214 - - [20/Jul/2026 07:35:42] "GET /api/status HTTP/1.1" 200 -
+81.57.84.214 - - [20/Jul/2026 07:35:52] "GET /api/equity HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $247.62 cash, 6 aperte, 14 chiuse
+81.57.84.214 - - [20/Jul/2026 07:35:52] "GET /api/status HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $247.62 cash, 6 aperte, 14 chiuse
+81.57.84.214 - - [20/Jul/2026 07:36:15] "GET /api/equity HTTP/1.1" 200 -
+81.57.84.214 - - [20/Jul/2026 07:36:15] "GET /api/status HTTP/1.1" 200 -
+81.57.84.214 - - [20/Jul/2026 07:37:15] "GET /api/equity HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $247.62 cash, 6 aperte, 14 chiuse
+81.57.84.214 - - [20/Jul/2026 07:37:15] "GET /api/status HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $247.62 cash, 6 aperte, 14 chiuse
+81.57.84.214 - - [20/Jul/2026 07:38:15] "GET /api/equity HTTP/1.1" 200 -
+81.57.84.214 - - [20/Jul/2026 07:38:15] "GET /api/status HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $247.62 cash, 6 aperte, 14 chiuse81.57.84.214 - - [20/Jul/2026 07:39:15] "GET /api/equity HTTP/1.1" 200 -
+
+81.57.84.214 - - [20/Jul/2026 07:39:15] "GET /api/status HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $247.62 cash, 6 aperte, 14 chiuse
+81.57.84.214 - - [20/Jul/2026 07:39:27] "GET /api/equity HTTP/1.1" 200 -
+81.57.84.214 - - [20/Jul/2026 07:39:27] "GET /api/status HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $247.62 cash, 6 aperte, 14 chiuse
+81.57.84.214 - - [20/Jul/2026 07:39:32] "GET /api/status HTTP/1.1" 200 -
+81.57.84.214 - - [20/Jul/2026 07:39:32] "GET /api/equity HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $247.62 cash, 6 aperte, 14 chiuse
+81.57.84.214 - - [20/Jul/2026 07:39:42] "GET /api/equity HTTP/1.1" 200 -
+81.57.84.214 - - [20/Jul/2026 07:39:42] "GET /api/status HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $247.62 cash, 6 aperte, 14 chiuse
+81.57.84.214 - - [20/Jul/2026 07:39:52] "GET /api/equity HTTP/1.1" 200 -
+81.57.84.214 - - [20/Jul/2026 07:39:52] "GET /api/status HTTP/1.1" 200 -
+81.57.84.214 - - [20/Jul/2026 07:40:02] "GET /api/equity HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $247.62 cash, 6 aperte, 14 chiuse
+81.57.84.214 - - [20/Jul/2026 07:40:02] "GET /api/status HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $247.62 cash, 6 aperte, 14 chiuse
+81.57.84.214 - - [20/Jul/2026 07:40:12] "GET /api/equity HTTP/1.1" 200 -
+81.57.84.214 - - [20/Jul/2026 07:40:12] "GET /api/status HTTP/1.1" 200 -
+81.57.84.214 - - [20/Jul/2026 07:40:22] "GET /api/equity HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $247.62 cash, 6 aperte, 14 chiuse
+81.57.84.214 - - [20/Jul/2026 07:40:22] "GET /api/status HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $247.62 cash, 6 aperte, 14 chiuse81.57.84.214 - - [20/Jul/2026 07:41:15] "GET /api/equity HTTP/1.1" 200 -
+
+81.57.84.214 - - [20/Jul/2026 07:41:15] "GET /api/status HTTP/1.1" 200 -
+81.57.84.214 - - [20/Jul/2026 07:42:15] "GET /api/equity HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $247.62 cash, 6 aperte, 14 chiuse
+81.57.84.214 - - [20/Jul/2026 07:42:15] "GET /api/status HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $247.62 cash, 6 aperte, 14 chiuse
+81.57.84.214 - - [20/Jul/2026 07:43:15] "GET /api/status HTTP/1.1" 200 -
+81.57.84.214 - - [20/Jul/2026 07:43:15] "GET /api/equity HTTP/1.1" 200 -
+81.57.84.214 - - [20/Jul/2026 07:44:15] "GET /api/equity HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $247.62 cash, 6 aperte, 14 chiuse
+81.57.84.214 - - [20/Jul/2026 07:44:15] "GET /api/status HTTP/1.1" 200 -
+81.57.84.214 - - [20/Jul/2026 07:45:15] "GET /api/equity HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $247.62 cash, 6 aperte, 14 chiuse
+81.57.84.214 - - [20/Jul/2026 07:45:15] "GET /api/status HTTP/1.1" 200 -
+81.57.84.214 - - [20/Jul/2026 07:46:15] "GET /api/equity HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $247.62 cash, 6 aperte, 14 chiuse
+81.57.84.214 - - [20/Jul/2026 07:46:15] "GET /api/status HTTP/1.1" 200 -
+81.57.84.214 - - [20/Jul/2026 07:47:15] "GET /api/equity HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $247.62 cash, 6 aperte, 14 chiuse
+81.57.84.214 - - [20/Jul/2026 07:47:15] "GET /api/status HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $247.62 cash, 6 aperte, 14 chiuse
+81.57.84.214 - - [20/Jul/2026 07:47:37] "GET /api/equity HTTP/1.1" 200 -
+81.57.84.214 - - [20/Jul/2026 07:47:37] "GET /api/status HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $247.62 cash, 6 aperte, 14 chiuse
+81.57.84.214 - - [20/Jul/2026 07:47:42] "GET /api/equity HTTP/1.1" 200 -
+81.57.84.214 - - [20/Jul/2026 07:47:42] "GET /api/status HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $247.62 cash, 6 aperte, 14 chiuse
+81.57.84.214 - - [20/Jul/2026 07:47:52] "GET /api/equity HTTP/1.1" 200 -
+81.57.84.214 - - [20/Jul/2026 07:47:52] "GET /api/status HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $247.62 cash, 6 aperte, 14 chiuse
+81.57.84.214 - - [20/Jul/2026 07:48:02] "GET /api/equity HTTP/1.1" 200 -
+81.57.84.214 - - [20/Jul/2026 07:48:02] "GET /api/status HTTP/1.1" 200 -
+81.57.84.214 - - [20/Jul/2026 07:48:12] "GET /api/equity HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $247.62 cash, 6 aperte, 14 chiuse
+81.57.84.214 - - [20/Jul/2026 07:48:12] "GET /api/status HTTP/1.1" 200 -
+81.57.84.214 - - [20/Jul/2026 07:48:22] "GET /api/equity HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $247.62 cash, 6 aperte, 14 chiuse
+81.57.84.214 - - [20/Jul/2026 07:48:22] "GET /api/status HTTP/1.1" 200 -
+81.57.84.214 - - [20/Jul/2026 07:48:32] "GET /api/equity HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $247.62 cash, 6 aperte, 14 chiuse
+81.57.84.214 - - [20/Jul/2026 07:48:32] "GET /api/status HTTP/1.1" 200 -
+[SIMULATOR] Stato ripristinato: $247.62 cash, 6 aperte, 14 chiuse
+81.57.84.214 - - [20/Jul/2026 07:49:15] "GET /api/equity HTTP/1.1" 200 -
+81.57.84.214 - - [20/Jul/2026 07:49:15] "GET /api/status HTTP/1.1" 200 -

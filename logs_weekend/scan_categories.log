@@ -1,0 +1,70 @@
+
+****************************************************************
+  SCANNER PER CATEGORIA - specialisti per tipo di mercato
+  2026-07-17 09:27:09
+****************************************************************
+
+[1/3] Mercati popolari (top 300) e categorizzazione...
+  sport    : 3 mercati
+  crypto   : 0 mercati
+  politics : 85 mercati
+  weather  : 0 mercati
+  other    : 12 mercati (primi 15 esempi per debug):
+    vol=    64733025  Will Jesus Christ return before 2027?
+    vol=    43680731  Will the U.S. invade Iran before 2027?
+    vol=    38626830  Will China invade Taiwan by end of 2026?
+    vol=    35911650  Will the US confirm that aliens exist before 2027?
+    vol=    32513413  Will Richard Grenell be the leader of Venezuela end of 2026?
+    vol=    25681213  Will Frank Donovan be the leader of Venezuela end of 2026?
+    vol=    22094154  Will the Iranian regime fall before 2027?
+    vol=    19615117  Will there be no change in Fed interest rates after the July 2026 meeting?
+    vol=    17359163  Strait of Hormuz traffic returns to normal by July 31?
+    vol=    16823632  Hantavirus pandemic in 2026?
+    vol=    14470992  Will the Fed increase interest rates by 25 bps after the July 2026 meeting?
+    vol=    12883448  Will the Fed increase interest rates by 50+ bps after the July 2026 meeting
+
+[2/3] Categoria 'sport' - holder e qualificazione...
+    12 candidati con overlap >= 2
+    verificati 10/12 (2 ok)...
+  -> 3 specialisti 'sport'
+
+[crypto] nessun mercato in questa categoria, salto.
+
+[2/3] Categoria 'politics' - holder e qualificazione...
+    10/85 mercati (375 wallet)...
+    20/85 mercati (651 wallet)...
+    30/85 mercati (954 wallet)...
+    40/85 mercati (1234 wallet)...
+    50/85 mercati (1510 wallet)...
+    60/85 mercati (1826 wallet)...
+    70/85 mercati (2094 wallet)...
+    80/85 mercati (2367 wallet)...
+    60 candidati con overlap >= 2
+    verificati 10/60 (0 ok)...
+    verificati 20/60 (0 ok)...
+    verificati 30/60 (1 ok)...
+    verificati 40/60 (2 ok)...
+    verificati 50/60 (5 ok)...
+    verificati 60/60 (6 ok)...
+  -> 5 specialisti 'politics'
+
+[weather] nessun mercato in questa categoria, salto.
+
+[3/3] Composizione mix bilanciato (max 20)...
+
+======================================================================
+  WALLET SELEZIONATI: 8
+======================================================================
+  wallet                 | cat       | mkt | ROI st. |   WR | pos
+  -----------------------+-----------+-----+---------+------+----
+  suntori                | sport     |   2 | 112.4% |  84% |  19
+  Logan.                 | politics  |  13 | 132.2% |  76% |  37
+  DOLLAR-PRINTER         | sport     |   2 |  46.6% |  93% |  15
+  CoffeeLover            | politics  |   9 |  53.4% | 100% |  31
+  ndb1                   | sport     |   2 |  29.8% | 100% |  15
+  ChetterHummin          | politics  |  20 |  45.6% | 100% |  41
+  anciano                | politics  |   6 |  29.3% |  87% |  15
+  mombil                 | politics  |   9 |  26.0% |  70% |  10
+======================================================================
+
+  [SAVE] Risultati salvati in /root/polymarket-prediction/data/scan_results.json

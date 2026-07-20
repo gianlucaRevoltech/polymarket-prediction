@@ -1,0 +1,22 @@
+{
+  "n_signals": 0,
+  "n_resolved": 396,
+  "n_win": 137,
+  "virtual_pnl": -17.1149,
+  "by_edge_bucket": {
+    "win_10_20": [
+      128,
+      369
+    ],
+    "win_20_plus": [
+      9,
+      27
+    ],
+    "all": [
+      137,
+      396
+    ]
+  },
+  "pending": 10,
+  "ts_last_save": "2026-07-20T07:48:54.786144+00:00"
+}
