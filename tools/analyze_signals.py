@@ -105,6 +105,107 @@ def print_table(title, groups, order=None):
               f"{s['pnl']:+8.2f} {net:+9.2f} {s['pnl_inv']:+8.2f} {net_inv:+9.2f}")
 
 
+def p_side_of(rec) -> float:
+    """Probabilita' modello che il LATO COMPRATO vinca (record v2)."""
+    p_up = float(rec.get("p_model_up") or 0.5)
+    return p_up if rec.get("action") == "LONG_YES" else 1.0 - p_up
+
+
+def reliability_bucket(p: float) -> str:
+    if p < 0.40:
+        return "<0.40"
+    if p < 0.50:
+        return "0.40-0.50"
+    if p < 0.60:
+        return "0.50-0.60"
+    if p < 0.70:
+        return "0.60-0.70"
+    if p < 0.80:
+        return "0.70-0.80"
+    if p < 0.90:
+        return "0.80-0.90"
+    return "0.90+"
+
+
+RELIABILITY_ORDER = ["<0.40", "0.40-0.50", "0.50-0.60", "0.60-0.70",
+                     "0.70-0.80", "0.80-0.90", "0.90+"]
+
+
+def analyze_v2_calibration(recs):
+    """Sezione calibrazione per record v2 (p_model_up/z_score/strike_source).
+
+    Test diretto della sovraconfidenza: per ogni bucket di p_model del lato
+    comprato, confronta p_model medio col WR realizzato. Modello calibrato =>
+    le due colonne coincidono (entro rumore binomiale)."""
+    v2 = [r for r in recs if r.get("model_version") == 2
+          and r.get("p_model_up") is not None]
+    if not v2:
+        return
+    print("\n" + "=" * 62)
+    print("CALIBRAZIONE MODELLO v2")
+    print("=" * 62)
+
+    # --- reliability table + Brier -------------------------------------
+    rel = defaultdict(lambda: {"n": 0, "win": 0, "p_sum": 0.0,
+                               "pnl": 0.0, "fee": 0.0})
+    brier_sum = 0.0
+    for r in v2:
+        p = p_side_of(r)
+        won = 1.0 if r["win"] else 0.0
+        brier_sum += (p - won) ** 2
+        b = rel[reliability_bucket(p)]
+        b["n"] += 1
+        b["win"] += 1 if r["win"] else 0
+        b["p_sum"] += p
+        b["pnl"] += float(r.get("virtual_pnl") or 0.0)
+        b["fee"] += float(r.get("fee_virtual") or 0.0)
+    n2 = len(v2)
+    brier = brier_sum / n2
+    print(f"\nv2 resolved: {n2} | Brier score: {brier:.4f} "
+          f"(0.25 = coin flip senza skill; piu' basso = meglio)")
+    print("\n=== Reliability table (p_model lato comprato vs WR reale) ===")
+    print(f"  {'bucket':10s} {'n':>5s} {'p_model med':>11s} {'WR reale':>9s} "
+          f"{'gap':>7s} {'P&L netto':>9s}")
+    for k in RELIABILITY_ORDER:
+        b = rel.get(k)
+        if not b or b["n"] == 0:
+            continue
+        p_avg = b["p_sum"] / b["n"]
+        wr_real = b["win"] / b["n"]
+        gap = wr_real - p_avg
+        net = b["pnl"] - b["fee"]
+        print(f"  {k:10s} {b['n']:5d} {p_avg*100:10.1f}% {wr_real*100:8.1f}% "
+              f"{gap*100:+6.1f}pt {net:+9.2f}")
+    print("  (gap negativo sistematico nei bucket alti = sovraconfidenza "
+          "=> sigma da alzare)")
+
+    # --- split per strike_source ----------------------------------------
+    by_src = defaultdict(bucket_stats)
+    for r in v2:
+        src = (r.get("strike_source") or "?").split(":")[0]
+        add(by_src[src], r)
+    print_table("v2: split per FONTE STRIKE", by_src)
+
+    # --- split per |z_score| ---------------------------------------------
+    by_z = defaultdict(bucket_stats)
+    for r in v2:
+        z = abs(float(r.get("z_score") or 0.0))
+        zk = ("0-0.5" if z < 0.5 else "0.5-1" if z < 1.0
+              else "1-2" if z < 2.0 else "2+")
+        add(by_z[zk], r)
+    print_table("v2: split per |z_score|", by_z, ["0-0.5", "0.5-1", "1-2", "2+"])
+
+    # --- split per distanza dallo strike ---------------------------------
+    by_dist = defaultdict(bucket_stats)
+    for r in v2:
+        d = abs(float(r.get("dist_from_strike_pct") or 0.0))
+        dk = ("<0.03%" if d < 0.03 else "0.03-0.10%" if d < 0.10
+              else "0.10-0.30%" if d < 0.30 else "0.30%+")
+        add(by_dist[dk], r)
+    print_table("v2: split per |S/K - 1| (distanza dallo strike)", by_dist,
+                ["<0.03%", "0.03-0.10%", "0.10-0.30%", "0.30%+"])
+
+
 def main():
     if len(sys.argv) > 1:
         path = Path(sys.argv[1])
@@ -170,6 +271,8 @@ def main():
     print_table("Split per |edge|", by_edge, ["10-15", "15-20", "20+"])
     print_table("Coerenza col momentum Binance", by_coherence,
                 ["allineato", "contrario"])
+
+    analyze_v2_calibration(recs)
 
 
 if __name__ == "__main__":
