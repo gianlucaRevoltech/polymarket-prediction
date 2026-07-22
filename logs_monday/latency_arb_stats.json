@@ -1,0 +1,25 @@
+{
+  "model_version": 2,
+  "n_signals": 906,
+  "n_resolved": 738,
+  "n_win": 318,
+  "virtual_pnl": 131.6214,
+  "virtual_pnl_net": 100.4962,
+  "fees_paid": 31.1253,
+  "by_edge_bucket": {
+    "win_10_20": [
+      299,
+      704
+    ],
+    "win_20_plus": [
+      19,
+      34
+    ],
+    "all": [
+      318,
+      738
+    ]
+  },
+  "pending": 2,
+  "ts_last_save": "2026-07-22T08:14:59.517608+00:00"
+}
