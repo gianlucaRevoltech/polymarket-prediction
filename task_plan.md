@@ -7,7 +7,7 @@ in un sistema profittevole. ROOT CAUSE: il bot entra a prezzi estremi (0.999, 0.
 dal fallimento del segnale. Risk/reward invertito: gain minuscolo, loss enorme.
 
 ## Current Phase
-Phase CH (Re-validazione e deploy)
+Phase CJ1.6 COMPLETE → Step 5d (stop latency-arb Step 1; bot copy/harvest only)
 
 ## Diagnosi Root Cause (DASHBOARD 07/07)
 
@@ -269,14 +269,26 @@ crypto 5/15min) SENZA capitale. VPS IONOS Germania gia nota, Step 1 VPS = €0.
 - [ ] Stop condition: se WR < 60% a 100 signal → tuning K/threshold o pivot WS
 - [ ] Logbook in `ARBITRAGE_LATENCY_PLAN.md` compilato dopo ogni step
 
-### Phase CJ2: Trading reale $50 su VPS IONOS (se CJ1 OK) — PENDING
-- [ ] Wallet Polymarket MetaMask + fund $50 USDC su Polygon
-- [ ] pip install py-clob-client>=0.21 + derive L2 creds via private key
-- [ ] LatencyArbTrader: estensione modulo per piazzare ordini reali
-- [ ] Sizing fractional Kelly 1/4, cap 5%/trade, $1.5/trade (3% di $50)
-- [ ] Kill switch: -8% daily (CI1 riuso) + -20% total + Telegram alert
-- [ ] Comparison paper vs live: slippage + fill_failure su primi 30 trade
-- [ ] Target onesto: +5-15%/mese (NON 7942x — quello è caso eccezionale)
+### Phase CJ1.5: Fix resolver rotto + outcomes per nome — COMPLETE
+(risolto e superato da v2 + audit CJ1.6; resolver CLOB path funziona, 738 RESOLVE)
+
+### Phase CJ1.6: Audit risultati v2 — COMPLETE → STOP (Step 5d)
+Contesto: run v2 pulito 20–22/07, 738 resolved, WR 43.1%, +$100.50 netto
+apparente. Audit `tools/audit_v2.py` su `logs_monday/` dimostra **edge illusorio**.
+- [x] Utente push `logs_monday/` (commit faa3b24) + output analyze_signals
+- [x] 1810/1810 record `model_version: 2` (zero contaminazione v1)
+- [x] Strike: 738/738 `binance_open` — equity API `price-to-beat` 403 ovunque
+- [x] Concentrazione: top-10 win = **113.9%** del P&L netto (tutti entry 0.07–0.10)
+- [x] Trimmed top-5% win: **-$54.08** (EV -$0.075)
+- [x] Bootstrap CI95 EV/trade include 0; trimmed CI include 0
+- [x] entry≥0.25 & edge≥0.15: n=80, EV +0.09, CI include 0 → nessun subset robusto
+- [x] Bot 8 chiusure: 2 copy tennis SL + 6 harvest Fed SL (bet correlato duplicato)
+- [x] **Decisione: Step 5d — NO Step 1 reale. Latency-arb non va a capitale.**
+- **Status:** complete
+
+### Phase CJ2: Trading reale $50 — CANCELLED
+Precondizione CJ1 fallita (edge paper non sopravvive all'audit). Non aprire
+wallet / non piazzare ordini latency-arb.
 
 Vedi `ARBITRAGE_LATENCY_PLAN.md` per Step 2/3 (scaling + diversificazione oracle/MM).
 

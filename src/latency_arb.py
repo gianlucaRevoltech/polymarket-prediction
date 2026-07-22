@@ -1,7 +1,32 @@
 """
-Step 0 v2 — Latency Arbitrage Detector (validazione PAPER su feed REALI)
+Step 0 v3 — Latency Arbitrage Detector (validazione PAPER su feed REALI)
 
 Modulo standalone di validazione: NON piazza ordini, NON tocca il portfolio.
+
+=== PERCHE' v3 (2026-07-22) ===
+L'audit del run v2 (738 resolved, +$100 netto apparente) ha dimostrato che il
+P&L era un ARTEFATTO DI MISURA, non edge:
+1. `best_ask()` usava CLOB /price?side=buy che ritorna il best BID, non il
+   best ask (docs ufficiali: "Returns the best bid price for BUY side").
+   Compravamo simulando il prezzo del lato opposto del book: 1-2 cent meglio
+   della realta' per leg. Prova empirica: ask_up+ask_down < 1 nel 97.8% dei
+   record (somma di BID, non di ask — la somma di veri ask non puo' stare
+   sotto 1 in modo persistente).
+2. P&L concentrato nei longshot: top-5 trade = 62% del totale; P&L TRIMMED
+   (senza top 5% win) = -$161. 44 win a entry<0.25 = +$284 (283% del totale).
+3. WR reale < p_model in TUTTI i bucket reliability (selezione avversa da
+   strike impreciso: per crypto 5/15min lo strike vero e' il prezzo CHAINLINK
+   a inizio finestra — l'endpoint equity price-to-beat NON esiste per crypto;
+   il fallback open Binance 1m ha basis di bps, fatale con |S/K|<0.01%).
+
+Fix v3:
+- entry ONESTA dal book reale: GET /book, best ask = min(asks), con check
+  size sufficiente. NESSUN fallback midpoint (skip se book vuoto).
+- log anche best bid (audit spread) nel record.
+- min_entry_price 0.03 -> 0.15 (i longshot dominavano l'artefatto convesso)
+- edge_threshold 0.10 -> 0.15 (bucket 15+ gli unici col profilo sano)
+- skip segnali con |S/K - 1| < 0.03% (zona in cui l'errore di basis del
+  fallback strike Binance ribalta il modello)
 
 === PERCHE' v2 (2026-07-20) ===
 Il modello v1 (`expected_up = 0.5 + K*delta_5m`, K=2) era matematicamente
@@ -84,7 +109,8 @@ LATENCY_ARB = {
     "max_minutes_to_expiry": 3.0,
     "min_minutes_to_expiry": 0.5,   # no entry agli ultimi secondi
     # edge threshold per flag signal: p_model - best_ask (in prob points)
-    "edge_threshold_pct": 0.10,
+    # v3: 0.10 -> 0.15 (audit v2: bucket 10-15 EV/trade ~0, bucket 15+ sani)
+    "edge_threshold_pct": 0.15,
     # vol: lookback in minuti per la stima sigma dai log-return 1m Binance
     "vol_lookback_min": 30,
     # floor sigma 1m (0.005% = mercato morto -> p_model estremo inaffidabile)
@@ -92,8 +118,15 @@ LATENCY_ARB = {
     # clamp del p_model (mai certezza assoluta: basis Binance/Chainlink ~bps)
     "p_model_clamp": (0.02, 0.98),
     # entry: max prezzo ask accettato (sopra non c'e' spazio di profitto)
-    "max_entry_price": 0.97,
-    "min_entry_price": 0.03,
+    # v3: min 0.03 -> 0.15 (audit v2: tutto il P&L apparente era in 44 win
+    # longshot entry<0.25 = payout convesso su fill irrealistici)
+    "max_entry_price": 0.85,
+    "min_entry_price": 0.15,
+    # v3: size minima del best ask perche' il fill $1 virtuale sia credibile
+    "min_ask_size_shares": 5.0,
+    # v3: skip se |S/K - 1| sotto questa soglia (basis Binance/Chainlink ~bps
+    # ribalta il modello quando lo spot e' attaccato allo strike)
+    "min_dist_from_strike_pct": 0.03,
     # taker fee crypto ufficiale (docs.polymarket.com/trading/fees, lug 2026)
     # fee = shares * rate * p * (1-p)
     "taker_fee_rate": 0.07,
@@ -366,22 +399,46 @@ class PolymarketContractFeed:
     def book_yes(self, token_yes: str) -> Optional[float]:
         return self.midpoint(token_yes)
 
-    def best_ask(self, token_id: str) -> Optional[float]:
-        """Best ask (prezzo a cui un taker compra ORA). CLOB /price?side=buy.
-        Fallback: midpoint (ottimistico ma meglio di niente)."""
+    def best_ask(self, token_id: str) -> Optional[Tuple[float, float, Optional[float]]]:
+        """v3: (best_ask, ask_size, best_bid) dal book REALE via CLOB /book.
+
+        BUG v2: /price?side=buy ritorna il best BID (docs: "Returns the best
+        bid price for BUY side"), non il prezzo a cui un taker compra. Tutto
+        il P&L v2 era simulato comprando al bid (1-2 cent meglio del reale).
+        Qui leggiamo il book intero e prendiamo il min degli ask (robusto a
+        qualsiasi ordinamento). NESSUN fallback midpoint: se il book manca,
+        il segnale si salta — un fill non quotato non e' un fill.
+        """
         try:
-            r = self.s.get(f"{self.clob}/price",
-                           params={"token_id": token_id, "side": "buy"},
-                           timeout=5)
-            if r.ok:
-                p = r.json().get("price")
-                if p is not None:
-                    v = float(p)
-                    if 0.0 < v < 1.0:
-                        return v
+            r = self.s.get(f"{self.clob}/book",
+                           params={"token_id": token_id}, timeout=5)
+            if not r.ok:
+                return None
+            b = r.json()
+            asks = b.get("asks") or []
+            bids = b.get("bids") or []
+            best = None
+            for lvl in asks:
+                try:
+                    p = float(lvl.get("price"))
+                    sz = float(lvl.get("size"))
+                except Exception:
+                    continue
+                if 0.0 < p < 1.0 and sz > 0 and (best is None or p < best[0]):
+                    best = (p, sz)
+            if best is None:
+                return None
+            best_bid = None
+            for lvl in bids:
+                try:
+                    p = float(lvl.get("price"))
+                except Exception:
+                    continue
+                if 0.0 < p < 1.0 and (best_bid is None or p > best_bid):
+                    best_bid = p
+            return (best[0], best[1], best_bid)
         except Exception:
-            pass
-        return self.midpoint(token_id)
+            return None
 
     # ----- strike ("price to beat") ------------------------------------------
     def price_to_beat(self, contract: Dict) -> Optional[Tuple[float, str]]:
@@ -634,7 +691,7 @@ class LatencyArbDetector:
         # pending: condition_id -> signal dict
         self.pending: Dict[str, Dict] = {}
         self._load_pending_from_log()
-        self.stats = {"model_version": 2,
+        self.stats = {"model_version": 3,
                       "n_signals": 0, "n_resolved": 0, "n_win": 0,
                       "virtual_pnl": 0.0,       # lordo
                       "virtual_pnl_net": 0.0,   # netto taker fee
@@ -757,6 +814,11 @@ class LatencyArbDetector:
             denom = sigma_sec * math.sqrt(tau_sec)
             if denom <= 0:
                 continue
+            dist_pct = (s_now / strike - 1.0) * 100.0
+            # v3: zona morta attorno allo strike — la basis Binance/Chainlink
+            # (bps) domina il segno del modello quando |S/K| e' minuscola
+            if abs(dist_pct) < LATENCY_ARB["min_dist_from_strike_pct"]:
+                continue
             z = math.log(s_now / strike) / denom
             p_model = _norm_cdf(z)
             lo, hi = LATENCY_ARB["p_model_clamp"]
@@ -771,9 +833,12 @@ class LatencyArbDetector:
                 continue
             token_up = c["tokens"][up_idx]
             token_down = c["tokens"][down_idx]
-            # entry REALISTICA: best ask del lato che compreremmo
-            ask_up = self.poly.best_ask(token_up)
-            ask_down = self.poly.best_ask(token_down)
+            # v3: entry ONESTA = best ask dal book reale (+ size + bid audit)
+            book_up = self.poly.best_ask(token_up)
+            book_down = self.poly.best_ask(token_down)
+            min_sz = LATENCY_ARB["min_ask_size_shares"]
+            ask_up = book_up[0] if (book_up and book_up[1] >= min_sz) else None
+            ask_down = book_down[0] if (book_down and book_down[1] >= min_sz) else None
             # edge per lato = p_vittoria_modello - prezzo che pagheremmo
             edge_up = (p_model - ask_up) if ask_up else None
             edge_down = ((1.0 - p_model) - ask_down) if ask_down else None
@@ -797,7 +862,7 @@ class LatencyArbDetector:
             rec = {
                 "ts_open": datetime.now(timezone.utc).isoformat(),
                 "status": "open",
-                "model_version": 2,
+                "model_version": 3,
                 "condition_id": cid,
                 "market_id": c.get("market_id"),
                 "title": c["title"],
@@ -816,6 +881,11 @@ class LatencyArbDetector:
                 "p_model_up": round(p_model, 4),
                 "ask_up": round(ask_up, 4) if ask_up else None,
                 "ask_down": round(ask_down, 4) if ask_down else None,
+                # v3: audit book (bid + size del lato comprato)
+                "bid_up": round(book_up[2], 4) if (book_up and book_up[2]) else None,
+                "bid_down": round(book_down[2], 4) if (book_down and book_down[2]) else None,
+                "ask_size_up": round(book_up[1], 2) if book_up else None,
+                "ask_size_down": round(book_down[1], 2) if book_down else None,
                 "up_idx": up_idx,
                 "down_idx": down_idx,
                 "outcomes": c.get("outcomes") or [],
@@ -915,7 +985,7 @@ class LatencyArbDetector:
         pnl = self.stats["virtual_pnl"]
         pnl_net = self.stats.get("virtual_pnl_net", 0.0)
         pending = len(self.pending)
-        print(f"\n[LATENCY-ARB STATS] v2 | resolved={n_res} | WR={wr*100:.1f}% | "
+        print(f"\n[LATENCY-ARB STATS] v3 | resolved={n_res} | WR={wr*100:.1f}% | "
               f"P&L virt=${pnl:.3f} (net=${pnl_net:.3f}) | pending={pending}")
         if n_res > 0:
             for bucket, (w, n) in self.stats["by_edge_bucket"].items():
@@ -934,10 +1004,11 @@ def run_loop(detector: Optional[LatencyArbDetector] = None,
     stats_every = 60  # stampa stats ogni 60 cicli (~1min)
     save_every = 60   # persist stats.json ogni 60 cicli (anche se 0 resolved)
     cycle = 0
-    print(f"[LATENCY-ARB] v2 loop start | poll={interval}s | "
+    print(f"[LATENCY-ARB] v3 loop start | poll={interval}s | "
           f"edge_threshold={LATENCY_ARB['edge_threshold_pct']} | "
           f"window={LATENCY_ARB['min_minutes_to_expiry']}-"
           f"{LATENCY_ARB['max_minutes_to_expiry']}min | "
+          f"entry_band={LATENCY_ARB['min_entry_price']}-{LATENCY_ARB['max_entry_price']} | "
           f"fee_rate={LATENCY_ARB['taker_fee_rate']} | "
           f"log={'forever' if duration_min <= 0 else f'{duration_min}min'}")
     try:
@@ -964,8 +1035,8 @@ def run_loop(detector: Optional[LatencyArbDetector] = None,
 
 def _cli_runner():
     """Entry point: python src/latency_arb.py — run isolation loop."""
-    print("[LATENCY-ARB] Step 0 v2 validator: NO orders, feed reali, "
-          "modello strike+vol, P&L virtual lordo+netto fee.")
+    print("[LATENCY-ARB] Step 0 v3 validator: NO orders, feed reali, "
+          "modello strike+vol, entry da book reale (fix bid-as-ask v2).")
     run_loop()
 
 

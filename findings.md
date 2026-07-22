@@ -395,6 +395,303 @@ La causa è la Natura del copy su tennis in-play:
 NO-mapping: latency arb, oracle arb, news-based, market-making, value-betting
 esterno → tutti gated / fuori scope fino a che budget ridotto e paper mode.
 
+## LATENCY ARB Step 0 — Bug resolver (2026-07-17)
+
+**Situazione dopo 2 giorni (15-17/07) di validatore attivo post-fix discovery**
+(dati forniti da utente via `progressi.txt`):
+- `latency_arb_signals.jsonl` = 4032 righe totali
+- `latency_arb_stats.json` = **INEXISTENTE** (file mai creato)
+- log stats: `resolved=0 | WR=0.0% | P&L virt=$0.000 | pending=6` (costante)
+- grep count: `RESOLVE=0`, `SIGNAL=2019`
+- 2 es SIGNAL: `LONG_YES edge=+0.14 p_yes=0.355 Δ5m Binance=-0.24%` (ETH),
+  `LONG_YES edge=+0.18 p_yes=0.315 Δ5m Binance=-0.06%` (BTC) — entrambi 5.4min
+  alla scadenza
+
+**Interpretazione**: impossibile giudicare il model K/outcomes[0] ora — N=0
+resolves significa WR=0 non per rumore model ma per **resolver rotto**. Loop
+negativo: detect → pending → 10 min stale cleanup → ri-detect (cid non in
+pending) → pending di nuovo → ... spiega il pattern 2019 SIGNAL / 6 pending
+constante / 0 RESOLVE.
+
+### Bug #1 (CRITICAL): `resolve_contract` non parse `outcomePrices`
+Il vecchio codice faceva:
+```python
+txt = (m.get("outcome") or m.get("resolutionSource") or "").lower()
+if "yes" in txt or "up" in txt: return True
+if "no" in txt or "down" in txt: return False
+```
+Ma gamma NON espone `outcome`/`resolutionSource` come free-text per i crypto
+up/down. Il campo corretto è **`outcomePrices`** (JSON-encoded string tipo
+`'["1","0"]'`) — l'index con valore ~1 e' il vincitore. Risultato: `result=None`
+sempre → dopo 600s stale → drop → ri-detect.
+
+### Bug #2: `outcomes[0]="Up"` assunto senza verificare
+Vecchio: `token_yes = c["tokens"][0]; p_yes = book_yes(token_yes)`. Ma Polymarket
+spesso ordina alfabeticamente → `outcomes=["Down","Up"]` → tokens[0] = token
+DOWN → `p_yes` era in realtà `p(DOWN)`. Questo era il sospetto anticipato in
+`progressi.txt`. Fix: match per NOME via `_find_outcome_idx(outcomes, ("up","yes"))`
+e `_find_outcome_idx(outcomes, ("down","no"))` → token UP esplicito, p_up_market
+ottenuto da book_yes(token_up).
+
+Esempio numerico pre-fix: edge=+0.14, p_yes=0.355, Δ5m=-0.24% su ETH.
+- se outcomes=["Up","Down"]: p_yes=0.355=p(UP) → market molto bearish → expected_up
+  = 0.5+2*(-0.0024)=0.495 → edge=0.495-0.355=+0.14 → LONG_YES → si compra UP
+  a 0.355 credendo che valga 0.495. **Ma Δ5m=-0.24% dice ETH scende: UP dovrebbe
+  scendere, non salire. Contraddizione interna**. Peggio: la somma edge+momentum
+  e' incoerente — K=2 muove appena 0.005 il model, edge dominato dalla posizione
+  di p_yes sotto 0.5 (che nell'es. e' effetto del mercato gia' bearish).
+- se outcomes=["Down","Up"]: p_yes=0.355=p(DOWN) → market pensa DOWN=35.5% →
+  p(UP)=0.645 → expected_up=0.495 → edge_corretto=0.495-0.645=-0.15 → LONG_NO
+  (compra DOWN a 0.355). **Caso opposto — sensato**. Differenza: il segno flip
+  non tanto per K (piccolo) ma perche p_up_market cambia da 0.355 a 0.645.
+
+Conferma: **K=2 e' anche troppo piccolo** per spostare il model in modo
+significativo (Δ5m=-0.24% × K=2 = -0.005 = 0.5 pt). Su 5min crypto up/down
+le move di 0.3-1% sono normali, K dovrebbe essere ~10-30 per lasciare
+impronta al momentum. Ma prima di tunare K serve RESOLVE funzionante per
+avere WR feedback.
+
+### Bug #3: `stats.json` mai scritto senza RESOLVE
+`_save_stats()` era chiamato solo dentro `_resolve_pending()` dopo un resolve
+riuscito. Fix: aggiunto `heartbeat_save_stats()` chiamato ogni 60 cicli (~1min)
+che scrive stats.json con `pending` count + `ts_last_save` — cosi' anche senza
+resolve possiamo auditare via `cat data/latency_arb_stats.json`.
+
+### Fix applicati a `src/latency_arb.py`
+- `resolve_contract`: parse `outcomePrices` (JSON-encoded), trovo index max,
+  se hi>=0.95 e lo<=0.05 → winner_name=outcomes[hi_idx] lowercased → UP_won
+  sse "up"/"yes" in nome, DOWN_won sse "down"/"no". Non assume outcomes[0]=Up.
+- `scan_cycle`: match outcomes per NOME via `_find_outcome_idx`. token_up =
+  tokens[up_idx]. p_up_market = book_yes(token_up). edge = expected_up -
+  p_up_market. entry_price = p_up_market (LONG_YES) | 1-p_up_market (LONG_NO).
+  Signal record ora include `up_idx`, `down_idx`, `outcomes`, `p_up_market`
+  (alias legacy `p_yes` = p_up_market).
+- `_find_outcome_idx(outcomes, needles)` helper (ritorna primo index che matcha).
+- `heartbeat_save_stats()` + chiamata ogni 60 cicli nel loop.
+
+### Script di debug `tools/debug_resolver.py`
+Carica condition_id scaduti da signals.jsonl (o fallback query gamma
+closed=true), per ognuno dumpa i campi gamma RAW (closed, outcomePrices,
+outcomes, outcomeMetas, umaResolutionStatus, bestBid/Ask, etc.) + stampa la
+derivazione del nuovo resolver. Da lanciare su VPS **prima** del deploy per
+validare che i campi gamma matchano la mia assunzione.
+
+### Decisione post-fix (identica a quella anticipata in `progressi.txt`)
+**NON tunare K ora. NON fixare outcomes[0] come guess** — ora lo facciamo per
+nome. Lasciamo girare 24-48h con il nuovo resolver. Altri 20-30 RESOLVE:
+- WR > 60% su LONG_YES → model OK, K=2 va bene, outcomes matchati corretti
+- WR ~50% o caotica → model rumore o K troppo piccolo → prova K=10
+- WR <40% sistematico → K completamente off, rethink model (regression
+  storico Polymarket→Binance)
+
 ---
 
 *Update this file after every 2 view/browser/search operations*
+---
+
+## SESSIONE 2025-07-20 — ANALISI LOG WEEKEND VPS (STEP 2-4 PROSSIMI_STEP_LUNEDI)
+
+### Sorgente dati
+- Log scaricati da VPS via git push in `logs_weekend/` (force-add per bypass .gitignore)
+- `latency_arb.log` (19405 righe), `bot.log` (82054), `dashboard.log` (676), `scan_categories.log` (70), `latency_arb_stats.json` (396 resolved)
+- **Attenzione**: timestamp interne log dicono "20/Jul/**2026**" → clock di sistema VPS SBALLATO di 1 anno. I numeri contano, le date label sono da ignorare per il timing reale.
+
+### STEP 2 — LATENCY-ARB VALIDATOR (il più importante)
+
+| Metrica | Valore |
+|---------|--------|
+| edge_threshold (loop start) | **0.10** |
+| resolved totali | **396** (>>soglia 200 prevista) |
+| win totali | 137 |
+| **WR totale** | **34.6%** |
+| P&L virtuale cumulata | **-$17.115** |
+| pending (ultime) | 10 |
+
+### Bucket per edge (dal log STATS)
+| Bucket | n | win | WR |
+|--------|---|-----|-----|
+| win_10_20 (|edge|<0.20) | 369 | 128 | **34.7%** |
+| win_20_plus (|edge|>=0.20) | 27 | 9 | **33.3%** |
+
+**Entrambi i bucket sotto 40%, sotto random 50%, simili tra loro** → alzare la soglia a 0.15/0.20 NON cambia il verdetto (il bucket 20+ è *peggiore* del 10-20).
+
+### Split per ASSET (join SIGNAL→RESOLVE, vedi `tools/split_analysis.py`)
+
+| Asset | n | win | WR |
+|-------|---|-----|-----|
+| BTC (Bitcoin) | 197 | 60 | **30.5%** |
+| ETH (Ethereum) | 199 | 77 | **38.7%** |
+
+- **BTC pesantemente sotto** random (30.5%) — la SIGNAL su BTC è *anti-correlata* all'esito.
+- **ETH meglio ma comunque <45%** — nessun edge reale.
+- SIGNAL BTC vs ETH: 1059 vs 1060 → sampling perfettamente bilanciato, il split è rappresentativo.
+
+### Split per DIREZIONE (dal log RESOLVE direttamente)
+
+| Side | n | win | WR |
+|------|---|-----|-----|
+| LONG_YES | 186 | 64 | **34.4%** |
+| LONG_NO | 210 | 73 | **34.8%** |
+
+- Direzioni **identiche** (~34.6% entrambe) → nessun bug "direzione short invertita". Model long/short coerente ma entrambi sbagliano.
+
+### Matrice ASSET × DIREZIONE
+
+| Asset × Side | n | win | WR |
+|---------------|---|-----|-----|
+| BTC LONG_YES | 86 | 26 | 30.2% |
+| BTC LONG_NO | 111 | 34 | 30.6% |
+| ETH LONG_YES | 100 | 38 | 38.0% |
+| ETH LONG_NO | 99 | 39 | 39.4% |
+
+- Righe BTC: 30.2/30.6 (uniformemente basse)
+- Righe ETH: 38.0/39.4 (uniformemente medie-basse)
+- **Nessun subset con WR > 45%** → nessuna slice su cui il validator abbia edge.
+
+### Verdetto tabella STEP 2 (riga "50-100 trade, <45%")
+> **Strategia non funziona. Vai a Step 5.**
+
+Siamo ben oltre 100 trade (396), WR 34.6%, tutti i bucket sotto 40% — verdetto **confermato con margine ampio**: la **tesi del latency arb su Polymarket non regge** con edge=0.10, Δ5m, K=2, feed Binance.
+
+### STEP 3 — BOT COPY/TRADING
+
+| Metrica | Inizio | Ultimo |
+|---------|--------|--------|
+| Equity | $300.00 | **$300.02 (+0.01%)** |
+| Aperte | 0 | 6 |
+| Chiuse | 0 | 14 |
+| WR chiuse | 0% | **36%** (≈5 win / 14) |
+| tier / dd | 3% / 0.0% | 3% / 0.3% |
+
+- Date Snapshot attive ogni ~25s, bot UP mentalmente vivo a "07:48:54" (label 2026)
+- Strategie attive: **copy** (2ap/14cl P&L -$0.18), **harvest** (4ap/0cl), arb_cross (0 opportunità)
+- `[SKIP] Cap wallet raggiunto (2) per 0x510904c9` → cap posizioni/wallet attivo, niente aperture runaway
+- Equity piatta: 14 chiusure a WR 36% producono netto -$0.18 su 4 giorni → copy "non perde" ma non ha mai davvero operato (slippage)
+
+### STEP 4 — DASHBOARD
+- Log UP su 0.0.0.0:5000, 200 su `/api/status` e `/api/equity` a 07:48-07:49
+- `[SIMULATOR] Stato ripristinato: $247.62 cash, 6 aperte, 14 chiuse` → cash + unrealized = equity $300
+- Nessun traceback, nessun 500 → dashboard sana. GUI richiede tunnel SSH + browser tuo per verifica visuale.
+
+### File generati/modificati
+- `tools/split_analysis.py` (nuovo) — join SIGNAL×RESOLVE via edge+action per split asset
+
+---
+
+## LATENCY-ARB v2 — Il reset del 20/07 spiega l'"inversione" (2026-07-22)
+
+### Il fatto
+Output lunedì: 731 resolved, WR 43.2%, P&L virt +$135.74 (net +$104.90),
+bucket win_10_20 298/698=42.7%, win_20_plus 18/33=54.5%. Sembrava un'inversione
+del run weekend (396 res, WR 34.6%, -$17.11). **NON lo è.**
+
+### Prova aritmetica che le stats sono state azzerate (731 = tutto v2)
+| Test | Come continuazione (731=396+335) | Verdetto |
+|------|----------------------------------|----------|
+| Bucket win_20_plus | delta = 18-9=9 win su 33-27=6 trade | IMPOSSIBILE (9>6) |
+| Fee implicite nuovi trade | (135.74+17.11) - 104.90 = $47.96 su 335 = $0.143/trade | IMPOSSIBILE (max fisico fee = 0.07*(1-entry) < 0.07) |
+| Fee implicite se 731 tutti nuovi | $30.84/731 = $0.042/trade → entry medio ~0.40 | COERENTE |
+
+In più: la riga `[LATENCY-ARB STATS] v2 | ... (net=...)` esiste solo nel codice
+v2 (commit c244c67 del 20/07 11:00, "Rewrite latency_arb v2: strike+vol model").
+Il run weekend stampava `[LATENCY-ARB STATS] resolved=... | WR=...` senza "v2"
+né "net". ⇒ deploy v2 + `restart reset` il 20/07 → contatori ripartiti da zero.
+
+### Lettura corretta dei numeri v2 (aggregati)
+- Entry medio implicito ~0.36-0.40 → breakeven WR = entry ≈ 36.5%
+- WR 43.2% > 36.5% → edge apparente +6.7pt; EV netto ≈ +$0.143 per $1 size
+- **Red flag**: +14%/trade è enorme. Sospetti da auditare prima di crederci:
+  1. entry simulata al best_ask a 0.5-3min dalla scadenza su book sottili —
+     l'ask visto via REST può essere stale/ghost (non fillabile in reale)
+  2. `best_ask()` fa fallback su midpoint (ottimistico) se /price fallisce
+  3. possibile doppio conteggio detect→stale→re-detect sullo stesso contratto
+- Audit tool già pronto: `tools/analyze_signals.py` (sezione calibrazione v2:
+  reliability table p_model vs WR, Brier, split strike_source/z/distanza strike)
+
+### Bot e dashboard: spiegati dallo stesso reset
+- Reset 20/07 ha azzerato anche portfolio bot → dashboard "Capitale $300,
+  1 chiusa, $298.21, agg. 14:06" = **tab stale del 20/07 pomeriggio**
+- Stato reale lunedì: $292.21, 8 chiuse tutte LOSS (-$7.79), 5 aperte
+- Le 4 posizioni harvest Fed sono lo stesso bet duplicato: "Fed increase 25bps"
+  No @0.946 (x2) ≈ "no change in Fed rates" Yes @0.943 (x2). Cluster exposure
+  li tratta come 2 eventi separati → correlazione nascosta ~$36 sullo stesso esito
+- Dettaglio 8 chiusure: richiede bot.log fresco (comandi consegnati)
+
+### Cosa serve per la decisione Step 1 vs stop
+1. Output `analyze_signals.py` su `data/latency_arb_signals.jsonl` fresco
+2. Conferma `model_version: 2` su tutti i record (nessuna contaminazione v1)
+3. Reliability table: se p_model calibrato (gap ~0) e P&L netto positivo
+   distribuito (non concentrato in pochi outlier) → v2 credibile → Step 1
+4. Se P&L concentrato in entry a prezzi bassissimi o strike_source fallback →
+   probabile artefatto di fill → fix modello prima di qualsiasi Step 1
+
+---
+
+## AUDIT v2 PROFONDO — EDGE ILLUSORIO (2026-07-22, logs_monday)
+
+Sorgente: `logs_monday/` (commit faa3b24), tool `tools/audit_v2.py`.
+738 resolved, tutti model_version=2, reset 20/07 09:40.
+
+### Numeri aggregati (già noti)
+| Metrica | Valore |
+|---------|--------|
+| WR | 43.1% |
+| entry medio | 0.397 |
+| P&L lordo / netto | +$131.62 / +$100.50 |
+| EV/trade netto | +$0.136 |
+| strike_source | **738/738 binance_open** (equity API mai OK) |
+| Brier | 0.203 (skill debole; sovraconfidenza -5/−14pt ovunque) |
+
+### Concentrazione (killer)
+- Top-10 win = **+$114.44 = 113.9% del P&L netto totale**
+- Tutte le top-10: entry 0.07–0.10 (longshot), payout ~+$9–13 su $1 size
+- Trimmed senza top 5% delle win (15 trade): **-$54.08** (EV -$0.075)
+- Trimmed top 1%: ancora +$61; top 10%: -$139
+
+### Bootstrap CI 95% (10k resample)
+| Filtro | n | EV/trade | CI95% | Significativo? |
+|--------|---|----------|-------|----------------|
+| all | 738 | +0.136 | [-0.007, +0.292] | NO (include 0) |
+| trimmed 5% | 723 | -0.075 | [-0.177, +0.032] | NO |
+| entry≥0.25 | 512 | +0.018 | [-0.079, +0.116] | NO |
+| \|edge\|≥0.15 | 99 | +0.509 | [+0.038, +1.064] | sì ma longshot-driven |
+| entry≥0.25 & edge≥0.15 | 80 | +0.088 | [-0.148, +0.327] | NO |
+
+### Fill realism
+- Spread implicito ask_up+ask_down-1: mediano **-0.01** (718/738 negativi)
+- Ghost proxy (entry<0.15 & opposite ask>0.90): 34 trade, P&L +$44
+- 20 win a entry<0.15 = **+$187** netto → gonfiano l'intero risultato
+
+### Strike ufficiale
+- `https://polymarket.com/api/equity/price-to-beat/{slug}` → **403 Forbidden**
+  (locale con verify=False; su VPS 0/738 successi → stesso fallimento)
+- Fallback Binance open 1m è l'unico strike usato: modello valuta un contratto
+  potenzialmente diverso dallo strike Chainlink reale
+
+### Bot — 8 chiusure (trades_log.json)
+| # | Strat | Mercato | Reason | P&L |
+|---|-------|---------|--------|-----|
+| 1 | copy | Kalinina/Quevedo tennis | stop_loss | -$1.46 |
+| 2 | copy | Estoril van de Zandschulp | stop_loss | -$1.09 |
+| 3-6 | harvest | Fed no-change Yes / Fed +25bps No (x2 ciascuno) | stop_loss | -$3.64 |
+| 7-8 | harvest | stessi mercati Fed (riaperti @0.86) | stop_loss | -$1.10 |
+| **Tot** | | | | **-$7.28** |
+
+- Solo **2/8** sono copy tennis → soglia CI5 (≥5) per esclusione tennis **NON raggiunta**
+- **6/8 harvest Fed**: stesso esito economico duplicato su 2 mercati + riaperture;
+  SL assoluto -5c (e soft) ha sparato su wobble ~9c di un near-certain. Harvest
+  non sta hold-to-resolution come designato in Phase CF.
+
+### Verdetto
+> **EDGE PAPER NON ROBUSTO. Step 5d: abbandona latency-arb per capitale reale.**
+> Il +$100 netto è un artefatto di 10–20 longshot win a entry 0.07–0.10 su book
+> sottili, non fillabili in reale. Nessun subset filtrato (entry band + edge)
+> ha CI bootstrap sopra zero. Strike ufficiale non recuperabile.
+
+### Azioni
+1. **NO Step 1** ($50 reali latency-arb) — Phase CJ2 cancelled
+2. Latency-arb validator: stop o lascia in idle (zero valore operativo)
+3. Bot: focus copy+harvest; priorità successiva = dedup harvest Fed / cluster
+   correlato + rivedere se SL -5c su harvest near-certain è troppo stretto
+4. Tennis copy: monitorare, non escludere ancora (n=2 insufficiente)
+

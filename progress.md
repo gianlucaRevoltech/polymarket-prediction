@@ -82,11 +82,132 @@ arb (bassa), L6 copy-sport SL fix (nostro, non guide). → Phase CI1-CI5 in task
   * CI3: sport exit 0.650 -> 0.643 (fee 1.05%); resolved no fee; other = 0 fee
   * CI1: daily_halt_check con 0 realized oggi = False (aspettato)
 
+### MODULO LATENCY ARB Step 0 (validazione paper su feed reali)
+
+**Contesto:** VPS IONOS Germania gia nota all'utente → Step 1 VPS = €0 aggiuntivo.
+Gateway: serviva validare edge Guida 2 (Polymarket lagga ~2.7s vs Binance su
+contratti crypto 5/15min) prima di investire un euro. Modulo standalone, nessun
+integrazione nel main loop (che polla a 20s): Step 0 vuole loop 1s dedicato.
+
+**Cosa è stato fatto (Step 0):**
+- Creato `src/latency_arb.py` (~300 righe):
+  * BinanceFeed: REST polling BTCUSDT/ETHUSDT (last price + klines 5min per
+    momentum delta). No API key, no websocket.
+  * PolymarketContractFeed: gamma markets con pattern "bitcoin/eth up or down",
+    filter su scadenza 0.5–15 min.
+  * LatencyArbDetector: expected_p(UP)=0.5+K·delta_5min, edge vs p_yes,
+    signal when |edge|>10pt. Logging su jsonl; resolve auto a expiry con esito
+    reale da gamma → WR virt + P&L virt + bucket edge
+  * Stats persistente `data/latency_arb_stats.json`, opt-in `POLYMARKET_INSECURE=1`
+- Aggiunto `certifi>=2024.7.4` a requirements.txt (trust store VPS)
+- py_compile OK. Smoke test locale: Binance OK, gamma 403 Cloudflare da Windows
+  (.eulerAngles regionale — su VPS funge)
+
+**Validazione da fare (VPS, Step 0):**
+- Deploy modulo su VPS IONOS: git pull, pip install -r requirements.txt,
+  nohup python -u src/latency_arb.py > logs/latency_arb.log 2>&1 &
+- Run 5–7 giorni, target 200+ signal resolved con WR virt > 70% (Guida 2)
+- Logbook + stop conditions in `ARBITRAGE_LATENCY_PLAN.md`
+
+### INTEGRAZIONE start_all.sh — avvio+stop+reset del validatore
+
+**start_all.sh** ora gestisce anche `latency_arb.py` come terzo servizio:
+- **start**: nohup avvio + PID in `data/latency_arb.pid` + log `logs/latency_arb.log`
+- **stop**: kill_pidfile + pkill fallback `src/latency_arb.py`
+- **reset** (clear_trading_state): azzera anche `latency_arb_signals.jsonl`,
+  `latency_arb_stats.json`, `daily_halt.json` + log validator vecchi
+  (i signal "open" residui non si riferiscono al nuovo run)
+- **status**: mostra stato di bot / dashboard / latency_arb
+- **logs**: tail live di bot.log + dashboard.log + latency_arb.log
+
+**Deploy Step 0 su VPS IONOS (un solo comando)**:
+```
+git pull
+./start_all.sh restart reset scan
+```
+→ install deps (certifi nuovo), reset stato vecchio, scan wallet, avvia in
+  parallelo bot + dashboard + validatore. Log di domani su `logs/latency_arb.log`
+  + stats in `data/latency_arb_stats.json`.
+
 ### Files modificati (sessione 2026-07-13 tardi)
 - findings.md: sez "Studio 3 guide online" + diagnosi copy-sport (append)
 - task_plan.md: Phase CI1-CI5 marker COMPLETE + Decisions Made (aggiornato)
 - progress.md: questa sessione
-- src/config.py, src/strategies.py, src/simulator.py (codice)
+- **ARBITRAGE_LATENCY_PLAN.md (NUOVO)**: roadmap Step 0/1/2/3 con spesa,
+  target, stop conditions, logbook vuoto da riempire dopo ogni step
+- src/config.py, src/strategies.py, src/simulator.py (codice Phase CI1-CI5)
+- src/latency_arb.py (NUOVO Step 0 validator), requirements.txt (certifi)
+
+## Session: 2026-07-17 (LATENCY-ARB — fix resolver rotto + outcomes per nome + stats heartbeat)
+
+### Contesto — output VPS utente (2 giorni di segnali post-fix discovery)
+- `wc -l data/latency_arb_signals.jsonl` = 4032
+- `cat data/latency_arb_stats.json` = **No such file or directory**
+- `grep -c RESOLVE logs/latency_arb.log` = **0**
+- `grep -c SIGNAL logs/latency_arb.log` = 2019
+- log tail: `[LATENCY-ARB STATS] resolved=0 | WR=0.0% | P&L virt=$0.000 | pending=6`
+  costante nel tempo
+- 2 es SIGNAL LONG_YES su BTC/ETH con edge +0.14/+0.18 e Δ5m Binance -0.24%/-0.06%
+  (contraddizione: edge LONG_YES ma momentum ribassista → già indizio outcomes[0]=DOWN)
+
+### Diagnosi (3 bug)
+- **Bug #1 CRITICAL**: `resolve_contract` parseva `outcome`/`resolutionSource`
+  come free-text — gamma non espone questi campi per crypto up/down. Risolve
+  zero contratti. Campo corretto: `outcomePrices` (JSON-encoded), index max
+  = vincitore.
+- **Bug #2**: `token_yes = tokens[0]` assumeva outcomes[0]="Up". Polymarket
+  ordina spesso alfabetico → tokens[0] = token DOWN → p_yes era p(DOWN).
+  Era il sospetto anticipato in `progressi.txt`.
+- **Bug #3**: `stats.json` mai scritto senza RESOLVE — `_save_stats()` solo
+  dentro `_resolve_pending` post-resolve.
+
+### Fix applicati (src/latency_arb.py)
+- `resolve_contract`: parse `outcomePrices` (JSON-encoded). Trovo index max
+  prezzo; se hi>=0.95 e lo<=0.05 → vincitore = outcomes[hi_idx]. UP_won sse
+  "up"/"yes" in nome; DOWN_won sse "down"/"no". Non assume outcomes[0]=Up.
+- `scan_cycle`: match outcomes per NOME via `_find_outcome_idx(outcomes,
+  ("up","yes"))` / `("down","no")`. token_up = tokens[up_idx]. p_up_market =
+  book_yes(token_up). edge = expected_up - p_up_market. entry_price corretto.
+  Signal record ora include `up_idx`, `down_idx`, `outcomes`, `p_up_market`
+  (+ alias legacy `p_yes`).
+- Aggiunto helper `_find_outcome_idx(outcomes, needles)`.
+- Aggiunto `heartbeat_save_stats()` — salva stats.json ogni 60 cicli (~1min)
+  con `pending` count + `ts_last_save` — visibile anche prima del primo RESOLVE.
+- Loop `run_loop`: chiamata a `det.heartbeat_save_stats()` ogni 60 cicli.
+
+### File nuovo: `tools/debug_resolver.py`
+Dumpa i campi gamma RAW per condition_id scaduti (pescati da signals.jsonl o
+fallback query gamma closed=true). Stampa anche la derivazione del nuovo
+resolver. Da lanciare su VPS **prima** del deploy per confermare che i campi
+gamma matchano la mia assunzione (outcomePrices JSON-encoded, hi_idx prezzo >=0.95).
+
+### Decisione: NON tunare K ora (per ora)
+Lo scenario `progressi.txt` diceva "dopo primi RESOLVE: se WR>60% K OK, se
+~50% outcomes flipped, se <40% K off". **N=0 RESOLVE non ci permette ancora
+nessuna delle 3 conclusioni**. Prima fix resolver → 24-48h → 20-30 RESOLVE →
+allora delibera K/outcomes. Identico protocollo, solo sbloccato il resolver.
+
+### Validazione
+- `python -m py_compile src/latency_arb.py` → OK
+- `python -m py_compile tools/debug_resolver.py` → OK
+- Test live su VPS da fare (utente):
+  1. `git pull` (VPS)
+  2. `python tools/debug_resolver.py --max 5` — conferma campi gamma
+  3. Se `outcomePrices` compare come ["1","0"] etc → fix corretto, deploy:
+     `./start_all.sh restart reset scan` (reset azzera signals.jsonl inquinato
+     dai 4032 record del run buggy)
+  4. Verifica dopo ~10min: `cat data/latency_arb_stats.json` deve esistere con
+     `pending: N, ts_last_save: ...` anche prima del primo RESOLVE
+  5. Dopo 24-48h: se RESOLVE count > 20 → analisi WR per decidere K
+
+### Files modificati (sessione 2026-07-17)
+- src/latency_arb.py (resolve_contract rewrite + scan_cycle outcomes-per-nome
+  + _find_outcome_idx helper + heartbeat_save_stats + loop call)
+- tools/debug_resolver.py (NUOVO debug script)
+- findings.md (sez "LATENCY ARB Step 0 — Bug resolver (2026-07-17)")
+- task_plan.md (Phase CJ1.5 fix resolver)
+- progress.md (questa sessione)
+- ARBITRAGE_LATENCY_PLAN.md (logbook entry 2026-07-17)
 
 ## Session: 2026-07-13 (FIX EMERGENZA PERFORMANCE: -5.63%, WR 24%)
 
@@ -265,5 +386,174 @@ arb (bassa), L6 copy-sport SL fix (nostro, non guide). → Phase CI1-CI5 in task
 ## Session: 2026-06-30 (precedente, completa)
 ### Phase A-G: copy-trading base con filtri, SL/TP, backtest 89% WR
 
+## SESSIONE 2025-07-21 (lunedì) — Check VPS post-weekend, inversione trend latency-arb
+
+> **CORREZIONE 2026-07-22 (vedi sessione sotto): l'interpretazione "finestra
+> recente 53.4%" di questa sessione è SBAGLIATA.** I 731 resolved NON sono la
+> continuazione dei 396 del weekend: le stats sono state azzerate il 20/07 e
+> i 731 provengono dal modello v2 (commit c244c67). Prova aritmetica nella
+> sessione 2026-07-22 e in findings.md.
+
+### Output VPS (incollato da utente)
+- 3 servizi UP: bot PID 2640740, dashboard 2640723, latency_arb 2640761
+- LATENCY-ARB: **731 resolved** | WR **43.2%** | P&L virt **+$135.740** (net +$104.896) | pending 2
+  - bucket win_10_20: 298/698 = 42.7%
+  - bucket win_20_plus: 18/33 = 54.5%
+- BOT: Equity **$292.21 (-2.60%)** | Aperte 5 | Chiuse 8 (WR 0%) | tier 3% dd 2.6%
+- SYSTEM: RAM 1.6/7.7Gi OK, disco 6% OK
+
+### Confronto con analisi weekend (20/07)
+| Metrica | Weekend (396 res) | Lunedì (731 res) | Delta ultimi 335 |
+|---------|-------------------|------------------|------------------|
+| WR tot  | 34.6%             | 43.2%            | **53.4%** (179W/335) |
+| P&L virt| -$17.115          | +$135.740        | **+$152.86** |
+| bucket 10-20 | 34.7%      | 42.7%            | ~51% |
+| bucket 20+   | 33.3% (9/27)| 54.5% (18/33) | 6/6 nuovi win (n=6, rumore) |
+
+Inversione netta rispetto al verdetto "NO EDGE" del weekend. Possibili cause:
+(a) regime di mercato cambiato, (b) codice/config cambiato su VPS fra domenica e
+lunedì (git pull? restart? K?), (c) artefatto nel resolver/stats. DA VERIFICARE
+prima di qualsiasi decisione: split BTC/ETH + LONG_YES/NO sulla finestra recente,
+e `git log` sulla VPS per escludere (b)/(c).
+
+### Bot copy-trading: peggioramento
+Equity $300.02 → $292.21. 8 chiuse a WR 0% = tutte perdenti (~-$7.80).
+Non catastrofico (-2.6%, dentro tier 3% dd) ma serve dettaglio: quale strategia,
+quali reason (SL/exit/resolved).
+
+### Nota importante
+Tutto PAPER: latency-arb è validatore virtuale ($0 reali), bot gira su simulatore
+$300. Nessun capitale reale perso. "Molto in perdita" = -2.6% paper bot.
+
+### Decisione sospesa
+Tabella PROSSIMI_STEP_LUNEDI: 731 resolved, WR 43.2% → zona "strategia non
+funziona" (<45%), MA finestra recente 53.4% + P&L positivo → zona "edge
+confermato" (>52%). Evidenza conflittuale → protocollo borderline:
+**allungare a bucket 20+ ≥ 50-100 trade** prima di decidere soglia/kill.
+
 ---
 *Update after completing each phase or encountering errors*
+
+---
+
+## SESSIONE 2025-07-20 — Analisi log weekend VPS (post-scarico via git)
+
+### Setup
+- Ricevuti via git push da VPS i log weekend in `logs_weekend/` (force-add)
+- `latency_arb.log` 19405 righe, `bot.log` 82054, `dashboard.log` 676, `latency_arb_stats.json` 396 resolved
+- Creato `tools/split_analysis.py` per join SIGNAL→RESOLVE (regex RESOLVE fix: tolleranza spazi extra `WIN  |`)
+
+### Risultati chiave
+- **LATENCY-ARB**: 396 resolved, WR **34.6%**, P&L -$17.115, soglia 0.10
+  - Bucket 10-20: WR 34.7% (128/369) | Bucket 20+: WR 33.3% (9/27)
+  - BTC WR 30.5% (60/197) | ETH WR 38.7% (77/199)
+  - LONG_YES WR 34.4% | LONG_NO WR 34.8% → no bug direzione
+  - **Tutti i bucket <40% → NO EDGE.** Tesi latency arb non regge, confermato a 396 trade
+- **BOT**: equity $300.00→$300.02 (+0.01%), 14 chiusure WR 36%, copy P&L -$0.18, 6 aperte harvest
+- **DASHBOARD**: UP, 200 OK su /api/status ed /api/equity, nessun traceback
+
+### Timestamp anomalo
+Log interni scrivono "20/Jul/**2026**" → orologio VPS fuori sync di 1 anno. Per i numeri non conta, per le date sì. Da fixare in STEP 6.
+
+### Prossima azione (richiede decisione utente)
+Verdetto STEP 2 → "strategia non funziona, vai a Step 5". Da discutere:
+- **5a** alzare soglia 0.15/0.20 → **scartato a priori** (bucket 20+ è 33%, peggiore di 10-20)
+- **5b** finestre Δ15m/Δ30m invece di Δ5m → prova concreta, va implementata
+- **5c** filtro liquidità (top-50 markets) → prova concreta
+- **5d** abbandona latency arb, lascia solo copy/harvest bot a girare → opzione default
+- **5e** dashboard realtime /latency → utile per monitoraggio futuro
+
+Recommendazione proposta: STOP latency-arb ora, lasciando girare solo il bot copy/harvest (ha equity piatta, non perde), e spendere energie su 5c+5e oppure 5d puro.
+
+---
+
+## SESSIONE 2026-07-22 — "Inversione" latency-arb spiegata: reset 20/07 + modello v2 (NON continuazione)
+
+### Contesto
+Output VPS incollato da utente (731 resolved, WR 43.2%, +$135.74 virt / +$104.90
+net; bot $292.21 -2.6%, 8 chiuse WR 0%) + screenshot dashboard incoerente
+($298.21, 1 chiusa, ultimo agg. 14:06). Utente percepisce "molto in perdita".
+
+### Scoperta 1 — I 731 resolved sono TUTTI del modello v2, stats azzerate il 20/07
+Prova aritmetica (nessun accesso VPS necessario):
+- **Bucket impossibile**: win_20_plus lunedì 18/33 vs weekend 9/27. Come
+  continuazione il delta sarebbe 9 win su 6 trade → impossibile.
+- **Fee impossibili**: gap lordo-netto lunedì = $30.84. Su 731 trade = $0.042/trade
+  (coerente: fee=0.07*(1-entry) → entry medio ~0.40). Come continuazione, i 335
+  "nuovi" dovrebbero aver pagato (135.74-(-17.11)) - 104.90 = $47.96 = $0.143/trade
+  → sopra il massimo fisico della formula (0.07). Assurdo.
+- Il log stampa `[LATENCY-ARB STATS] v2` e P&L "net=" — formato che esiste SOLO
+  nel v2 (commit c244c67, 20/07 11:00 "Rewrite latency_arb v2: strike+vol model").
+⇒ Sequenza reale: 20/07 git pull v2 + `restart reset` → stats azzerate → 731
+resolved accumulati dal v2 in ~24-48h (volume plausibile: contratti 5min, loop 1s).
+
+### Scoperta 2 — La sessione 21/07 in progress.md era sbagliata
+"Finestra recente 53.4% WR" non esiste: era il delta aritmetico tra due run
+NON confrontabili (v1 pre-reset vs v2 post-reset). Corretta con nota in cima
+alla sessione.
+
+### Scoperta 3 — Il quadro v2 reale (dal solo output aggregato)
+- WR 43.2% con entry medio implicito ~0.36-0.40 → breakeven ~36.5% → **edge
+  apparente +6.7pt**, EV netto ~+$0.14 per $1 size (+14%/trade).
+- Numeri MOLTO sopra le attese → red flag da auditare: entry al best_ask a
+  0.5-3min dalla scadenza su book sottili (ask fantasma?), midpoint fallback
+  ottimistico, possibile doppio conteggio da stale/re-detect.
+- Bucket v2: win_10_20 42.7% (298/698), win_20_plus 54.5% (18/33, n piccolo).
+
+### Scoperta 4 — Bot e dashboard: nessun mistero
+- Il reset del 20/07 ha azzerato anche il portfolio bot → riparte da $300.
+- Dashboard vista dall'utente = tab stale del 20/07 14:06 (1 chiusa, $298.21).
+- Stato reale lunedì: 8 chiuse tutte LOSS (-$7.79, -2.6%), 5 aperte. Le 4 harvest
+  Fed (No @0.946 x2 + Yes @0.943 x2) sono lo STESSO bet duplicato su 2 mercati
+  (cluster exposure li vede come 2 eventi). Dettaglio delle 8 chiusure: servono
+  log freschi (comandi consegnati all'utente).
+- SSH diretto dalla macchina locale fallito (Permission denied publickey) →
+  dati freschi via git push dall'utente, come il 20/07.
+
+### Decisione (aggiorna la "Decisione sospesa" del 21/07)
+Criterio v2 dichiarato in ARBITRAGE_LATENCY_PLAN ("edge NETTO > 0 a 100+
+resolved") è NOMINALMENTE superato (731 res, +$104.90 net). MA prima di Step 1:
+1. Audit per-record con tools/analyze_signals.py (calibrazione p_model, Brier,
+   split strike_source/z/asset/direzione) sui dati freschi
+2. Verifica realismo fill (best_ask reale vs midpoint fallback)
+3. Dettaglio 8 chiusure bot
+Blocco comandi VPS consegnato in chat. Prossima sessione: analisi output.
+
+### File modificati (sessione 2026-07-22)
+- progress.md (correzione sessione 21/07 + questa sessione)
+- findings.md (sez "Latency-arb v2: reset 20/07 spiega l'inversione")
+- task_plan.md (Phase CJ1.6 audit v2)
+
+---
+
+## SESSIONE 2026-07-22 (parte 2) — Audit v2 → Step 5d STOP
+
+### Input
+- Output VPS blocco comandi (git/restart/analyze_signals/8 chiusure) + push
+  `logs_monday/` (faa3b24): 1810 signal, 738 resolved, tutti model_version=2.
+- Servizi avviati 20/07 09:40 (conferma reset).
+
+### Audit (`tools/audit_v2.py` — NUOVO)
+- Top-10 win = 113.9% del P&L netto; trimmed top-5% win = **-$54**
+- Bootstrap CI EV/trade include 0; trimmed include 0
+- entry≥0.25 & edge≥0.15: n=80, CI include 0
+- Strike: 738/738 binance_open; equity API 403
+- Fill: 20 win entry<0.15 = +$187 (gonfiano tutto)
+
+### Bot 8 chiusure
+2 copy tennis SL (-$2.55) + 6 harvest Fed SL correlato (-$4.73) = -$7.28.
+Niente esclusione tennis (soglia ≥5 non raggiunta). Harvest Fed = problema
+reale: bet duplicato + SL che rompe hold-to-resolution.
+
+### Decisione FINALE
+**Step 5d — abbandona latency-arb per capitale reale.** Phase CJ2 cancelled.
+Nessun $50 reali. Validator può restare spento o idle. Focus sul bot
+copy/harvest; prossimo lavoro utile = dedup harvest correlato / SL harvest.
+
+### File
+- tools/audit_v2.py (NUOVO)
+- findings.md (sez AUDIT v2 PROFONDO)
+- task_plan.md (CJ1.6 complete, CJ2 cancelled)
+- ARBITRAGE_LATENCY_PLAN.md (logbook entry)
+- progress.md (questa sessione)
+
