@@ -384,7 +384,7 @@ allora delibera K/outcomes. Identico protocollo, solo sbloccato il resolver.
 ### Deploy VPS 01/07: bot attivo, 4 trade/24h, -$0.81 (troppo conservativo)
 
 ## Session: 2026-06-30 (precedente, completa)
-### Phase A-G: copy-trading base con filtri, SL/TP, backtest 89% WR
+### Phase A-G: copy-trading base con filtri, SL/TP, profiler storico (claim 89% ritirato)
 
 ## SESSIONE 2025-07-21 (lunedì) — Check VPS post-weekend, inversione trend latency-arb
 
@@ -557,3 +557,67 @@ copy/harvest; prossimo lavoro utile = dedup harvest correlato / SL harvest.
 - ARBITRAGE_LATENCY_PLAN.md (logbook entry)
 - progress.md (questa sessione)
 
+---
+
+## SESSIONE 2026-07-23 - Phase CK avviata
+
+### Obiettivo approvato
+Quarantena immediata del bot e nuova validazione prospettica onesta:
+OBSERVE di default, COPY unica candidata futura, nessun capitale reale.
+
+### Stato iniziale
+- Snapshot VPS remoto: equity/cash $297.0869, 5 chiuse, 0W/5L, 0 aperte.
+- Run post-fix aggregati: HARVEST 0W/10L (-$6.83), COPY 0W/3L (-$3.36).
+- `git pull --ff-only` fallito correttamente: locale e remoto hanno un commit
+  esclusivo ciascuno. Nessun reset eseguito; integrazione con merge preservativo.
+- File utente non tracciati `progressi.txt` e `resp.json` lasciati intatti.
+
+### In corso
+- Integrare lo snapshot remoto.
+- Implementare contenimento, persistenza, misurazione, rischio e dashboard.
+- Aggiungere test automatici `unittest` con feed mock.
+
+### Errori di verifica
+- Primo `py_compile src\*.py`: PowerShell non espande il glob passato a Python.
+  Correzione: usare `python -m compileall`.
+- Primo `unittest discover`: i due test legacy importano moduli da `src` senza
+  configurare `PYTHONPATH`. Correzione: eseguire con `PYTHONPATH=src` e aggiungere
+  una suite autonoma sotto `tests/`.
+- Fixture dashboard: `New-Item -LiteralPath` non è supportato dalla PowerShell
+  presente. Correzione: `New-Item -Path` su una directory temp esplicita.
+- Browser smoke: PID dashboard/bot usavano ancora `BASE_DIR/data`, ignorando
+  `POLYMARKET_DATA_DIR`. Corretto entrambi a `DATA_DIR`.
+
+### Implementazione completata
+- Snapshot remoto integrato con merge preservativo; file utente non tracciati
+  `progressi.txt` e `resp.json` mai modificati.
+- Default `observe`; COPY sola scansione, nessuna strategia apre; latency-arb
+  non parte salvo opt-in esplicito.
+- Ledger v2 con run/signal/event identity, dedup asset+condition, un evento,
+  cap 3%, stop-loss block e safety state persistente.
+- Entry ask VWAP e mark/exit bid VWAP sulla size intera; niente midpoint o
+  slippage statico inventato. Candidate journal JSONL append-only.
+- Circuit breaker equity: -$3 daily, -$6 run, quarantena a 3 loss consecutive
+  e riattivazione manuale.
+- Wallet effettivi persistiti e congelati in paper_validation.
+- `restart` sempre conservativo; `new-run` archivia; `reset --force` archivia
+  prima di cancellare, sia Linux sia Windows.
+- Dashboard: API operative, no-store, peak corretto, max dinamico, evento,
+  OBSERVE/HALTED, quarantena e stale banner.
+- Backtester declassato a wallet history profiler; claim 89% ritirato.
+- Protocollo e valutatore promozione prospettica aggiunti.
+
+### Verifica finale locale
+- `compileall`: OK.
+- `unittest discover`: 17/17 OK.
+- JavaScript dashboard: syntax OK.
+- `bash -n start_all.sh`: OK.
+- reset senza `--force` e `restart reset`: rifiutati su Linux e Windows.
+- Browser smoke su snapshot VPS: OBSERVE, $297.09, -$2.91, peak $300,
+  drawdown 1.0%, 0 open, 5 closed, max 2, stale/quarantena visibili,
+  nessun errore console su caricamento pulito.
+
+### Rimane esterno al workspace
+- Deploy VPS e verifica servizi.
+- Conferma zero aperture per 24 ore.
+- Raccolta journal per almeno 48 ore prima di qualunque paper_validation.

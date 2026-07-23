@@ -452,6 +452,9 @@
                 </div>
             </div>
         </div>
+        <div id="safetyBanner" style="display:none;margin:0 0 18px;padding:14px 18px;
+             border:1px solid #ef4444;background:rgba(239,68,68,.18);color:#fecaca;
+             border-radius:10px;font-weight:700"></div>
 
         <!-- Grafico andamento equity -->
         <div class="section">
@@ -510,7 +513,7 @@
                 <div class="stat-icon">🎯</div>
                 <div class="stat-label">Posizioni Aperte</div>
                 <div class="stat-value" id="openPositions">0</div>
-                <div class="stat-change neutral">Max: 10</div>
+                <div class="stat-change neutral">Max: <span id="maxOpenPositions">-</span></div>
             </div>
             <div class="stat-card">
                 <div class="stat-icon">✅</div>
@@ -746,7 +749,7 @@
 
         async function refreshEquity() {
             try {
-                const res = await fetch('/api/equity');
+                const res = await fetch('/api/equity', {cache: 'no-store'});
                 const data = await res.json();
                 if (!Array.isArray(data) || data.length === 0) return;
 
@@ -837,22 +840,39 @@
         function updateDashboard(data) {
             const now = new Date(data.timestamp || new Date());
             document.getElementById('lastUpdate').textContent = now.toLocaleTimeString('it-IT');
+            const summary = data.summary || {};
+            const mode = (data.execution_mode || summary.execution_mode || 'observe').toUpperCase();
+            const haltReason = data.halt_reason || summary.halt_reason || '';
+            const savedAt = data.state_saved_at || summary.state_saved_at;
+            const savedMs = savedAt ? new Date(savedAt).getTime() : 0;
+            const stale = !savedMs || (Date.now() - savedMs > 60000);
+            const banner = document.getElementById('safetyBanner');
+            const bannerParts = [];
+            if (haltReason) bannerParts.push(haltReason);
+            if (stale) bannerParts.push('STATO STALE: ledger non salvato da oltre 60 secondi');
+            if (bannerParts.length) {
+                banner.style.display = 'block';
+                banner.textContent = '⚠ ' + bannerParts.join(' — ');
+            } else {
+                banner.style.display = 'none';
+            }
 
             // Dashboard v2: risk + cluster
-            updateRiskDashboard(data.summary);
-            updateClusterExposure(data.summary);
+            updateRiskDashboard(summary);
+            updateClusterExposure(summary);
 
             const statusEl = document.getElementById('botStatus');
             const status = data.bot_status || 'unknown';
             if (status === 'running') {
-                statusEl.className = 'status-badge status-running';
-                statusEl.innerHTML = '<span class="status-dot"></span><span>RUNNING</span>';
+                const circuitHalt = haltReason && mode !== 'OBSERVE';
+                statusEl.className = 'status-badge ' + (circuitHalt ? 'status-stopped' : 'status-running');
+                statusEl.innerHTML = '<span class="status-dot"></span><span>' +
+                    (circuitHalt ? 'HALTED' : mode) + '</span>';
             } else {
                 statusEl.className = 'status-badge status-stopped';
                 statusEl.innerHTML = '<span class="status-dot"></span><span>STOPPED</span>';
             }
 
-            const summary = data.summary || {};
             document.getElementById('initialCapital').textContent = formatMoney(summary.initial_capital);
             document.getElementById('currentValue').textContent = formatMoney(summary.current_value);
 
@@ -866,6 +886,8 @@
             pnlPctEl.className = 'stat-change ' + getColorClass(pnlPct);
 
             document.getElementById('openPositions').textContent = summary.open_positions || 0;
+            document.getElementById('maxOpenPositions').textContent =
+                summary.max_open_positions ?? '-';
             document.getElementById('closedPositions').textContent = summary.closed_positions || 0;
             document.getElementById('winRate').textContent = (summary.win_rate || 0).toFixed(1) + '%';
             document.getElementById('strategyMode').textContent = (summary.strategy_mode || '-').toUpperCase();
@@ -1064,13 +1086,16 @@
             const avail = summary.available_cash || 0;
             const reserve = summary.reserve_cash || 0;
             const strategies = summary.active_strategies || [];
+            const mode = (summary.execution_mode || 'observe').toUpperCase();
+            const halt = summary.halt_reason || '';
             let html = '<div class="strat-summary">';
-            html += `<div class="strat-card" style="border-left-color:#60a5fa"><div class="label">Sizing Tier</div><div class="val">${(tier.frac*100||6).toFixed(0)}%</div><div class="label" style="margin-top:4px">${tier.desc||''}</div></div>`;
+            html += `<div class="strat-card" style="border-left-color:#ef4444"><div class="label">Execution Mode</div><div class="val">${escapeHtml(mode)}</div><div class="label" style="margin-top:4px">${escapeHtml(halt || 'nessun halt')}</div></div>`;
+            html += `<div class="strat-card" style="border-left-color:#60a5fa"><div class="label">Paper Size</div><div class="val">$5</div><div class="label" style="margin-top:4px">Run: ${escapeHtml((summary.run_id||'').slice(0,24))}</div></div>`;
             html += `<div class="strat-card" style="border-left-color:#fbbf24"><div class="label">Peak Equity</div><div class="val">$${(summary.peak_equity||0).toFixed(2)}</div><div class="label" style="margin-top:4px">Drawdown: <span class="${ddClass}">${dd.toFixed(1)}%</span></div></div>`;
             html += `<div class="strat-card" style="border-left-color:#34d399"><div class="label">Deployed / Cash</div><div class="val">$${deployed.toFixed(0)} / $${avail.toFixed(0)}</div><div class="label" style="margin-top:4px">Reserve: $${reserve.toFixed(0)}</div></div>`;
             html += `<div class="strat-card" style="border-left-color:${rf<=0?'#f87171':rf<1?'#fbbf24':'#34d399'}"><div class="label">Risk Factor</div><div class="val ${rfClass}">${rfLabel}</div><div class="label" style="margin-top:4px">Trailing: ${summary.trailing_stop_enabled?'ON':'OFF'} | Kelly: ${summary.kelly_enabled?'ON':'OFF'}</div></div>`;
-            html += `<div class="strat-card" style="border-left-color:#c084fc"><div class="label">Strategie Attive</div><div class="val">${strategies.length}</div><div class="label" style="margin-top:4px">${strategies.join(', ')}</div></div>`;
-            html += `<div class="strat-card" style="border-left-color:#f472b6"><div class="label">Posizioni</div><div class="val">${summary.open_positions||0}/${summary.max_open_positions||12}</div><div class="label" style="margin-top:4px">Chiuse: ${summary.closed_positions||0} | WR: ${(summary.win_rate||0).toFixed(0)}%</div></div>`;
+            html += `<div class="strat-card" style="border-left-color:#c084fc"><div class="label">Strategie Scansionate</div><div class="val">${strategies.length}</div><div class="label" style="margin-top:4px">${strategies.join(', ')}</div></div>`;
+            html += `<div class="strat-card" style="border-left-color:#f472b6"><div class="label">Posizioni</div><div class="val">${summary.open_positions||0}/${summary.max_open_positions||0}</div><div class="label" style="margin-top:4px">Chiuse: ${summary.closed_positions||0} | WR: ${(summary.win_rate||0).toFixed(0)}%</div></div>`;
             html += '</div>';
             container.innerHTML = html;
         }
@@ -1079,9 +1104,10 @@
         function updateClusterExposure(summary) {
             const container = document.getElementById('clusterContainer');
             const clusters = summary.cluster_exposure || {};
+            const labels = summary.cluster_labels || {};
             const entries = Object.entries(clusters);
             if (entries.length === 0) { container.innerHTML = '<div class="empty-state"><div>Nessun cluster attivo</div></div>'; return; }
-            const capPct = summary.cluster_cap_pct || 0.4;
+            const capPct = summary.cluster_cap_pct || 0.03;
             const totalValue = summary.current_value || 300;
             const capUsd = totalValue * capPct;
             let html = '<div class="table-wrap"><table><thead><tr><th>Evento (Cluster)</th><th>Deployed</th><th>% Portfolio</th><th>Cap</th><th>Stato</th></tr></thead><tbody>';
@@ -1089,7 +1115,9 @@
                 const pct = (usd / totalValue * 100);
                 const pctClass = pct > capPct*100*0.8 ? 'negative' : 'positive';
                 const status = pct > capPct*100 ? '<span class="negative">OVER CAP</span>' : '<span class="positive">OK</span>';
-                html += `<tr><td>${escapeHtml(slug.slice(0,40))}</td><td>$${usd.toFixed(0)}</td><td class="${pctClass}">${pct.toFixed(1)}%</td><td>$${capUsd.toFixed(0)}</td><td>${status}</td></tr>`;
+                const label = labels[slug] && labels[slug] !== slug
+                    ? `${labels[slug]} (${slug})` : slug;
+                html += `<tr><td>${escapeHtml(label.slice(0,70))}</td><td>$${usd.toFixed(0)}</td><td class="${pctClass}">${pct.toFixed(1)}%</td><td>$${capUsd.toFixed(0)}</td><td>${status}</td></tr>`;
             });
             html += '</tbody></table></div>';
             container.innerHTML = html;
@@ -1099,7 +1127,7 @@
             try {
                 const indicator = document.getElementById('refreshIndicator');
                 indicator.classList.add('active');
-                const response = await fetch(API_URL);
+                const response = await fetch(API_URL, {cache: 'no-store'});
                 const data = await response.json();
                 updateDashboard(data);
                 setTimeout(() => indicator.classList.remove('active'), 500);

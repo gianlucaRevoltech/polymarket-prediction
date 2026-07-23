@@ -19,7 +19,10 @@ from datetime import datetime, date
 from typing import Dict, Optional, List, Set, Tuple
 from models import Trade, Position, Portfolio
 from categories import categorize_market, taker_fee_fraction
-from config import BUDGET, FEES, SIMULATOR, STRATEGY, STRATEGIES, MONITOR, DATA_DIR, LOGS_DIR
+from config import (
+    BUDGET, FEES, SIMULATOR, STRATEGY, STRATEGIES, MONITOR, DATA_DIR, LOGS_DIR,
+    EXECUTION,
+)
 
 
 class PaperTradingSimulator:
@@ -37,6 +40,18 @@ class PaperTradingSimulator:
         self.state_file = DATA_DIR / "portfolio_state.json"
         self.trades_log = DATA_DIR / "trades_log.json"
         self.equity_file = DATA_DIR / "equity_curve.json"
+        self.candidate_journal = DATA_DIR / "candidate_journal.jsonl"
+
+        self.execution_mode = EXECUTION.get("mode", "observe")
+        self.run_id = f"run-{datetime.now().strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:8]}"
+        self.state_saved_at: Optional[str] = None
+        self.halt_reason: str = ""
+        self.blocked_conditions: Dict[str, Dict] = {}
+        self.strategy_loss_streaks: Dict[str, int] = {}
+        self.quarantined_strategies: Set[str] = set()
+        self.run_start_equity: Optional[float] = None
+        self.daily_start_equity: Optional[float] = None
+        self.daily_start_date: str = date.today().isoformat()
 
         # Phase Z: hook per wallet manager (registra copy close per wallet P&L tracking)
         self.on_copy_close = None  # callback(source_wallet, pnl)
@@ -49,11 +64,14 @@ class PaperTradingSimulator:
 
         self._load_state()
         self._cleanup_legacy_positions()
+        self._load_safety_state()
         self.wallet_quality: Dict[str, Dict] = {}
         self._load_wallet_quality()
 
         # Phase K/L: tracking peak equity + drawdown + equity floor
-        self.peak_equity: float = self.portfolio.total_value
+        self.peak_equity: float = max(
+            self.portfolio.initial_capital, self.portfolio.total_value
+        )
         self._load_peak_equity()
         # Phase I: dedup anti-reopen (asset/condition_id -> ultimo timestamp apertura)
         self.recent_opens: Dict[str, datetime] = {}
@@ -65,6 +83,196 @@ class PaperTradingSimulator:
         self.daily_halt_date: Optional[date] = None
         self.daily_halt_active: bool = False
         self._load_daily_halt()
+
+    # ------------------------------------------------------------------
+    # Phase CK: quarantena, circuit breaker e journal append-only
+    # ------------------------------------------------------------------
+    def _safety_file(self):
+        return DATA_DIR / "safety_state.json"
+
+    def _load_safety_state(self):
+        current = self.portfolio.total_value
+        self.run_start_equity = current
+        self.daily_start_equity = current
+        try:
+            if self._safety_file().exists():
+                with open(self._safety_file(), encoding="utf-8") as fh:
+                    data = json.load(fh)
+                # Un file safety di un altro run non deve contaminare il run
+                # corrente, ma i blocchi legacy senza run_id restano conservativi.
+                stored_run = data.get("run_id")
+                if not stored_run or stored_run == self.run_id:
+                    self.blocked_conditions = dict(data.get("blocked_conditions", {}))
+                    self.strategy_loss_streaks = {
+                        str(k): int(v) for k, v in
+                        data.get("strategy_loss_streaks", {}).items()
+                    }
+                    self.quarantined_strategies = set(
+                        data.get("quarantined_strategies", [])
+                    )
+                    self.run_start_equity = float(
+                        data.get("run_start_equity", current)
+                    )
+                    self.daily_start_equity = float(
+                        data.get("daily_start_equity", current)
+                    )
+                    self.daily_start_date = str(
+                        data.get("daily_start_date", date.today().isoformat())
+                    )
+                    self.halt_reason = str(data.get("halt_reason", ""))
+        except Exception as exc:
+            print(f"[WARNING] safety_state non leggibile: {exc}")
+
+    def _save_safety_state(self):
+        try:
+            DATA_DIR.mkdir(parents=True, exist_ok=True)
+            self._atomic_write_json(self._safety_file(), {
+                "run_id": self.run_id,
+                "run_start_equity": self.run_start_equity,
+                "daily_start_equity": self.daily_start_equity,
+                "daily_start_date": self.daily_start_date,
+                "halt_reason": self.halt_reason,
+                "blocked_conditions": self.blocked_conditions,
+                "strategy_loss_streaks": self.strategy_loss_streaks,
+                "quarantined_strategies": sorted(self.quarantined_strategies),
+                "saved_at": datetime.now().isoformat(),
+            })
+        except Exception as exc:
+            print(f"[ERRORE] Salvataggio safety_state: {exc}")
+
+    def _evaluate_equity_halts(self) -> str:
+        """Circuit breaker sull'equity, quindi include il P&L non realizzato."""
+        if self.halt_reason.startswith(("daily_loss", "run_loss")):
+            return self.halt_reason
+        equity = self.portfolio.total_value
+        run_start = self.run_start_equity if self.run_start_equity is not None else equity
+        daily_start = (
+            self.daily_start_equity if self.daily_start_equity is not None else equity
+        )
+        run_loss = equity - run_start
+        daily_loss = equity - daily_start
+        if run_loss <= -abs(float(EXECUTION.get("run_loss_usdc", 6.0))):
+            self.halt_reason = f"run_loss {run_loss:.2f} USD"
+        elif daily_loss <= -abs(float(EXECUTION.get("daily_loss_usdc", 3.0))):
+            self.halt_reason = f"daily_loss {daily_loss:.2f} USD"
+        if self.halt_reason.startswith(("daily_loss", "run_loss")):
+            self._save_safety_state()
+            return self.halt_reason
+        return ""
+
+    def _opening_halt_reason(self, strategy: str) -> str:
+        if self.execution_mode != "paper_validation":
+            return "execution_mode=observe"
+        cfg = STRATEGIES.get(strategy, {})
+        if not cfg.get("paper_enabled", False):
+            return f"{strategy}:paper_disabled"
+        equity_halt = self._evaluate_equity_halts()
+        if equity_halt:
+            return equity_halt
+        if strategy in self.quarantined_strategies:
+            return f"{strategy}:quarantined_after_losses"
+        return ""
+
+    def reactivate_strategy(self, strategy: str) -> None:
+        """Riattivazione manuale esplicita dopo una quarantena per loss streak."""
+        self.quarantined_strategies.discard(strategy)
+        self.strategy_loss_streaks[strategy] = 0
+        if self.halt_reason.startswith(f"{strategy}:"):
+            self.halt_reason = ""
+        self._save_safety_state()
+
+    def _record_close_risk(self, pos: Position, pnl: float, reason: str):
+        strategy = pos.strategy or "copy"
+        if reason == "stop_loss" and pos.condition_id:
+            self.blocked_conditions[pos.condition_id] = {
+                "blocked_at": datetime.now().isoformat(),
+                "event_slug": pos.event_slug,
+                "market": pos.market_title,
+                "reason": "stop_loss_until_resolution",
+            }
+        elif reason == "resolved" and pos.condition_id:
+            self.blocked_conditions.pop(pos.condition_id, None)
+
+        if pnl < 0:
+            self.strategy_loss_streaks[strategy] = (
+                self.strategy_loss_streaks.get(strategy, 0) + 1
+            )
+            max_losses = int(EXECUTION.get("max_consecutive_losses", 3))
+            if self.strategy_loss_streaks[strategy] >= max_losses:
+                self.quarantined_strategies.add(strategy)
+                self.halt_reason = f"{strategy}: {max_losses} consecutive losses"
+        else:
+            self.strategy_loss_streaks[strategy] = 0
+        self._evaluate_equity_halts()
+        self._save_safety_state()
+
+    def _journal(self, decision: str, reason: str, *, strategy: str,
+                 signal_id: str = "", wallet: str = "", info: Optional[Dict] = None,
+                 opp=None, book: Optional[Dict] = None, position: Optional[Position] = None,
+                 costs: Optional[Dict] = None) -> None:
+        """Una riga JSON immutabile per ogni candidato/decisione/chiusura."""
+        info = info or {}
+        now = datetime.now().isoformat()
+        row = {
+            "journal_version": 1,
+            "run_id": self.run_id,
+            "signal_id": signal_id or getattr(position, "signal_id", "") or uuid.uuid4().hex,
+            "strategy": strategy,
+            "wallet": wallet or info.get("source_wallet", ""),
+            "event_id": info.get("event_id", "") or getattr(opp, "event_id", "") or
+                        getattr(position, "event_id", ""),
+            "event_slug": info.get("event_slug", "") or getattr(opp, "event_slug", "") or
+                          getattr(position, "event_slug", ""),
+            "event_title": info.get("event_title", "") or
+                           getattr(opp, "event_title", "") or
+                           getattr(position, "event_title", ""),
+            "condition_id": info.get("condition_id", "") or
+                            getattr(opp, "condition_id", "") or
+                            getattr(position, "condition_id", ""),
+            "asset": info.get("asset", "") or
+                     ((getattr(opp, "assets", None) or [""])[0]) or
+                     getattr(position, "asset", ""),
+            "market": info.get("title", "") or getattr(opp, "market_title", "") or
+                      getattr(position, "market_title", ""),
+            "source_trade_at": info.get("source_trade_at") or
+                               info.get("source_trade_timestamp"),
+            "detected_at": now,
+            "best_bid": (book or {}).get("best_bid"),
+            "best_ask": (book or {}).get("best_ask"),
+            "bid_depth": (book or {}).get("bid_size"),
+            "ask_depth": (book or {}).get("ask_size"),
+            "decision": decision,
+            "reason": reason,
+            "entry_price": getattr(position, "entry_price", None),
+            "exit_price": getattr(position, "exit_price", None),
+            "costs": costs or {},
+        }
+        try:
+            DATA_DIR.mkdir(parents=True, exist_ok=True)
+            with open(self.candidate_journal, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+        except Exception as exc:
+            print(f"[ERRORE] candidate journal: {exc}")
+
+    @staticmethod
+    def _best_bid(fetcher, asset: str, size_shares: float = 0.0) -> Optional[float]:
+        if not fetcher or not asset:
+            return None
+        if hasattr(fetcher, "get_executable_price"):
+            try:
+                return fetcher.get_executable_price(asset, "SELL", size_shares)
+            except TypeError:
+                return fetcher.get_executable_price(asset, "SELL")
+        book = fetcher.get_book(asset)
+        value = (book or {}).get("best_bid")
+        return float(value) if value is not None else None
+
+    def _condition_is_open(self, condition_id: str) -> bool:
+        return any(
+            p.condition_id == condition_id
+            for p in self.portfolio.positions.values()
+            if condition_id
+        )
 
     # ------------------------------------------------------------------
     # Phase K: sizing compounding ladder
@@ -273,13 +481,20 @@ class PaperTradingSimulator:
 
     def _load_peak_equity(self):
         try:
+            persisted = 0.0
             if self._peak_file().exists():
                 with open(self._peak_file()) as f:
                     d = json.load(f)
-                    if d.get("peak_equity", 0) > self.portfolio.total_value:
-                        self.peak_equity = float(d["peak_equity"])
+                    persisted = float(d.get("peak_equity", 0) or 0)
+            self.peak_equity = max(
+                self.portfolio.initial_capital,
+                persisted,
+                self.portfolio.total_value,
+            )
         except Exception:
-            pass
+            self.peak_equity = max(
+                self.portfolio.initial_capital, self.portfolio.total_value
+            )
 
     def _recent_opens_file(self):
         return DATA_DIR / "recent_opens.json"
@@ -413,6 +628,8 @@ class PaperTradingSimulator:
     # ------------------------------------------------------------------
     def _sizing_compounding(self) -> float:
         """Phase K: sizing base per il tier corrente (frazione del portafoglio)."""
+        if self.execution_mode == "paper_validation":
+            return float(EXECUTION.get("paper_size_usdc", 5.0))
         frac, _ = self._sizing_tier()
         # riduce sizing (risk/reward) per compounding: valore attuale (no fixed capital)
         return self.portfolio.total_value * frac
@@ -423,6 +640,8 @@ class PaperTradingSimulator:
         Phase K: sizing compounding ladder (3->5->8->12% gated) e drawdown halve.
         """
         base = self._sizing_compounding()
+        if self.execution_mode == "paper_validation":
+            return base
         # Phase K: scaling per size wallet target (rispettiamo notional whale)
         if target_wallet_size < 1000:
             size = base
@@ -458,13 +677,77 @@ class PaperTradingSimulator:
         Phase B: soft-disable (size dimezzata) per wallet con win-rate basso.
         Phase C: chiamata solo per asset NUOVI (delta-snapshot), vedi reconcile.
         """
-        asset = info["asset"]
-        price = info["cur_price"]
+        info = dict(info)
+        asset = info.get("asset", "")
+        condition_id = info.get("condition_id", "")
+        signal_id = uuid.uuid4().hex
+
+        # Arricchisce l'identità evento per snapshot data-api legacy che non la
+        # espongono. Per la correlazione non usiamo mai market_slug come evento.
+        if fetcher is not None and condition_id and not info.get("event_slug"):
+            market = fetcher.get_market(condition_id)
+            if market:
+                info["event_id"] = market.get("event_id", "")
+                info["event_slug"] = market.get("event_slug", "")
+                info["event_title"] = market.get("event_title", "")
+                info["category"] = market.get("category") or info.get("category", "")
+
+        book = fetcher.get_book(asset) if fetcher is not None and asset else None
+        def reject(reason: str) -> bool:
+            self._journal("rejected", reason, strategy="copy",
+                          signal_id=signal_id, wallet=source_wallet,
+                          info=info, book=book)
+            return False
+
+        halt = self._opening_halt_reason("copy")
+        if halt:
+            self._journal("rejected", halt, strategy="copy", signal_id=signal_id,
+                          wallet=source_wallet, info=info, book=book)
+            return False
+        if self.portfolio.open_positions_count >= int(
+            EXECUTION.get("max_open_positions", BUDGET["max_open_positions"])
+        ):
+            self._journal("rejected", "max_open_positions", strategy="copy",
+                          signal_id=signal_id, wallet=source_wallet,
+                          info=info, book=book)
+            return False
+        if not book or book.get("best_ask") is None or book.get("best_bid") is None:
+            self._journal("rejected", "no_executable_two_sided_book", strategy="copy",
+                          signal_id=signal_id, wallet=source_wallet, info=info, book=book)
+            return False
+        price = float(book["best_ask"])
+        mark_bid = float(book["best_bid"])
 
         if not asset or self.has_asset(asset):
+            self._journal("rejected", "duplicate_open_asset", strategy="copy",
+                          signal_id=signal_id, wallet=source_wallet, info=info, book=book)
+            return False
+        if condition_id and self._condition_is_open(condition_id):
+            self._journal("rejected", "duplicate_open_condition", strategy="copy",
+                          signal_id=signal_id, wallet=source_wallet, info=info, book=book)
+            return False
+        if condition_id in self.blocked_conditions:
+            market = fetcher.get_market(condition_id) if fetcher is not None else None
+            if market and market.get("closed"):
+                self.blocked_conditions.pop(condition_id, None)
+                self._save_safety_state()
+                reason = "condition_resolved"
+            else:
+                reason = "condition_blocked_after_stop_loss"
+            self._journal("rejected", reason, strategy="copy", signal_id=signal_id,
+                          wallet=source_wallet, info=info, book=book)
+            return False
+        if not self._cluster_check(
+            "copy", condition_id, info.get("event_slug", ""),
+            float(EXECUTION.get("paper_size_usdc", 5.0)),
+        ):
+            self._journal("rejected", "event_exposure_limit", strategy="copy",
+                          signal_id=signal_id, wallet=source_wallet, info=info, book=book)
             return False
 
         if price <= 0 or price >= 1:
+            self._journal("rejected", "invalid_best_ask", strategy="copy",
+                          signal_id=signal_id, wallet=source_wallet, info=info, book=book)
             return False
 
         # Phase I: dedup anti-reopen stesso asset entro dedup_window
@@ -472,19 +755,15 @@ class PaperTradingSimulator:
         dedup = BUDGET.get("dedup_window_sec", 3600)
         last_open = self.recent_opens.get(asset)
         if last_open and (now - last_open).total_seconds() < dedup:
-            return False
+            return reject("recent_asset_cooldown")
         last_cond = self.recent_opens.get(info.get("condition_id", ""))
         if last_cond and (now - last_cond).total_seconds() < dedup:
-            return False
+            return reject("recent_condition_cooldown")
 
-        # Phase L: equity floor blocca nuove aperture (risk_factor=0 handling gia in sizing)
+        # Equity floor legacy resta un'ulteriore cintura di sicurezza.
         if self._risk_factor() <= 0.0:
-            return False
-        # Phase CI1: DAILY loss limit + halt (Guida 2: risk mgmt = differenza
-        # tra +1322% e liquidazione). Blocca nuove aperture se realized_giornaliero
-        # <= -8% del capitale iniziale. Reset automatico a mezzanotte.
-        if self._daily_halt_check():
-            print(f"[SKIP] DAILY HALT attivo — nuove aperture copy bloccate")
+            self._journal("rejected", "legacy_equity_floor", strategy="copy",
+                          signal_id=signal_id, wallet=source_wallet, info=info, book=book)
             return False
 
         # Guardrail 1 - banda di prezzo (Phase D + J soft):
@@ -499,7 +778,7 @@ class PaperTradingSimulator:
             else:
                 print(f"[SKIP] Prezzo {price:.3f} fuori banda [{price_min:.2f},{price_max:.2f}]"
                       f" (consenso {num_holders} < {soft_consensus}): {info['title'][:45]}")
-                return False
+                return reject("entry_price_out_of_band")
 
         # Guardrail 2 - anti entrata tardiva (Phase C: drift 5%)
         avg_price = info.get("avg_price", 0.0)
@@ -507,7 +786,7 @@ class PaperTradingSimulator:
         if avg_price > 0 and price > avg_price * (1 + max_drift):
             print(f"[SKIP] Entrata tardiva: prezzo {price:.3f} > avg wallet {avg_price:.3f} "
                   f"+{max_drift:.0%}: {info['title'][:40]}")
-            return False
+            return reject("entry_drift_too_high")
 
         # Phase D: filtro scadenza (no capital-lock > 60gg tipo 2028 elections,
         # nè coin-flip 5-min crypto < 24h: scartiamo mercati troppo brevi
@@ -524,24 +803,25 @@ class PaperTradingSimulator:
                     if max_days is not None and days > max_days:
                         print(f"[SKIP] Scadenza {days:.0f}gg > {max_days}gg: "
                               f"{info['title'][:40]}")
-                        return False
+                        return reject("expiry_too_far")
                     if min_days > 0 and days < min_days:
                         print(f"[SKIP] Scadenza {days:.1f}gg < {min_days}gg (coin-flip/MM): "
                               f"{info['title'][:40]}")
-                        return False
+                        return reject("expiry_too_near")
 
         # Phase D: filtro liquidita (book size + spread)
         if fetcher is not None and STRATEGY.get("min_book_size_usdc"):
-            book = fetcher.get_book(asset)
             ok = fetcher.passes_liquidity(
                 book, side_size_min=STRATEGY["min_book_size_usdc"],
                 max_spread_ticks=STRATEGY.get("max_spread_ticks", 3))
             if not ok:
                 print(f"[SKIP] Liquidita insufficiente: {info['title'][:40]}")
+                self._journal("rejected", "insufficient_liquidity", strategy="copy",
+                              signal_id=signal_id, wallet=source_wallet, info=info, book=book)
                 return False
 
         if self.portfolio.open_positions_count >= BUDGET["max_open_positions"]:
-            return False
+            return reject("max_open_positions")
 
         # Phase M: cap posizioni per strategia copy (lascia slot ad arb/harvest)
         copy_max_pos = STRATEGIES.get("copy", {}).get("max_positions", BUDGET["max_open_positions"])
@@ -549,23 +829,23 @@ class PaperTradingSimulator:
                     if (p.strategy or "copy") == "copy")
         if n_copy >= copy_max_pos:
             print(f"[SKIP] Cap posizioni copy ({copy_max_pos}) raggiunto: {info['title'][:40]}")
-            return False
+            return reject("copy_position_cap")
 
         # Phase E: cap per wallet sorgente (max 1 posizione aperta per wallet)
         max_per_wallet = BUDGET.get("max_positions_per_wallet", 1)
         if self._positions_for_wallet(source_wallet) >= max_per_wallet:
             print(f"[SKIP] Cap wallet raggiunto ({max_per_wallet}) per "
                   f"{source_wallet[:10]}: {info['title'][:40]}")
-            return False
+            return reject("source_wallet_position_cap")
 
         # Phase E: cap per categoria (anti-correlazione, es. 2 bet politica 2028)
         max_per_cat = BUDGET.get("max_positions_per_category", 99)
         category = info.get("category") or categorize_market(
-            info["title"], event_slug=info.get("slug", ""))
+            info["title"], event_slug=info.get("event_slug", ""))
         if max_per_cat < 99 and self._positions_for_category(category) >= max_per_cat:
             print(f"[SKIP] Cap categoria '{category}' raggiunto ({max_per_cat}): "
                   f"{info['title'][:40]}")
-            return False
+            return reject("category_position_cap")
 
         size = self._calculate_position_size(info.get("notional_usdc", 0.0))
 
@@ -574,31 +854,51 @@ class PaperTradingSimulator:
         if size > copy_avail:
             size = max(BUDGET["min_position_size"], copy_avail)
         if size < BUDGET["min_position_size"]:
-            return False
+            return reject("strategy_cap_below_min_size")
 
         # Phase B: soft-disable wallet win-rate basso (NON rimosso, size dimezzata)
-        factor = self._wallet_size_factor(source_wallet)
+        factor = (
+            1.0 if self.execution_mode == "paper_validation"
+            else self._wallet_size_factor(source_wallet)
+        )
         if factor < 1.0:
             size *= factor
             print(f"[SOFT-DISABLE] wallet {source_wallet[:10]} WR basso: "
                   f"size x{factor:.2f} -> ${size:.2f}")
 
         if size < BUDGET["min_position_size"]:
-            return False
+            return reject("wallet_factor_below_min_size")
 
         if size > self._available_cash():
             print(f"[SIMULATOR] Cash insufficiente (riserva): "
                   f"${self._available_cash():.2f} < ${size:.2f}")
-            return False
+            return reject("insufficient_cash_after_reserve")
 
         # Categoria (per fee) e costo d'ingresso: slippage + taker fee per categoria
-        category = info.get("category") or categorize_market(info["title"], event_slug=info.get("slug", ""))
-        slippage = SIMULATOR["entry_slippage"]
-        eff_price = min(0.999, price * (1 + slippage))
+        category = info.get("category") or categorize_market(
+            info["title"], event_slug=info.get("event_slug", "")
+        )
+        # VWAP sul book per l'intera size. Se la profondità non basta, il paper
+        # non inventa un fill.
+        planned_shares = size / price
+        try:
+            executable_ask = fetcher.get_executable_price(
+                asset, "BUY", planned_shares
+            ) if fetcher is not None else price
+        except TypeError:
+            executable_ask = price
+        if executable_ask is None:
+            return reject("insufficient_ask_depth_for_full_fill")
+        eff_price = float(executable_ask)
+        if eff_price <= 0 or eff_price >= 1:
+            return reject("invalid_executable_ask_vwap")
         fee_frac = taker_fee_fraction(category, eff_price)
         # Prezzo effettivo pagato includendo la fee taker (sport ~ rate*min(p,1-p))
         eff_price_with_fee = min(0.999, eff_price * (1 + fee_frac))
         shares = size / eff_price_with_fee
+        mark_bid = self._best_bid(fetcher, asset, shares)
+        if mark_bid is None:
+            return reject("insufficient_bid_depth_for_full_exit")
 
         position_id = str(uuid.uuid4())
         position = Position(
@@ -613,8 +913,13 @@ class PaperTradingSimulator:
             entry_time=datetime.now(),
             source_wallet=source_wallet,
             asset=asset,
+            run_id=self.run_id,
+            signal_id=signal_id,
+            event_id=info.get("event_id", ""),
+            event_slug=info.get("event_slug", ""),
+            event_title=info.get("event_title", ""),
             category=category,
-            current_price=price,
+            current_price=mark_bid,
         )
 
         position.strategy = "copy"
@@ -629,12 +934,21 @@ class PaperTradingSimulator:
             if (now - v).total_seconds() < BUDGET.get("dedup_window_sec", 3600)
         }
         self._save_recent_opens()
+        self._journal(
+            "opened", "paper_validation", strategy="copy", signal_id=signal_id,
+            wallet=source_wallet, info=info, book=book, position=position,
+            costs={
+                "fee_fraction": fee_frac,
+                "fee_price": eff_price_with_fee - eff_price,
+                "slippage_price": eff_price - price,
+            },
+        )
 
         print(f"\n[POSIZIONE APERTA] ({self.strategy_mode}, holders={num_holders}, cat={category})")
         print(f"  Mercato: {info['title'][:50]}")
         print(f"  Outcome: {info['outcome']}")
         print(f"  Size: ${size:.2f} | Pagato: ${eff_price_with_fee:.3f} "
-              f"(mkt ${price:.3f}, slip+fee {((eff_price_with_fee/price)-1)*100:.1f}%)")
+              f"(ask ${price:.3f}, fee {((eff_price_with_fee/price)-1)*100:.1f}%)")
         print(f"  Shares: {shares:.2f}")
         print(f"  Cash rimanente: ${self.portfolio.cash:.2f} | "
               f"Posizioni: {self.portfolio.open_positions_count}/{BUDGET['max_open_positions']}")
@@ -681,6 +995,10 @@ class PaperTradingSimulator:
 
         # Phase CI3: loggaclose con exit NETTO delle fee di uscita (come il pnl)
         self._log_close_trade(pos, exit_eff, reason)
+        self._record_close_risk(pos, pnl, reason)
+        self._journal("closed", reason, strategy=pos.strategy or "copy",
+                      wallet=pos.source_wallet, position=pos,
+                      costs={"exit_fee_price": exit_price - exit_eff})
         # Phase Z: notifica wallet manager per tracking P&L per-wallet (solo copy)
         if (pos.strategy or "copy") == "copy" and self.on_copy_close and pos.source_wallet:
             try:
@@ -735,24 +1053,30 @@ class PaperTradingSimulator:
             # posizionamientó prezzo: usa asset detentuto da wallet → aggregate;
             # altrimenti fallback CLOB
             cur = None
+            resolution_hint = None
             entry = aggregate.get(asset)
             redeemable = False
             if entry is not None:
                 info = entry["info"]
-                cur = info.get("cur_price")
+                resolution_hint = info.get("cur_price")
                 redeemable = info.get("redeemable", False)
-            if cur is None:
-                cur = fetcher.get_price(asset)
+            # Mark e uscita devono essere vendibili: sempre best bid, mai midpoint
+            # o prezzo indicativo del wallet sorgente.
+            cur = self._best_bid(fetcher, asset, pos.shares)
 
-            if redeemable or (cur is not None and (cur <= 0.0 or cur >= 1.0)):
-                resolved_price = (1.0 if (cur is not None and cur >= 0.5) else 0.0)
+            if redeemable:
+                resolved_price = (
+                    1.0 if (resolution_hint is not None and resolution_hint >= 0.5)
+                    else 0.0
+                )
                 self.close_by_asset(asset, resolved_price, "resolved")
                 continue
             if cur is None:
-                last = pos.current_price
-                if last <= 0.05 or last >= 0.95:
-                    self.close_by_asset(asset, 1.0 if last >= 0.5 else 0.0, "resolved")
-                continue  # prezzo ignoto, riprova prossimo ciclo
+                market = fetcher.get_market(pos.condition_id) if pos.condition_id else None
+                if market is not None and market.get("closed"):
+                    hint = resolution_hint if resolution_hint is not None else pos.current_price
+                    self.close_by_asset(asset, 1.0 if hint >= 0.5 else 0.0, "resolved")
+                continue
             if asset not in qualifying:
                 # Phase CI: se il wallet sorgente e' ancora monitorato, l'asset
                 # non in aggregate significa che il wallet ha VENDUTO → exit.
@@ -877,7 +1201,7 @@ class PaperTradingSimulator:
                 # approssimazione: lascia entry come current (risk-free-ish, no MTM)
                 continue
             if strat == "harvest":
-                cur = fetcher.get_price(pos.asset) if pos.asset else None
+                cur = self._best_bid(fetcher, pos.asset, pos.shares)
                 if cur is None:
                     # market may be resolved: prova a leggere via gamma
                     m = fetcher.get_market(pos.condition_id) if pos.condition_id else None
@@ -912,7 +1236,7 @@ class PaperTradingSimulator:
                 # else: hold-to-resolution (payout $1 è l'edge reale)
             elif strat == "momentum":
                 # Phase W: gestione momentum — SL/TP direzionale + resolution
-                cur = fetcher.get_price(pos.asset) if pos.asset else None
+                cur = self._best_bid(fetcher, pos.asset, pos.shares)
                 if cur is None:
                     m = fetcher.get_market(pos.condition_id) if pos.condition_id else None
                     if m is not None and m.get("closed"):
@@ -958,7 +1282,7 @@ class PaperTradingSimulator:
                     self._close_by_pid(pid, cur, "stop_loss")
             elif strat == "whale":
                 # Phase BB: gestione whale — TP/SL direzionale + resolution
-                cur = fetcher.get_price(pos.asset) if pos.asset else None
+                cur = self._best_bid(fetcher, pos.asset, pos.shares)
                 if cur is None:
                     m = fetcher.get_market(pos.condition_id) if pos.condition_id else None
                     if m is not None and m.get("closed"):
@@ -986,7 +1310,7 @@ class PaperTradingSimulator:
                     self._close_by_pid(pid, cur, "stop_loss")
             elif strat in ("sniper", "theta", "contrarian"):
                 # Phase DD/GG/II: gestione direzionale — TP/SL + resolution + trailing
-                cur = fetcher.get_price(pos.asset) if pos.asset else None
+                cur = self._best_bid(fetcher, pos.asset, pos.shares)
                 if cur is None:
                     m = fetcher.get_market(pos.condition_id) if pos.condition_id else None
                     if m is not None and m.get("closed"):
@@ -1049,6 +1373,10 @@ class PaperTradingSimulator:
         print(f"  Entry: ${pos.entry_price:.3f} -> Exit: ${exit_price:.3f}{fee_note}")
         print(f"  P&L: ${pnl:.2f} | Cash: ${self.portfolio.cash:.2f}")
         self._log_close_trade(pos, exit_eff, reason)
+        self._record_close_risk(pos, pnl, reason)
+        self._journal("closed", reason, strategy=pos.strategy or "copy",
+                      wallet=pos.source_wallet, position=pos,
+                      costs={"exit_fee_price": exit_price - exit_eff})
         self._save_state()
         return True
 
@@ -1079,7 +1407,8 @@ class PaperTradingSimulator:
         kelly_size = self.portfolio.total_value * kelly_frac
         return min(kelly_size, base_size * 1.5)  # max 1.5x base (anti over-bet)
 
-    def _cluster_check(self, strategy_name: str, condition_id: str, event_slug: str) -> bool:
+    def _cluster_check(self, strategy_name: str, condition_id: str,
+                       event_slug: str, proposed_size: float = 0.0) -> bool:
         """Phase FF: correlation-aware hedging — limita esposizione per evento cluster.
         Returns True se OK aprire, False se cluster saturato."""
         if not BUDGET.get("cluster_cap_pct", 0):
@@ -1089,16 +1418,17 @@ class PaperTradingSimulator:
             return True
         # conta posizioni aperte stesso evento
         same_cluster = [p for p in self.portfolio.positions.values()
-                        if (p.market_slug or getattr(p, '_event_slug', '') or p.condition_id) == cluster_key]
+                        if (p.event_slug or p.condition_id) == cluster_key]
         max_pos = BUDGET.get("cluster_max_positions", 5)
         if len(same_cluster) >= max_pos:
             print(f"[CLUSTER] {cluster_key[:20]}... saturato ({len(same_cluster)}/{max_pos})")
             return False
         # cap esposizione %
         cluster_deployed = sum(p.size_usdc for p in same_cluster)
-        cluster_cap = self.portfolio.total_value * BUDGET.get("cluster_cap_pct", 0.40)
-        if cluster_deployed >= cluster_cap:
-            print(f"[CLUSTER] {cluster_key[:20]}... cap $ {cluster_deployed:.0f} >= ${cluster_cap:.0f}")
+        cluster_cap = self.portfolio.total_value * BUDGET.get("cluster_cap_pct", 0.03)
+        projected = cluster_deployed + max(0.0, proposed_size)
+        if projected > cluster_cap:
+            print(f"[CLUSTER] {cluster_key[:20]}... projected ${projected:.0f} > ${cluster_cap:.0f}")
             return False
         return True
 
@@ -1107,50 +1437,116 @@ class PaperTradingSimulator:
     # ------------------------------------------------------------------
     def execute_opportunity(self, opp, fetcher) -> bool:
         """Esegue un'opportunita di strategia arb/harvest/arb_cross."""
-        if self._risk_factor() <= 0.0:
-            return False
-        # Phase CI1: DAILY loss limit + halt (vale per ogni strategia)
-        if self._daily_halt_check():
-            print(f"[SKIP] DAILY HALT attivo — execute_opportunity {opp.strategy} bloccato")
-            return False
         strat = opp.strategy
+        signal_id = uuid.uuid4().hex
+        setattr(opp, "signal_id", signal_id)
+        first_asset = (getattr(opp, "assets", None) or [""])[0]
+        book = fetcher.get_book(first_asset) if first_asset and fetcher else None
+        def reject(reason: str) -> bool:
+            self._journal("rejected", reason, strategy=strat,
+                          signal_id=signal_id, opp=opp, book=book)
+            return False
+
+        halt = self._opening_halt_reason(strat)
+        if halt:
+            self._journal("rejected", halt, strategy=strat, signal_id=signal_id,
+                          opp=opp, book=book)
+            return False
+        if self.portfolio.open_positions_count >= int(
+            EXECUTION.get("max_open_positions", BUDGET["max_open_positions"])
+        ):
+            self._journal("rejected", "max_open_positions", strategy=strat,
+                          signal_id=signal_id, opp=opp, book=book)
+            return False
+        active_assets = [asset for asset in (opp.assets or []) if asset]
+        live_books = [fetcher.get_book(asset) for asset in active_assets]
+        if not active_assets or any(
+            not item or item.get("best_ask") is None or item.get("best_bid") is None
+            for item in live_books
+        ):
+            return reject("no_executable_two_sided_book")
+        live_asks = [float(item["best_ask"]) for item in live_books]
+        opp.best_asks = live_asks
+        opp.book_sizes = [float(item.get("ask_size", 0) or 0) for item in live_books]
+        opp.spread_cents = [
+            (float(item["best_ask"]) - float(item["best_bid"])) * 100
+            for item in live_books
+        ]
+        if strat in ("arb_binary", "arb_cross"):
+            opp.cost_per_share = sum(live_asks)
+            opp.max_fill_size = min(
+                ask * size for ask, size in zip(live_asks, opp.book_sizes)
+            )
+        else:
+            opp.cost_per_share = live_asks[0]
+            opp.max_fill_size = live_asks[0] * opp.book_sizes[0]
+        if self._condition_is_open(opp.condition_id):
+            self._journal("rejected", "duplicate_open_condition", strategy=strat,
+                          signal_id=signal_id, opp=opp, book=book)
+            return False
+        if any(self.has_asset(asset) for asset in (opp.assets or []) if asset):
+            self._journal("rejected", "duplicate_open_asset", strategy=strat,
+                          signal_id=signal_id, opp=opp, book=book)
+            return False
+        if opp.condition_id in self.blocked_conditions:
+            market = fetcher.get_market(opp.condition_id) if fetcher else None
+            if market and market.get("closed"):
+                self.blocked_conditions.pop(opp.condition_id, None)
+                self._save_safety_state()
+                reason = "condition_resolved"
+            else:
+                reason = "condition_blocked_after_stop_loss"
+            self._journal("rejected", reason, strategy=strat, signal_id=signal_id,
+                          opp=opp, book=book)
+            return False
+        if self._risk_factor() <= 0.0:
+            self._journal("rejected", "legacy_equity_floor", strategy=strat,
+                          signal_id=signal_id, opp=opp, book=book)
+            return False
         # Phase CI2 (Guida 2: liquidity ≥$50K per uscite pulite). Controllo hard
         # anche su opp.market_volume (popolato in scan da gamma volumeNum).
         min_mv = float(STRATEGIES.get(strat, {}).get("min_market_volume_usdc", 0.0) or 0.0)
         if min_mv > 0 and float(getattr(opp, 'market_volume', 0.0) or 0.0) < min_mv:
             print(f"[SKIP] Liquidità mercato {getattr(opp,'market_volume',0):.0f} < "
                   f"{min_mv:.0f} per {strat}: {opp.market_title[:40]}")
-            return False
+            return reject("market_volume_below_minimum")
         # cap per strategia: max posizioni simultanee
         cfg = STRATEGIES.get(strat, {})
         max_pos = cfg.get("max_positions", 99)
         current_n = sum(1 for p in self.portfolio.positions.values()
                         if (p.strategy or "copy") == strat)
         if current_n >= max_pos:
-            return False
+            return reject("strategy_position_cap")
         # cap per strategia (soft): non superare cap_pct deployato
         avail = self._strategy_available(strat)
         max_single = self._max_single_for(strat)
         # size: min(max_single, avail, opportunity max_fill_size)
         # sizing compounding: usa il sizing base come upper bound
         size = self._sizing_compounding()
-        # Phase EE: Kelly fractional sizing (ottimizza per WR+payoff della strategia)
-        size = self._kelly_size(strat, size)
+        # Kelly/compounding non vengono applicati durante la validazione.
+        if self.execution_mode != "paper_validation":
+            size = self._kelly_size(strat, size)
         size = min(size, max_single, avail, opp.max_fill_size)
         if size < BUDGET["min_position_size"]:
-            return False
+            return reject("sizing_below_minimum")
         # equity floor block
         if self._risk_factor() <= 0.0:
-            return False
+            return reject("legacy_equity_floor")
         # Phase FF: cluster hedging — limita esposizione per evento
         event_slug = getattr(opp, 'event_slug', '') or ''
-        if not self._cluster_check(strat, opp.condition_id, event_slug):
+        if not self._cluster_check(
+            strat, opp.condition_id, event_slug, proposed_size=size
+        ):
+            self._journal("rejected", "event_exposure_limit", strategy=strat,
+                          signal_id=signal_id, opp=opp, book=book)
             return False
         # dedup per condition_id / asset
         now = datetime.now()
         dedup = BUDGET.get("dedup_window_sec", 3600)
         last = self.recent_opens.get(opp.condition_id)
         if last and (now - last).total_seconds() < dedup:
+            self._journal("rejected", "recent_condition_cooldown", strategy=strat,
+                          signal_id=signal_id, opp=opp, book=book)
             return False
 
         if strat == "arb_binary":
@@ -1169,7 +1565,7 @@ class PaperTradingSimulator:
             return self._open_directional(opp, size, fetcher, "theta")
         if strat == "contrarian":
             return self._open_directional(opp, size, fetcher, "contrarian")
-        return False
+        return reject("unknown_strategy")
 
     def _open_arb_binary(self, opp, size: float, fetcher) -> bool:
         # compriamo YES+NO equal shares; position = bundle con entry_price=cost,
@@ -1178,8 +1574,7 @@ class PaperTradingSimulator:
         if cost <= 0 or cost >= 1:
             return False
         # slippage simulato su entrambi i leg
-        slip = SIMULATOR["entry_slippage"]
-        eff_cost = cost * (1 + slip)  # bundle slippage approssimato
+        eff_cost = cost
         shares = size / eff_cost
         position = Position(
             position_id=str(uuid.uuid4()),
@@ -1193,6 +1588,11 @@ class PaperTradingSimulator:
             entry_time=datetime.now(),
             source_wallet="",
             asset=opp.assets[0],
+            run_id=self.run_id,
+            signal_id=getattr(opp, "signal_id", ""),
+            event_id=getattr(opp, "event_id", ""),
+            event_slug=getattr(opp, "event_slug", ""),
+            event_title=getattr(opp, "event_title", ""),
             category=opp.category,
             current_price=cost,
         )
@@ -1213,8 +1613,7 @@ class PaperTradingSimulator:
         ask = opp.cost_per_share  # ask favorito
         if ask <= 0 or ask >= 1:
             return False
-        slip = SIMULATOR["entry_slippage"]
-        eff = min(0.999, ask * (1 + slip))
+        eff = ask
         fee_frac = taker_fee_fraction(opp.category, eff)
         eff_fee = min(0.999, eff * (1 + fee_frac))
         shares = size / eff_fee
@@ -1230,8 +1629,13 @@ class PaperTradingSimulator:
             entry_time=datetime.now(),
             source_wallet="",
             asset=opp.assets[0],
+            run_id=self.run_id,
+            signal_id=getattr(opp, "signal_id", ""),
+            event_id=getattr(opp, "event_id", ""),
+            event_slug=getattr(opp, "event_slug", ""),
+            event_title=getattr(opp, "event_title", ""),
             category=opp.category,
-            current_price=ask,
+            current_price=self._best_bid(fetcher, opp.assets[0]) or ask,
         )
         position.strategy = "harvest"
         self.portfolio.add_position(position)
@@ -1250,8 +1654,7 @@ class PaperTradingSimulator:
         cost = opp.cost_per_share  # sum ask YES_i
         if cost <= 0 or cost >= 1:
             return False
-        slip = SIMULATOR["entry_slippage"]
-        eff_cost = cost * (1 + slip)
+        eff_cost = cost
         shares = size / eff_cost
         position = Position(
             position_id=str(uuid.uuid4()),
@@ -1265,6 +1668,11 @@ class PaperTradingSimulator:
             entry_time=datetime.now(),
             source_wallet="",
             asset=opp.assets[0],
+            run_id=self.run_id,
+            signal_id=getattr(opp, "signal_id", ""),
+            event_id=getattr(opp, "event_id", ""),
+            event_slug=getattr(opp, "event_slug", ""),
+            event_title=getattr(opp, "event_title", ""),
             category=opp.category,
             current_price=cost,
         )
@@ -1285,8 +1693,7 @@ class PaperTradingSimulator:
         ask = opp.cost_per_share
         if ask <= 0 or ask >= 1:
             return False
-        slip = SIMULATOR["entry_slippage"]
-        eff = min(0.999, ask * (1 + slip))
+        eff = ask
         fee_frac = taker_fee_fraction(opp.category, eff)
         eff_fee = min(0.999, eff * (1 + fee_frac))
         shares = size / eff_fee
@@ -1302,8 +1709,13 @@ class PaperTradingSimulator:
             entry_time=datetime.now(),
             source_wallet="",
             asset=opp.assets[0],
+            run_id=self.run_id,
+            signal_id=getattr(opp, "signal_id", ""),
+            event_id=getattr(opp, "event_id", ""),
+            event_slug=getattr(opp, "event_slug", ""),
+            event_title=getattr(opp, "event_title", ""),
             category=opp.category,
-            current_price=ask,
+            current_price=self._best_bid(fetcher, opp.assets[0]) or ask,
         )
         position.strategy = "momentum"
         self.portfolio.add_position(position)
@@ -1325,8 +1737,7 @@ class PaperTradingSimulator:
         ask = opp.cost_per_share
         if ask <= 0 or ask >= 1:
             return False
-        slip = SIMULATOR["entry_slippage"]
-        eff = min(0.999, ask * (1 + slip))
+        eff = ask
         fee_frac = taker_fee_fraction(opp.category, eff)
         eff_fee = min(0.999, eff * (1 + fee_frac))
         shares = size / eff_fee
@@ -1342,8 +1753,13 @@ class PaperTradingSimulator:
             entry_time=datetime.now(),
             source_wallet="",
             asset=opp.assets[0],
+            run_id=self.run_id,
+            signal_id=getattr(opp, "signal_id", ""),
+            event_id=getattr(opp, "event_id", ""),
+            event_slug=getattr(opp, "event_slug", ""),
+            event_title=getattr(opp, "event_title", ""),
             category=opp.category,
-            current_price=ask,
+            current_price=self._best_bid(fetcher, opp.assets[0]) or ask,
         )
         position.strategy = "whale"
         self.portfolio.add_position(position)
@@ -1365,8 +1781,7 @@ class PaperTradingSimulator:
         ask = opp.cost_per_share
         if ask <= 0 or ask >= 1:
             return False
-        slip = SIMULATOR["entry_slippage"]
-        eff = min(0.999, ask * (1 + slip))
+        eff = ask
         fee_frac = taker_fee_fraction(opp.category, eff)
         eff_fee = min(0.999, eff * (1 + fee_frac))
         shares = size / eff_fee
@@ -1385,8 +1800,13 @@ class PaperTradingSimulator:
             entry_time=datetime.now(),
             source_wallet="",
             asset=opp.assets[0],
+            run_id=self.run_id,
+            signal_id=getattr(opp, "signal_id", ""),
+            event_id=getattr(opp, "event_id", ""),
+            event_slug=getattr(opp, "event_slug", ""),
+            event_title=getattr(opp, "event_title", ""),
             category=opp.category,
-            current_price=ask,
+            current_price=self._best_bid(fetcher, opp.assets[0]) or ask,
         )
         position.strategy = strategy_name
         self.portfolio.add_position(position)
@@ -1403,8 +1823,13 @@ class PaperTradingSimulator:
     def _log_strategy_trade(self, position: Position, opp):
         trade_log = {
             "timestamp": datetime.now().isoformat(),
+            "run_id": self.run_id,
+            "signal_id": position.signal_id,
             "strategy": position.strategy,
             "condition_id": opp.condition_id,
+            "event_id": position.event_id,
+            "event_slug": position.event_slug,
+            "event_title": position.event_title,
             "position_id": position.position_id,
             "asset": position.asset,
             "market": position.market_title,
@@ -1426,6 +1851,21 @@ class PaperTradingSimulator:
                 json.dump(logs, f, indent=2)
         except Exception as e:
             print(f"[ERRORE] Salvataggio trade log: {e}")
+        asks = getattr(opp, "best_asks", []) or []
+        sizes = getattr(opp, "book_sizes", []) or []
+        spreads = getattr(opp, "spread_cents", []) or []
+        ask = asks[0] if asks else None
+        spread = (spreads[0] / 100.0) if spreads else None
+        self._journal(
+            "opened", "paper_validation", strategy=position.strategy,
+            signal_id=position.signal_id, opp=opp, position=position,
+            book={
+                "best_ask": ask,
+                "best_bid": (ask - spread) if ask is not None and spread is not None else None,
+                "ask_size": sizes[0] if sizes else None,
+                "bid_size": None,
+            },
+        )
 
     def _log_close_trade(self, position: Position, exit_price: float, reason: str):
         """Phase AA: logga chiusura trade con P&L completo per dashboard."""
@@ -1434,7 +1874,13 @@ class PaperTradingSimulator:
         hold_sec = (datetime.now() - position.entry_time).total_seconds() if position.entry_time else 0
         close_log = {
             "timestamp": datetime.now().isoformat(),
+            "run_id": position.run_id or self.run_id,
+            "signal_id": position.signal_id,
             "strategy": position.strategy or "copy",
+            "condition_id": position.condition_id,
+            "event_id": position.event_id,
+            "event_slug": position.event_slug,
+            "event_title": position.event_title,
             "position_id": position.position_id,
             "asset": position.asset,
             "market": position.market_title,
@@ -1472,7 +1918,7 @@ class PaperTradingSimulator:
         """Phase FF: ritorna event_slug -> total USDC deployato per cluster."""
         clusters: Dict[str, float] = {}
         for p in self.portfolio.positions.values():
-            key = p.market_slug or p.condition_id or "unknown"
+            key = p.event_slug or p.condition_id or "unknown"
             clusters[key] = clusters.get(key, 0) + p.size_usdc
         return dict(sorted(clusters.items(), key=lambda kv: kv[1], reverse=True)[:10])
 
@@ -1506,8 +1952,17 @@ class PaperTradingSimulator:
         peak = getattr(self, "peak_equity", self.portfolio.total_value)
         dd_pct = ((peak - self.portfolio.total_value) / peak) if peak > 0 else 0.0
 
+        circuit_reason = self._evaluate_equity_halts()
+        effective_halt = circuit_reason or self.halt_reason
+        if not effective_halt and self.execution_mode == "observe":
+            effective_halt = "Quarantena: nuove aperture disabilitate"
+
         return {
             "strategy_mode": self.strategy_mode,
+            "execution_mode": self.execution_mode,
+            "halt_reason": effective_halt,
+            "run_id": self.run_id,
+            "state_saved_at": self.state_saved_at,
             "initial_capital": self.portfolio.initial_capital,
             "current_value": self.portfolio.total_value,
             "cash": self.portfolio.cash,
@@ -1535,10 +1990,24 @@ class PaperTradingSimulator:
             "trailing_stop_enabled": BUDGET.get("trailing_stop_enabled", False),
             "kelly_enabled": BUDGET.get("kelly_enabled", False),
             "cluster_cap_pct": BUDGET.get("cluster_cap_pct", 0),
-            "active_strategies": [s for s in STRATEGIES if STRATEGIES[s].get("enabled", True) and s != "value"],
+            "active_strategies": [
+                s for s in STRATEGIES
+                if STRATEGIES[s].get("scan_enabled", False) and s != "value"
+            ],
+            "paper_enabled_strategies": [
+                s for s in STRATEGIES
+                if STRATEGIES[s].get("paper_enabled", False)
+            ],
+            "quarantined_strategies": sorted(self.quarantined_strategies),
+            "blocked_conditions": sorted(self.blocked_conditions),
             "deployed_usdc": sum(p.size_usdc for p in self.portfolio.positions.values()),
             # cluster exposure: event_slug -> total deployed
             "cluster_exposure": self._cluster_exposure(),
+            "cluster_labels": {
+                (p.event_slug or p.condition_id or "unknown"):
+                    (p.event_title or p.event_slug or p.market_title)
+                for p in self.portfolio.positions.values()
+            },
         }
 
     def _get_best_trade(self) -> Optional[Dict]:
@@ -1635,11 +2104,17 @@ class PaperTradingSimulator:
     def _log_trade(self, wallet_address: str, position: Position, num_holders: int):
         trade_log = {
             "timestamp": datetime.now().isoformat(),
+            "run_id": position.run_id or self.run_id,
+            "signal_id": position.signal_id,
             "strategy": self.strategy_mode,
             "wallet_address": wallet_address,
             "num_holders": num_holders,
             "position_id": position.position_id,
             "asset": position.asset,
+            "condition_id": position.condition_id,
+            "event_id": position.event_id,
+            "event_slug": position.event_slug,
+            "event_title": position.event_title,
             "market": position.market_title,
             "outcome": position.outcome,
             "side": "BUY",
@@ -1664,7 +2139,11 @@ class PaperTradingSimulator:
     # ------------------------------------------------------------------
     def _save_state(self):
         try:
+            saved_at = datetime.now().isoformat()
             state = {
+                "state_version": 2,
+                "run_id": self.run_id,
+                "execution_mode": self.execution_mode,
                 "initial_capital": self.portfolio.initial_capital,
                 "cash": self.portfolio.cash,
                 "strategy_mode": self.strategy_mode,
@@ -1679,9 +2158,10 @@ class PaperTradingSimulator:
                     for pos in self.portfolio.closed_positions
                 ],
                 "closed_count": len(self.portfolio.closed_positions),
-                "saved_at": datetime.now().isoformat()
+                "saved_at": saved_at,
             }
             self._atomic_write_json(self.state_file, state)
+            self.state_saved_at = saved_at
         except Exception as e:
             print(f"[ERRORE] Salvataggio stato: {e}")
 
@@ -1721,6 +2201,11 @@ class PaperTradingSimulator:
             "market_title": pos.market_title,
             "market_slug": pos.market_slug,
             "condition_id": pos.condition_id,
+            "run_id": pos.run_id,
+            "signal_id": pos.signal_id,
+            "event_id": pos.event_id,
+            "event_slug": pos.event_slug,
+            "event_title": pos.event_title,
             "asset": pos.asset,
             "category": pos.category,
             "outcome": pos.outcome,
@@ -1742,8 +2227,8 @@ class PaperTradingSimulator:
         pos = Position(
             position_id=data["position_id"],
             market_title=data["market_title"],
-            market_slug=data["market_slug"],
-            condition_id=data["condition_id"],
+            market_slug=data.get("market_slug", ""),
+            condition_id=data.get("condition_id", ""),
             outcome=data.get("outcome", ""),
             entry_price=data["entry_price"],
             size_usdc=data["size_usdc"],
@@ -1751,6 +2236,11 @@ class PaperTradingSimulator:
             entry_time=datetime.fromisoformat(data["entry_time"]),
             source_wallet=data["source_wallet"],
             asset=data.get("asset", ""),
+            run_id=data.get("run_id", self.run_id),
+            signal_id=data.get("signal_id", f"legacy-{data.get('position_id', '')}"),
+            event_id=data.get("event_id", ""),
+            event_slug=data.get("event_slug", ""),
+            event_title=data.get("event_title", ""),
             category=data.get("category", ""),
             current_price=data.get("current_price", data["entry_price"]),
             exit_price=data.get("exit_price"),
@@ -1793,6 +2283,13 @@ class PaperTradingSimulator:
                 return
 
         try:
+            self.state_saved_at = state.get("saved_at")
+            stored_run = state.get("run_id")
+            if stored_run:
+                self.run_id = str(stored_run)
+            elif self.state_saved_at:
+                compact = "".join(ch for ch in self.state_saved_at if ch.isdigit())[:14]
+                self.run_id = f"legacy-{compact or 'unknown'}"
             self.portfolio.cash = state["cash"]
             self.baseline_done = state.get("baseline_done", False)
             self.baseline_assets = set(state.get("baseline_assets", []))

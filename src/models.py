@@ -53,6 +53,9 @@ class Trade:
     
     # Metadata
     event_slug: str = ""
+    event_id: str = ""
+    run_id: str = ""
+    signal_id: str = ""
     icon: str = ""
     
     @property
@@ -81,6 +84,14 @@ class Position:
     
     # Identificativo univoco del token (asset / ERC1155 token id Polymarket)
     asset: str = ""
+
+    # Identità prospettica e correlazione. I default mantengono compatibilità con
+    # ledger creati prima della Phase CK.
+    run_id: str = ""
+    signal_id: str = ""
+    event_id: str = ""
+    event_slug: str = ""
+    event_title: str = ""
     
     # Categoria di mercato (sport/crypto/politics/weather/other) per fee e analisi
     category: str = ""
@@ -107,7 +118,7 @@ class Position:
     @property
     def pnl(self) -> float:
         """Profit/Loss non realizzato"""
-        if self.is_closed and self.exit_price:
+        if self.is_closed and self.exit_price is not None:
             return (self.exit_price - self.entry_price) * self.shares
         return (self.current_price - self.entry_price) * self.shares
     

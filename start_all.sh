@@ -3,23 +3,23 @@
 # Polymarket Paper Trading Bot - gestione servizi (Linux / VPS)
 #
 # Uso:
-#   ./start_all.sh [start|stop|restart|install|reset|status|logs|scan] [scan] [reset]
+#   ./start_all.sh [start|stop|restart|new-run|reset|install|status|logs|scan]
 #
 #   start    (default) installa deps se serve, ferma istanze precedenti e avvia
-#   start scan|reset  forza scan wallet e/o azzera storico prima dell'avvio
+#   start scan  forza scan wallet prima dell'avvio
 #   scan     aggiorna data/scan_results.json (wallet specialisti per categoria)
 #   stop     ferma bot + dashboard (via PID file, con fallback)
-#   restart  stop + (chiede se azzerare storico) + start
-#   restart reset|scan  riavvio con opzioni esplicite (no prompt se reset)
+#   restart  stop + start, conserva sempre tutto lo stato
+#   new-run  archivia ledger/config del run corrente, poi avvia un run nuovo
 #   install  crea/aggiorna virtualenv e installa requirements
-#   reset    ferma tutto e azzera lo stato della simulazione (senza riavviare)
+#   reset --force  archivia e poi azzera lo stato (senza riavviare)
 #   status   mostra stato dei servizi
 #   logs     segue i log in tempo reale
 #
-#   Env: SCAN=1 forza scan | RESET=1 azzera storico senza prompt
+#   Env: SCAN=1 forza scan | LATENCY_ARB_ENABLED=1 abilita il validator
 #
 #   Deploy VPS (dopo git pull / copia file):
-#     ./start_all.sh restart reset scan
+#     ./start_all.sh restart
 #   Poi il bot aggiorna da solo la lista wallet ogni 6h — niente cron manuale.
 #
 set -euo pipefail
@@ -111,10 +111,6 @@ ensure_wallet_scan() {
 
 start_services() {
   local force_scan="${1:-0}"
-  local reset_flag="${2:-0}"
-  if [ "$reset_flag" = "1" ]; then
-    clear_trading_state
-  fi
   ensure_venv
   mkdir -p "$DATA_DIR" "$LOGS_DIR"
   ensure_wallet_scan "$force_scan"
@@ -128,13 +124,14 @@ start_services() {
   nohup "$(venv_py)" -u src/main.py >"$LOGS_DIR/bot.log" 2>&1 &
   sleep 3
 
-  # Phase CJ0 (Guida 2: latency arb Step 0). Validatore standalone, NESSUN ordine
-  # reale, solo signal detection su feed reali (Binance + Polymarket). Log
-  # dedicato logs/latency_arb.log + stats in data/latency_arb_stats.json.
-  echo "[START] Latency-arb validator (Step 0, PAPER detection, no ordini) ..."
-  nohup "$(venv_py)" -u src/latency_arb.py >"$LOGS_DIR/latency_arb.log" 2>&1 &
-  echo $! > "$DATA_DIR/latency_arb.pid"
-  sleep 2
+  if [ "${LATENCY_ARB_ENABLED:-0}" = "1" ]; then
+    echo "[START] Latency-arb validator esplicitamente abilitato ..."
+    nohup "$(venv_py)" -u src/latency_arb.py >"$LOGS_DIR/latency_arb.log" 2>&1 &
+    echo $! > "$DATA_DIR/latency_arb.pid"
+    sleep 2
+  else
+    echo "[START] Latency-arb: FERMO (default di quarantena)"
+  fi
 
   show_status
   echo ""
@@ -142,9 +139,51 @@ start_services() {
   echo "Stop:      ./start_all.sh stop"
 }
 
+archive_run() {
+  ensure_venv
+  mkdir -p "$DATA_DIR/runs"
+  local run_id
+  run_id="$("$(venv_py)" -c 'import json,pathlib,datetime; p=pathlib.Path("data/portfolio_state.json"); d=json.loads(p.read_text()) if p.exists() else {}; print(d.get("run_id") or ("legacy-"+datetime.datetime.now().strftime("%Y%m%dT%H%M%S")))' 2>/dev/null || true)"
+  run_id="$(printf '%s' "$run_id" | tr -cd 'A-Za-z0-9._-')"
+  run_id="$(printf '%s' "$run_id" | sed 's/^[._-]*//;s/[._-]*$//')"
+  [ -n "$run_id" ] || run_id="legacy-$(date -u +%Y%m%dT%H%M%S)"
+  local archive_dir="$DATA_DIR/runs/$run_id"
+  if [ -e "$archive_dir" ]; then
+    archive_dir="${archive_dir}-$(date -u +%Y%m%dT%H%M%S)"
+  fi
+  mkdir -p "$archive_dir"
+  for file in \
+    portfolio_state.json portfolio_state.json.bak trades_log.json \
+    equity_curve.json peak_equity.json recent_opens.json daily_halt.json \
+    safety_state.json candidate_journal.jsonl monitored_wallets.json; do
+    if [ -f "$DATA_DIR/$file" ]; then
+      cp -a "$DATA_DIR/$file" "$archive_dir/$file"
+    fi
+  done
+  cp -a src/config.py "$archive_dir/config.py"
+  git rev-parse HEAD > "$archive_dir/deployed_commit.txt" 2>/dev/null || true
+  printf '{"run_id":"%s","archived_at":"%s"}\n' \
+    "$run_id" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$archive_dir/archive_manifest.json"
+  echo "[ARCHIVE] Run preservato in $archive_dir"
+}
+
 reset_state() {
+  local force="${1:-0}"
+  if [ "$force" != "1" ]; then
+    echo "[ERRORE] reset richiede --force. Lo stato non è stato modificato."
+    exit 2
+  fi
   stop_services
+  archive_run
   clear_trading_state
+}
+
+new_run() {
+  local force_scan="${1:-0}"
+  stop_services
+  archive_run
+  clear_trading_state
+  start_services "$force_scan"
 }
 
 clear_trading_state() {
@@ -157,12 +196,12 @@ clear_trading_state() {
   rm -f "$DATA_DIR/peak_equity.json"
   # Phase I: recent_opens (dedup anti-reopen) — no blocchi da run vecchi
   rm -f "$DATA_DIR/recent_opens.json"
+  rm -f "$DATA_DIR/safety_state.json" "$DATA_DIR/candidate_journal.jsonl"
+  rm -f "$DATA_DIR/monitored_wallets.json"
   # Phase W: price history (momentum tracker) — no stale trend data dopo reset
   rm -f "$DATA_DIR/price_history.json"
   # Phase BB: whale wallet list — no stale whale list dopo reset
   rm -f "$DATA_DIR/whale_wallets.json"
-  # Backup locali vecchi (cartella backup_*)
-  rm -rf "$DATA_DIR"/backup_*
   # Alert log (Phase L) — riparte vuoto
   rm -f "$LOGS_DIR/alerts.log"
   # Phase CJ0: latency arb validator — azzera signal log + stats + pending
@@ -182,34 +221,9 @@ has_trading_history() {
     || [ -f "$DATA_DIR/equity_curve.json" ]
 }
 
-prompt_clear_history() {
-  local reset_flag="${1:-0}"
-  if [ "$reset_flag" = "1" ]; then
-    clear_trading_state
-    return
-  fi
-  if ! has_trading_history; then
-    echo "[INFO] Nessuno storico da azzerare."
-    return
-  fi
-  if [ -t 0 ]; then
-    echo ""
-    echo "Trovato storico operazioni (portfolio, trade, equity)."
-    read -r -p "Azzerare lo storico e ripartire da budget iniziale? [s/N] " ans
-    case "$ans" in
-      s|S|si|Si|SI|y|Y|yes|Yes) clear_trading_state ;;
-      *) echo "[INFO] Storico mantenuto." ;;
-    esac
-  else
-    echo "[INFO] Storico mantenuto (non interattivo: usa 'restart reset' o RESET=1)."
-  fi
-}
-
 restart_services() {
   local force_scan="${1:-0}"
-  local reset_flag="${2:-0}"
   stop_services
-  prompt_clear_history "$reset_flag"
   start_services "$force_scan"
 }
 
@@ -234,28 +248,33 @@ shift $(( $# > 0 ? 1 : 0 )) || true
 
 FORCE_SCAN_FLAG=0
 RESET_FLAG=0
+FORCE_FLAG=0
 for arg in "$@"; do
   case "$arg" in
     scan) FORCE_SCAN_FLAG=1 ;;
-    reset|fresh) RESET_FLAG=1 ;;
+    --force) FORCE_FLAG=1 ;;
+    reset|fresh)
+      echo "[ERRORE] 'restart reset' non è più supportato. Usa 'new-run' oppure 'reset --force'."
+      exit 2
+      ;;
     *)
       echo "Opzione sconosciuta: $arg"
-      echo "Uso: $0 [start|stop|restart|install|reset|status|logs|scan] [scan] [reset]"
+      echo "Uso: $0 [start|stop|restart|new-run|install|reset|status|logs|scan] [scan] [--force]"
       exit 1
       ;;
   esac
 done
 [ "${SCAN:-0}" = "1" ] || [ "${FORCE_SCAN:-0}" = "1" ] && FORCE_SCAN_FLAG=1
-[ "${RESET:-0}" = "1" ] && RESET_FLAG=1
 
 case "$ACTION" in
-  start)   start_services "$FORCE_SCAN_FLAG" "$RESET_FLAG" ;;
+  start)   start_services "$FORCE_SCAN_FLAG" ;;
   stop)    stop_services ;;
-  restart) restart_services "$FORCE_SCAN_FLAG" "$RESET_FLAG" ;;
+  restart) restart_services "$FORCE_SCAN_FLAG" ;;
+  new-run) new_run "$FORCE_SCAN_FLAG" ;;
   install) ensure_venv; install_deps; run_wallet_scan ;;
   scan)    run_wallet_scan ;;
-  reset)   reset_state ;;
+  reset)   reset_state "$FORCE_FLAG" ;;
   status)  show_status ;;
   logs)    tail -f "$LOGS_DIR/bot.log" "$LOGS_DIR/dashboard.log" "$LOGS_DIR/latency_arb.log" ;;
-  *) echo "Uso: $0 [start|stop|restart|install|reset|status|logs|scan] [scan] [reset]"; exit 1 ;;
+  *) echo "Uso: $0 [start|stop|restart|new-run|install|reset|status|logs|scan] [scan] [--force]"; exit 1 ;;
 esac

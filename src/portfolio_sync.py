@@ -61,12 +61,18 @@ class PolymarketPositionFetcher:
         avg_price = float(p.get("avgPrice", 0.0) or 0.0)
         title = p.get("title", "Unknown Market")
         slug = p.get("slug", "")
+        event_slug = p.get("eventSlug") or p.get("event_slug") or ""
+        event_id = str(p.get("eventId") or p.get("event_id") or "")
+        event_title = p.get("eventTitle") or p.get("event_title") or ""
         return {
             "asset": str(p.get("asset", "")),
             "condition_id": p.get("conditionId", ""),
             "title": title,
             "slug": slug,
-            "category": categorize_market(title, event_slug=slug),
+            "event_id": event_id,
+            "event_slug": event_slug,
+            "event_title": event_title,
+            "category": categorize_market(title, event_slug=event_slug or slug),
             "outcome": p.get("outcome", ""),
             "outcome_index": p.get("outcomeIndex", 0),
             "size": size,
@@ -76,6 +82,10 @@ class PolymarketPositionFetcher:
             "cash_pnl": float(p.get("cashPnl", 0.0) or 0.0),
             "realized_pnl": float(p.get("realizedPnl", 0.0) or 0.0),
             "redeemable": bool(p.get("redeemable", False)),
+            "source_trade_at": (
+                p.get("timestamp") or p.get("lastUpdated")
+                or p.get("updatedAt") or p.get("createdAt")
+            ),
             "end_date": p.get("endDate", ""),
             # Phase D: data di scadenza ISO per filtro capital-lock
             "end_date_iso": p.get("endDate", ""),
@@ -112,6 +122,14 @@ class PolymarketPositionFetcher:
                 pr = float(a["price"])
                 if best_ask is None or pr < best_ask:
                     best_ask = pr; ask_size = float(a["size"])
+            bid_levels = sorted(
+                [{"price": float(x["price"]), "size": float(x["size"])} for x in bids],
+                key=lambda x: x["price"], reverse=True,
+            )
+            ask_levels = sorted(
+                [{"price": float(x["price"]), "size": float(x["size"])} for x in asks],
+                key=lambda x: x["price"],
+            )
             return {
                 "best_bid": best_bid,
                 "best_ask": best_ask,
@@ -119,6 +137,8 @@ class PolymarketPositionFetcher:
                 "ask_size": ask_size,
                 "mid": ((best_bid + best_ask) / 2) if (best_bid is not None and best_ask is not None) else None,
                 "spread": ((best_ask - best_bid) if (best_bid is not None and best_ask is not None) else None),
+                "bid_levels": bid_levels,
+                "ask_levels": ask_levels,
             }
         except Exception:
             return None
@@ -158,25 +178,35 @@ class PolymarketPositionFetcher:
 
     def get_price(self, token_id: str) -> Optional[float]:
         """
-        Prezzo corrente di un token via CLOB midpoint.
-        Usato come fallback per valorizzare posizioni che nessun wallet
-        monitorato detiene piu (es. quando il wallet sorgente e' uscito).
-
-        Returns:
-            float in [0,1] oppure None se non disponibile (es. mercato risolto
-            senza orderbook).
+        Compatibilità legacy: ritorna il best bid eseguibile, mai il midpoint.
+        Per nuovi call-site usare esplicitamente `get_executable_price`.
         """
-        try:
-            url = f"{self.clob}/midpoint"
-            response = self.session.get(url, params={"token_id": token_id}, timeout=10)
-            if response.ok:
-                data = response.json()
-                mid = data.get("mid")
-                if mid is not None:
-                    return float(mid)
-        except Exception:
-            pass
-        return None
+        return self.get_executable_price(token_id, "SELL")
+
+    def get_executable_price(self, token_id: str, side: str,
+                             size_shares: float = 0.0) -> Optional[float]:
+        """VWAP attraversabile ora; con size=0 ritorna il top of book."""
+        book = self.get_book(token_id)
+        if not book:
+            return None
+        key = "best_ask" if side.upper() == "BUY" else "best_bid"
+        if size_shares and size_shares > 0:
+            levels_key = "ask_levels" if side.upper() == "BUY" else "bid_levels"
+            remaining = float(size_shares)
+            notional = 0.0
+            filled = 0.0
+            for level in book.get(levels_key, []):
+                take = min(remaining, float(level["size"]))
+                notional += take * float(level["price"])
+                filled += take
+                remaining -= take
+                if remaining <= 1e-9:
+                    break
+            if remaining > 1e-9 or filled <= 0:
+                return None
+            return notional / filled
+        value = book.get(key)
+        return float(value) if value is not None else None
 
     # ----------------------------------------------------------------
     # Phase M: scanning mercati attivi per strategie arb/harvest (gamma)
@@ -219,13 +249,20 @@ class PolymarketPositionFetcher:
         events = m.get("events") or []
         event_slug = events[0].get("slug", "") if events else ""
         event_ticker = events[0].get("ticker", "") if events else ""
+        event_id = str(events[0].get("id", "")) if events else ""
+        event_title = events[0].get("title", "") if events else ""
+        tags = (events[0].get("tags") or []) if events else []
+        tags = tags or m.get("tags") or []
         title = m.get("question") or m.get("title", "")
         return {
             "condition_id": m.get("conditionId", ""),
             "question": title,
             "slug": m.get("slug", ""),
             "event_slug": event_slug,
+            "event_id": event_id,
+            "event_title": event_title,
             "event_ticker": event_ticker,
+            "tags": tags,
             "outcomes": outcomes,        # ["Yes","No"]
             "tokens": tokens,             # [asset_yes, asset_no]
             "end_date": m.get("endDate", ""),
@@ -234,7 +271,8 @@ class PolymarketPositionFetcher:
             "closed": bool(m.get("closed", False)),
             "category": categorize_market(question=title, event_ticker=event_ticker,
                                            event_slug=event_slug,
-                                           fee_type=m.get("feeType", "")),
+                                           fee_type=m.get("feeType", ""),
+                                           tags=tags),
         }
 
     def get_active_markets(self, limit: int = 100, min_volume: float = 1000.0) -> List[Dict]:

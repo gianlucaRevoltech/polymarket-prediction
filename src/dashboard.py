@@ -5,6 +5,7 @@ Interfaccia leggera Flask per monitoraggio real-time
 import sys
 import json
 import os
+import subprocess
 from datetime import datetime
 from pathlib import Path
 
@@ -21,6 +22,28 @@ from simulator import PaperTradingSimulator
 from config import BUDGET, STRATEGY, DATA_DIR
 
 app = Flask(__name__, template_folder=str(Path(__file__).parent / "templates"))
+
+
+@app.after_request
+def disable_cache(response):
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
+
+def get_deployed_commit():
+    marker = DATA_DIR / "deployed_commit.txt"
+    try:
+        if marker.exists():
+            return marker.read_text(encoding="utf-8").strip()
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=BASE_DIR, capture_output=True,
+            text=True, timeout=3, check=False,
+        )
+        return result.stdout.strip() if result.returncode == 0 else ""
+    except Exception:
+        return ""
 
 
 def get_portfolio_data():
@@ -44,6 +67,11 @@ def get_portfolio_data():
                 "entry_time": pos.entry_time.strftime("%Y-%m-%d %H:%M"),
                 "source_wallet": pos.source_wallet[:10] + "..." if pos.source_wallet else "",
                 "category": pos.category or "",
+                "event_id": pos.event_id,
+                "event_slug": pos.event_slug,
+                "event_title": pos.event_title,
+                "run_id": pos.run_id,
+                "signal_id": pos.signal_id,
             })
         # Ordina per P&L desc (vincenti in alto)
         positions.sort(key=lambda p: p["pnl"], reverse=True)
@@ -79,6 +107,8 @@ def get_portfolio_data():
                 "reason": pos.close_reason or "",
                 "close_time": exit_time.strftime("%Y-%m-%d %H:%M") if exit_time else "",
                 "win": pos.pnl > 0,
+                "event_slug": pos.event_slug,
+                "run_id": pos.run_id,
             })
         
         return {
@@ -87,7 +117,12 @@ def get_portfolio_data():
             "recent_trades": recent_trades,
             "closed_positions": closed_positions,
             "monitored_wallets": get_monitored_wallets(),
-            "bot_status": get_bot_status()
+            "bot_status": get_bot_status(),
+            "execution_mode": summary.get("execution_mode"),
+            "halt_reason": summary.get("halt_reason"),
+            "run_id": summary.get("run_id"),
+            "state_saved_at": summary.get("state_saved_at"),
+            "deployed_commit": get_deployed_commit(),
         }
     except Exception as e:
         return {
@@ -116,8 +151,8 @@ def get_portfolio_data():
 
 
 def get_monitored_wallets():
-    """Carica wallet monitorati dal file scan results"""
-    results_file = DATA_DIR / "scan_results.json"
+    """Carica solo il manifest della lista realmente usata dal bot."""
+    results_file = DATA_DIR / "monitored_wallets.json"
     if not results_file.exists():
         return []
     
@@ -126,7 +161,8 @@ def get_monitored_wallets():
             data = json.load(f)
         
         wallets = []
-        for w in data.get("wallets", [])[:30]:
+        for raw in data.get("wallets", []):
+            w = raw if isinstance(raw, dict) else {"address": raw}
             wallets.append({
                 "name": w.get("name", "Unknown"),
                 "address": w.get("address", ""),
@@ -146,7 +182,7 @@ def get_bot_status():
     """Verifica se il bot è in esecuzione controllando il file PID"""
     try:
         # Controlla il file PID
-        pid_file = BASE_DIR / "data" / "bot.pid"
+        pid_file = DATA_DIR / "bot.pid"
         if pid_file.exists():
             with open(pid_file, 'r') as f:
                 pid = int(f.read().strip())
@@ -229,7 +265,7 @@ def run_dashboard(host="0.0.0.0", port=5000):
     print(f"{'='*60}\n")
 
     # Scrivi PID per stop/restart puliti da parte degli script
-    pid_file = BASE_DIR / "data" / "dashboard.pid"
+    pid_file = DATA_DIR / "dashboard.pid"
     pid_file.parent.mkdir(parents=True, exist_ok=True)
     with open(pid_file, "w") as f:
         f.write(str(os.getpid()))

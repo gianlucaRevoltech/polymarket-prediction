@@ -3,19 +3,19 @@ REM ============================================================
 REM  Polymarket Paper Trading Bot - gestione servizi (Windows)
 REM
 REM  Uso:
-REM    start_all.bat [start|stop|restart|install|reset|status|scan] [scan] [reset]
+REM    start_all.bat [start|stop|restart|new-run|install|reset|status|scan] [scan] [--force]
 REM
 REM    start    (default) installa deps se serve, ferma istanze e avvia
-REM    start scan|reset  forza scan wallet e/o azzera storico prima dell'avvio
+REM    start scan  forza scan wallet prima dell'avvio
 REM    scan     aggiorna data\scan_results.json (wallet specialisti per categoria)
 REM    stop     ferma bot + dashboard (via PID file)
-REM    restart  stop + (chiede se azzerare storico) + start
-REM    restart reset|scan  riavvio con opzioni esplicite (no prompt se reset)
+REM    restart  stop + start, conserva sempre stato e storico
+REM    new-run  archivia ledger/config, azzera il run corrente e riavvia
 REM    install  crea/aggiorna virtualenv e installa requirements
-REM    reset    ferma tutto e azzera lo stato della simulazione (senza riavviare)
+REM    reset --force  archivia e poi azzera (senza riavviare)
 REM    status   mostra stato dei servizi
 REM
-REM    Env: set SCAN=1 forza scan | set RESET=1 azzera storico senza prompt
+REM    Env: set SCAN=1 forza scan
 REM ============================================================
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
@@ -30,58 +30,50 @@ set "ACTION=%~1"
 if "%ACTION%"=="" set "ACTION=start"
 
 set "SCAN_FORCE=0"
-set "RESET_FLAG=0"
+set "FORCE_FLAG=0"
 call :parse_opt %2
+if errorlevel 1 exit /b %errorlevel%
 call :parse_opt %3
+if errorlevel 1 exit /b %errorlevel%
 call :parse_opt %4
+if errorlevel 1 exit /b %errorlevel%
 if "%SCAN%"=="1" set "SCAN_FORCE=1"
 if "%FORCE_SCAN%"=="1" set "SCAN_FORCE=1"
-if "%RESET%"=="1" set "RESET_FLAG=1"
 
 if /i "%ACTION%"=="start"   goto :start
 if /i "%ACTION%"=="stop"    goto :stop_only
 if /i "%ACTION%"=="restart" goto :restart
+if /i "%ACTION%"=="new-run" goto :new_run
 if /i "%ACTION%"=="install" goto :install_only
 if /i "%ACTION%"=="reset"   goto :reset
 if /i "%ACTION%"=="status"  goto :status
 if /i "%ACTION%"=="scan"    goto :scan_only
 
 echo Azione sconosciuta: %ACTION%
-echo Uso: start_all.bat [start^|stop^|restart^|install^|reset^|status^|scan] [scan] [reset]
+echo Uso: start_all.bat [start^|stop^|restart^|new-run^|install^|reset^|status^|scan] [scan] [--force]
 exit /b 1
 
 :parse_opt
 if "%~1"=="" exit /b 0
 if /i "%~1"=="scan" set "SCAN_FORCE=1"
-if /i "%~1"=="reset" set "RESET_FLAG=1"
-if /i "%~1"=="fresh" set "RESET_FLAG=1"
+if /i "%~1"=="--force" set "FORCE_FLAG=1"
+if /i "%~1"=="reset" (
+  echo [ERRORE] 'restart reset' rimosso. Usa new-run oppure reset --force.
+  exit /b 2
+)
+if /i "%~1"=="fresh" (
+  echo [ERRORE] 'fresh' rimosso. Usa new-run.
+  exit /b 2
+)
 exit /b 0
 
 :clear_state
-echo [RESET] Azzero lo stato della simulazione...
-del /q "data\portfolio_state.json" >nul 2>&1
-del /q "data\trades_log.json" >nul 2>&1
-del /q "data\equity_curve.json" >nul 2>&1
-echo [RESET] Stato azzerato (scan_results.json mantenuto).
-exit /b 0
+"%PY%" tools\run_state.py clear --force
+exit /b %errorlevel%
 
-:prompt_clear_history
-if exist "data\portfolio_state.json" goto :ask_reset
-if exist "data\trades_log.json" goto :ask_reset
-if exist "data\equity_curve.json" goto :ask_reset
-echo [INFO] Nessuno storico da azzerare.
-exit /b 0
-
-:ask_reset
-echo.
-echo Trovato storico operazioni (portfolio, trade, equity).
-choice /C SN /M "Azzerare lo storico e ripartire da budget iniziale"
-if errorlevel 2 (
-  echo [INFO] Storico mantenuto.
-  exit /b 0
-)
-call :clear_state
-exit /b 0
+:archive_state
+"%PY%" tools\run_state.py archive
+exit /b %errorlevel%
 
 REM ----------------------------------------------------------------
 :ensure_venv
@@ -166,18 +158,32 @@ goto :status
 
 REM ----------------------------------------------------------------
 :reset
+if not "%FORCE_FLAG%"=="1" (
+  echo [ERRORE] reset richiede --force. Stato invariato.
+  exit /b 2
+)
 call :stop
+call :ensure_venv
+if errorlevel 1 exit /b 1
+call :archive_state
+if errorlevel 1 exit /b 1
 call :clear_state
+if errorlevel 1 exit /b 1
 goto :status
 
 REM ----------------------------------------------------------------
 :restart
 call :stop
-if "%RESET_FLAG%"=="1" (
-  call :clear_state
-) else (
-  call :prompt_clear_history
-)
+goto :start
+
+:new_run
+call :stop
+call :ensure_venv
+if errorlevel 1 exit /b 1
+call :archive_state
+if errorlevel 1 exit /b 1
+call :clear_state
+if errorlevel 1 exit /b 1
 goto :start
 
 REM ----------------------------------------------------------------
@@ -186,7 +192,6 @@ call :ensure_venv
 if errorlevel 1 exit /b 1
 if not exist data mkdir data
 if not exist logs mkdir logs
-if "%RESET_FLAG%"=="1" call :clear_state
 call :ensure_scan
 if errorlevel 1 exit /b 1
 call :stop

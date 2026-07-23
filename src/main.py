@@ -23,7 +23,10 @@ from simulator import PaperTradingSimulator
 from strategies import ArbBinaryStrategy, HarvestStrategy, ArbCrossStrategy, MomentumStrategy, WhaleStrategy, SniperStrategy, ThetaStrategy, ContrarianStrategy
 from wallet_manager import WalletManager
 from models import WalletAnalysis
-from config import BUDGET, STRATEGY, STRATEGIES, TRACKING, SCANNER, MONITOR, WALLET_MONITOR, DATA_DIR, BASE_DIR
+from config import (
+    BUDGET, STRATEGY, STRATEGIES, TRACKING, SCANNER, MONITOR, WALLET_MONITOR,
+    DATA_DIR, BASE_DIR, EXECUTION,
+)
 
 
 class PolymarketPaperTradingBot:
@@ -75,6 +78,21 @@ class PolymarketPaperTradingBot:
     # ------------------------------------------------------------------
     def load_monitored_from_file(self) -> List[str]:
         """Carica gli indirizzi dei top wallet da data/scan_results.json se presente."""
+        manifest = DATA_DIR / "monitored_wallets.json"
+        if self.simulator.execution_mode == "paper_validation" and manifest.exists():
+            try:
+                with open(manifest, encoding="utf-8") as fh:
+                    data = json.load(fh)
+                if data.get("run_id") == self.simulator.run_id:
+                    frozen = [
+                        w.get("address") if isinstance(w, dict) else w
+                        for w in data.get("wallets", [])
+                    ]
+                    frozen = [w for w in frozen if w]
+                    if frozen:
+                        return frozen
+            except Exception:
+                pass
         results_file = DATA_DIR / "scan_results.json"
         if not results_file.exists():
             return []
@@ -85,6 +103,41 @@ class PolymarketPaperTradingBot:
             return [w["address"] for w in wallets if w.get("address")]
         except Exception:
             return []
+
+    def _persist_monitored_wallets(self) -> None:
+        """Persistenza della lista realmente usata dal loop, non dei primi scan."""
+        if not self.monitored_addresses:
+            return
+        by_addr = {}
+        results_file = DATA_DIR / "scan_results.json"
+        try:
+            if results_file.exists():
+                with open(results_file, encoding="utf-8") as fh:
+                    scan = json.load(fh)
+                by_addr = {
+                    str(w.get("address", "")).lower(): w
+                    for w in scan.get("wallets", []) if w.get("address")
+                }
+        except Exception:
+            by_addr = {}
+        wallets = []
+        for address in self.monitored_addresses:
+            metadata = dict(by_addr.get(address.lower(), {}))
+            metadata["address"] = address
+            wallets.append(metadata)
+        payload = {
+            "run_id": self.simulator.run_id,
+            "execution_mode": self.simulator.execution_mode,
+            "frozen": self.simulator.execution_mode == "paper_validation",
+            "updated_at": datetime.now().isoformat(),
+            "wallets": wallets,
+        }
+        path = DATA_DIR / "monitored_wallets.json"
+        tmp = DATA_DIR / "monitored_wallets.json.tmp"
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, indent=2)
+        os.replace(tmp, path)
 
     def _scan_age_sec(self) -> Optional[float]:
         """Eta' dell'ultimo scan in secondi, o None se file assente/illeggibile."""
@@ -132,6 +185,7 @@ class PolymarketPaperTradingBot:
         added = new_set - old
         removed = old - new_set
         self.monitored_addresses = new_addrs
+        self._persist_monitored_wallets()
         if added or removed:
             print(
                 f"[BOT] Lista wallet aggiornata: {len(new_addrs)} attivi "
@@ -147,6 +201,11 @@ class PolymarketPaperTradingBot:
 
     def _maybe_auto_rescan(self) -> None:
         """Durante il loop, aggiorna la lista wallet se lo scan e' obsoleto."""
+        if (
+            self.simulator.execution_mode == "paper_validation"
+            and EXECUTION.get("freeze_wallets_in_validation", True)
+        ):
+            return
         if not self._is_scan_stale():
             return
         age_h = (self._scan_age_sec() or 0) / 3600
@@ -157,6 +216,11 @@ class PolymarketPaperTradingBot:
     # Phase Z: wallet quality refresh frequente + swap perdenti
     def _maybe_wallet_quality_refresh(self) -> None:
         """Ogni 15min re-fetch win_rate wallet attivi e swap perdenti con riserve."""
+        if (
+            self.simulator.execution_mode == "paper_validation"
+            and EXECUTION.get("freeze_wallets_in_validation", True)
+        ):
+            return
         if not self.wallet_mgr.should_refresh():
             return
         if not self.monitored_addresses:
@@ -170,6 +234,7 @@ class PolymarketPaperTradingBot:
         new_list, losers = self.wallet_mgr.swap_losers(self.monitored_addresses, qualities)
         if losers:
             self.monitored_addresses = new_list
+            self._persist_monitored_wallets()
             # ricarica qualità nel simulator per soft-disable sizing
             self.simulator._load_wallet_quality()
             # reset baseline holdings per non copiare bag preesistente dei nuovi wallet
@@ -236,13 +301,21 @@ class PolymarketPaperTradingBot:
             print("[BOT] scan_results.json assente — scan iniziale automatico...")
             if not self._run_wallet_scan():
                 print("[BOT] Fallback scan legacy leaderboard...")
-                return self.run_initial_scan(top_n=STRATEGY["top_wallets"])
+                ok = self.run_initial_scan(top_n=STRATEGY["top_wallets"])
+                if ok:
+                    self._persist_monitored_wallets()
+                return ok
             addresses = self.load_monitored_from_file()
 
         self.monitored_addresses = addresses
+        self._persist_monitored_wallets()
         print(f"[BOT] {len(addresses)} wallet caricati da scan_results.json")
 
-        if self._is_scan_stale():
+        frozen_validation = (
+            self.simulator.execution_mode == "paper_validation"
+            and EXECUTION.get("freeze_wallets_in_validation", True)
+        )
+        if self._is_scan_stale() and not frozen_validation:
             age_h = (self._scan_age_sec() or 0) / 3600
             print(f"[BOT] Lista datata ({age_h:.1f}h) — refresh automatico all'avvio...")
             if self._run_wallet_scan():
@@ -268,8 +341,7 @@ class PolymarketPaperTradingBot:
     # ------------------------------------------------------------------
     def _should_scan(self, strategy_name: str) -> bool:
         cfg = STRATEGIES.get(strategy_name, {})
-        # Phase CC: gate strategia disabilitata (kill perdenti)
-        if not cfg.get("enabled", True):
+        if not cfg.get("scan_enabled", False):
             return False
         every = cfg.get("scan_every_cycles", 1)
         if every <= 1:
@@ -362,7 +434,8 @@ class PolymarketPaperTradingBot:
                     # Phase M/W: STRATEGIE COMPLEMENTARI (arb/harvest/cross/momentum)
                     self._cycle_count += 1
                     # Phase W: aggiorna price history per momentum (ogni ciclo)
-                    self.momentum.update_prices(self.fetcher, self._cycle_count)
+                    if self._should_scan("momentum"):
+                        self.momentum.update_prices(self.fetcher, self._cycle_count)
                     opps_tried = 0
                     if self._should_scan("arb_binary"):
                         opps = self.arb_binary.scan(self.fetcher)

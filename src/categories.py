@@ -4,7 +4,7 @@ Categorizzazione mercati Polymarket e modello fee per categoria.
 Usato da scanner (selezione specialisti per categoria), simulator (fee in
 ingresso) e backtester (fee nel calcolo realistico).
 
-CATEGORIE: sport, crypto, politics, weather, other.
+CATEGORIE: sport, crypto, politics, weather, macro, geopolitics, other.
 
 FEE: i mercati sport su Polymarket usano lo schema `sports_fees_v2`
 (taker-only). Dal feeSchedule osservato su Gamma: {exponent:1, rate:0.03,
@@ -13,7 +13,7 @@ proporzionale all'incertezza del prezzo (massima a 0.5, ~0 agli estremi).
 Modelliamo quindi la fee come rate * min(p, 1-p), un'approssimazione realistica
 e limitata. Le altre categorie non hanno trading fee sul CLOB (0%).
 """
-from typing import List, Tuple
+from typing import List, Tuple, Union
 
 SPORTS_FEE_RATE = 0.03  # da Gamma feeSchedule (sports_fees_v2, taker-only)
 
@@ -22,6 +22,18 @@ SPORTS_FEE_RATE = 0.03  # da Gamma feeSchedule (sports_fees_v2, taker-only)
 # ATTENZIONE: keyword corte senza spazi generano false positive ("eth" = Ethiopia).
 # Teniamo solo token univoci o con delimitatori ($eth, eth/, eth-).
 _KEYWORDS = {
+    "macro": [
+        "federal reserve", "fed ", "fed-", "interest rate", "interest rates",
+        "rate cut", "rate hike", "basis points", " bps", "fomc", "central bank",
+        "inflation", "cpi", "gdp", "unemployment", "nonfarm payroll",
+        "treasury yield", "ecb", "bank of england", "monetary policy",
+    ],
+    "geopolitics": [
+        "ceasefire", "war ", "invasion", "military strike", "airstrike",
+        "missile", "troops", "peace deal", "hostage", "sanctions",
+        "israel", "iran", "gaza", "ukraine", "russia", "nato",
+        "taiwan", "china invade", "strait of hormuz",
+    ],
     "crypto": [
         # Token names (univoci o con delimiter per evitare false positive)
         "bitcoin", "btc", "ethereum", "solana", "crypto", "dogecoin",
@@ -69,11 +81,12 @@ _KEYWORDS = {
     ],
 }
 
-CATEGORIES = ["sport", "crypto", "politics", "weather", "other"]
+CATEGORIES = ["sport", "crypto", "politics", "weather", "macro", "geopolitics", "other"]
 
 
 def categorize_market(question: str = "", event_ticker: str = "",
-                      event_slug: str = "", fee_type: str = "") -> str:
+                      event_slug: str = "", fee_type: str = "",
+                      tags: Union[List, str, None] = None) -> str:
     """
     Determina la categoria di un mercato da testo e metadati.
 
@@ -86,10 +99,24 @@ def categorize_market(question: str = "", event_ticker: str = "",
     if fee_type and "sport" in fee_type.lower():
         return "sport"
 
-    text = f" {question} {event_ticker} {event_slug} ".lower()
+    if isinstance(tags, list):
+        tag_text = " ".join(
+            str(t.get("slug") or t.get("label") or t.get("name") or "")
+            if isinstance(t, dict) else str(t)
+            for t in tags
+        )
+    else:
+        tag_text = str(tags or "")
+    metadata = f" {event_ticker} {event_slug} {tag_text} ".lower()
 
-    # Crypto / politics / weather hanno keyword piu specifiche: controllale prima
-    for cat in ("crypto", "politics", "weather"):
+    # I tag/slug Gamma sono più affidabili del titolo: hanno priorità.
+    for cat in ("macro", "geopolitics", "crypto", "politics", "weather", "sport"):
+        if any(kw in metadata for kw in _KEYWORDS[cat]):
+            return cat
+
+    text = f" {question} {metadata} ".lower()
+
+    for cat in ("macro", "geopolitics", "crypto", "politics", "weather"):
         if any(kw in text for kw in _KEYWORDS[cat]):
             return cat
 

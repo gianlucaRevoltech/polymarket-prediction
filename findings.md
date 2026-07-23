@@ -16,7 +16,8 @@ Copy-trading da solo ha un tetto. Per il doubling serve diversificazione con
 strategie a correlazione bassa. Realisticamente implementabili su Polymarket:
 
 ### S1 — Copy-trading (esistente, post Phase I fixed)
-- Edge: backtest 89% WR, +81.6% ROI mediano su 73 pos in banda 0.30-0.70
+- Dato storico ritirato: il precedente 89% WR era in-sample e usava il prezzo
+  medio wallet, non il best ask rilevabile; non dimostra edge.
 - Risk profil: dipende dal segnale wallet; SL-8/TP-20 breakeven WR 29%
 - Capacita sizing: 3-12% foto del capitale, limitato da slippage round-trip
 - EV aspettato: +0.85-3.5$/trade a sizing variabile, WR 60-70% reale
@@ -131,7 +132,8 @@ get_open_assets ha `if self.has_asset(asset): return False` quindi non 2 contemp
   gia in config ma NON usato nel codice: bug verbale) riducono questo.
 
 ### P14 — WR 20% su 5 trade: statisticamente NON significativo
-5 trade chiusi: 1W/4L. Backtest: 89% WR su 73 pos. Breakeven SL-8/TP+20 = 29%.
+5 trade chiusi: 1W/4L. Il vecchio 89% WR su 73 pos non è una validazione
+prospettica; breakeven teorico SL-8/TP+20 = 29%.
 Sample 5 non giudica la strategia, MA gravity: serve ri-deploy corretto (P11/P12)
 e aumentare aperture per raccogliere 30+ trade prima di giudicare edge.
 
@@ -256,7 +258,7 @@ Early TP +4% = 3.9 cent = anche rumore, ma peggio: chiude posizioni che
 andrebbero a $1 a resolution, lasciando 96% del juice sul tavolo.
 
 ### Bug secondari
-- **9 strategie attive**: solo copy ha backtest (89% WR in 0.30-0.70). Le altre
+- **9 strategie attive**: COPY aveva solo un profiler storico in-sample. Le altre
   MAI backtestate. Whale/momentum/contrarian sono scommesse non validate.
 - **Sizing 6-13%**: a WR 24%, ogni loss è -0.8% portfolio. Drain costante.
 - **Kelly + trailing stop attivi**: amplificano sizing e chiudono su rumore.
@@ -695,3 +697,37 @@ Sorgente: `logs_monday/` (commit faa3b24), tool `tools/audit_v2.py`.
    correlato + rivedere se SL -5c su harvest near-certain è troppo stretto
 4. Tennis copy: monitorare, non escludere ancora (n=2 insufficiente)
 
+---
+
+## Phase CK - diagnosi di contenimento (2026-07-23)
+
+- HARVEST ha riaperto le stesse due condition dopo il cooldown di un'ora:
+  `recent_opens` non è un vincolo di unicità per le posizioni ancora aperte.
+- I due mercati Fed condividono l'evento `fed-decision-in-july-181`, ma Position
+  non conserva `event_slug`; cluster/exposure usa market_slug o condition_id.
+- Il backtest COPY usa storia wallet e prezzo medio wallet sulla medesima
+  finestra: è un profiler storico, non una prova out-of-sample di edge.
+- Ingresso COPY e mark/exit usano midpoint/fallback ottimistici; la validazione
+  deve usare ask in ingresso, bid in uscita e costi osservati.
+- Il daily halt esistente usa realized P&L e si resetta; mancano run halt,
+  quarantena persistente per loss streak e blocco condition dopo stop-loss.
+- Dashboard ricostruisce peak dal valore corrente e mostra wallet presi dai
+  primi risultati scanner, non il gruppo effettivamente monitorato.
+- `restart reset` elimina evidenza; il nuovo contratto operativo deve separare
+  restart conservativo, new-run archiviato e reset esplicito `--force`.
+
+Decisione: l'implementazione parte da OBSERVE e non modifica lo stop-loss
+HARVEST, perché HARVEST resta disabilitata e non ha edge dimostrato.
+
+### Esito implementazione CK
+
+- Lo snapshot legacy viene migrato senza inventare `event_slug`: cash/equity
+  $297.0869, 5 chiuse, peak corretto $300, drawdown 0.971%.
+- Per i nuovi segnali, l'identità evento arriva prima dai metadati Gamma; i due
+  mercati Fed sono `macro` e condividono `fed-decision-in-july-181`.
+- Il fill paper attraversa l'intera profondità: ask VWAP in BUY e bid VWAP in
+  SELL/mark. Se la size non è interamente fillabile, il candidato è scartato.
+- Il journal registra anche gli scarti con motivo, top-of-book/depth, wallet,
+  sorgente/detection timestamp, costi e identità run/signal/evento.
+- La promozione può solo autorizzare un altro run paper indipendente; il campo
+  `real_money_authorized` del valutatore resta sempre `False`.

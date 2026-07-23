@@ -18,8 +18,25 @@ from pathlib import Path
 
 # Paths
 BASE_DIR = Path(__file__).parent.parent
-DATA_DIR = BASE_DIR / "data"
-LOGS_DIR = BASE_DIR / "logs"
+DATA_DIR = Path(os.environ.get("POLYMARKET_DATA_DIR", str(BASE_DIR / "data")))
+LOGS_DIR = Path(os.environ.get("POLYMARKET_LOGS_DIR", str(BASE_DIR / "logs")))
+
+# Modalità di esecuzione fail-safe. `observe` continua a scansionare e a gestire
+# le posizioni esistenti, ma vieta ogni nuova apertura. La promozione a
+# `paper_validation` è esplicita e resta comunque solo simulata.
+EXECUTION = {
+    "mode": os.environ.get("POLYMARKET_EXECUTION_MODE", "observe").strip().lower(),
+    "paper_size_usdc": 5.0,
+    "max_open_positions": 2,
+    "event_cap_pct": 0.03,
+    "daily_loss_usdc": 3.0,
+    "run_loss_usdc": 6.0,
+    "max_consecutive_losses": 3,
+    "freeze_wallets_in_validation": True,
+    "latency_arb_enabled": False,
+}
+if EXECUTION["mode"] not in {"observe", "paper_validation"}:
+    EXECUTION["mode"] = "observe"
 
 # API Endpoints
 POLYMARKET_API = {
@@ -43,7 +60,7 @@ BUDGET = {
     ],
     "sizing_wr_gate": 0.45,        # Phase CG: gate realistico (era 0.50)
     "min_position_size": 5.0,      # Minimo Polymarket
-    "max_open_positions": 8,       # Phase CG: 12 -> 8 (meno esposizione con WR basso)
+    "max_open_positions": 2,       # validazione: massimo due posizioni totali
     "reserve_ratio": 0.20,         # Phase CG: 15% -> 20% (piu cushion)
     # Risk management (copy): SL/TP
     "stop_loss_pct": -0.08,        # taglia perdenti presto
@@ -67,11 +84,11 @@ BUDGET = {
     "kelly_min_size": 0.03,         # floor sizing Kelly
     "kelly_max_size": 0.20,         # cap sizing Kelly (anti blow-up)
     # Phase FF: Correlation-aware hedging — cluster cap per evento
-    "cluster_cap_pct": 0.40,        # max 40% portafoglio su stesso evento cluster
-    "cluster_max_positions": 5,     # max posizioni stesso evento
+    "cluster_cap_pct": 0.03,        # validazione: max 3% portafoglio per evento
+    "cluster_max_positions": 1,     # una sola posizione aperta per evento
     "cluster_event_key": "event_slug",  # campo per raggruppare (event_slug)
     # Phase HH: Re-entry su continuation
-    "reentry_enabled": True,
+    "reentry_enabled": False,
     "reentry_max": 2,               # max 2 re-entry per posizione originale
     "reentry_size_factor": 0.5,     # size dimezzata ogni re-entry
     "reentry_only_strategies": ["momentum", "whale"],
@@ -141,6 +158,8 @@ STRATEGY = {
 # singolo trade di quella strategia.
 STRATEGIES = {
     "copy": {
+        "scan_enabled": True,
+        "paper_enabled": True,
         "cap_pct": 0.40,           # Phase R: copy resta engine ma lascia spazio a harvest
         "max_single": 0.15,        # Phase R: sizing ladder gate tier3 (era 0.12)
         "max_positions": 6,        # Phase R: 4 -> 6 (max_open=12, lascia slot altre)
@@ -152,6 +171,8 @@ STRATEGIES = {
         "sport_hard_stop_loss_abs": -0.10,
     },
     "arb_binary": {
+        "scan_enabled": False,
+        "paper_enabled": False,
         # Phase CI4 (Guida 1: fee formula `rate*p*(1-p)` = MAX a 0.50 dove i
         # gap arb sono più grassi): arb_binary come TAKER in coin-flip è breakeven
         # netto (fee ~1.5c/leg su 2 leg = -3c vs gap 2-3c). Vivo solo come MAKER
@@ -171,7 +192,9 @@ STRATEGIES = {
         "min_market_volume_usdc": 50000.0,
     },
     "harvest": {
-        "enabled": True,            # Phase CC: KEEP (38% WR, migliorabile)
+        "enabled": False,
+        "scan_enabled": False,
+        "paper_enabled": False,
         "cap_pct": 0.25,           # Phase CF: 30% -> 25% (meno rischio con WR 38%)
         "max_single": 0.10,        # Phase CF: 15% -> 10%
         "max_positions": 4,        # Phase CF: 6 -> 4
@@ -191,6 +214,9 @@ STRATEGIES = {
         "min_market_volume_usdc": 50000.0,
     },
     "arb_cross": {
+        "enabled": False,
+        "scan_enabled": False,
+        "paper_enabled": False,
         "cap_pct": 0.15,
         "max_single": 0.12,
         "max_positions": 2,        # Phase U: 1 -> 2
@@ -355,7 +381,7 @@ STRATEGIES = {
 
 # Selezione wallet per categoria (scanner) — invariato
 CATEGORIES = {
-    "active": ["sport", "crypto", "politics", "weather"],
+    "active": ["sport", "crypto", "politics", "weather", "macro", "geopolitics"],
     "specialists_per_category": 5,
     "markets_to_scan": 300,        # Phase V: 200 -> 300
     "holders_per_market": 25,
@@ -412,7 +438,9 @@ ANALYZER = {
 SIMULATOR = {
     "copy_delay": 5,
     "max_slippage": 0.02,
-    "entry_slippage": 0.01,
+    # Nessun haircut statico inventato: il paper journal usa best ask/bid e
+    # profondità osservati. Un eventuale impatto oltre il best level va misurato.
+    "entry_slippage": 0.0,
     "min_confidence": 0.70,
     "auto_approve": False
 }

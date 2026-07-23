@@ -7,7 +7,23 @@ in un sistema profittevole. ROOT CAUSE: il bot entra a prezzi estremi (0.999, 0.
 dal fallimento del segnale. Risk/reward invertito: gain minuscolo, loss enorme.
 
 ## Current Phase
-Phase CJ1.6 COMPLETE → Step 5d (stop latency-arb Step 1; bot copy/harvest only)
+Phase CK1-CK6 IMPLEMENTATION COMPLETE → VPS deploy/24h observation pending
+
+## Phase CK: Arresto perdite e nuova validazione (2026-07-23)
+
+- [x] CK1: integrare snapshot VPS senza perdere storia o file locali
+- [x] CK2: execution_mode observe/paper_validation e strategy scan/paper gates
+- [x] CK3: run identity, event identity, dedup globale, blocchi e circuit breaker
+- [x] CK4: prezzi eseguibili e candidate journal append-only
+- [x] CK5: restart/new-run/reset sicuri e dashboard operativa no-cache
+- [x] CK6: unittest, migrazioni, smoke test locale e documentazione promozione
+
+Da eseguire dopo il deploy: `restart` conservativo, conferma VPS dello snapshot
+$297.09 e osservazione 24h con zero nuove aperture/traceback.
+
+Stato iniziale deliberato: OBSERVE, zero nuove aperture, latency-arb fermo.
+COPY resta solo in scansione; HARVEST e tutte le altre strategie restano
+disabilitate fino a una decisione futura separata.
 
 ## Diagnosi Root Cause (DASHBOARD 07/07)
 
@@ -47,8 +63,8 @@ Non è "sfortuna" — è un difetto strutturale: entrate a prezzi estremi + SL
 percentuale = macchina da perdita garantita.
 
 ### Altri problemi
-1. **9 strategie attive, nessuna validata.** Whale/momentum/contrarian non sono
-   MAI state backtestate. Solo copy ha backtest 89% WR (in banda 0.30-0.70).
+1. **9 strategie attive, nessuna validata.** Il precedente “89% WR COPY” era
+   un profilo storico in-sample, non una prova di edge eseguibile.
 2. **Whale/contrarian non hanno filtro banda prezzo.** Comprano a qualsiasi prezzo
    seguendo la whale, anche 0.999 o 0.02.
 3. **Momentum: move detection a prezzi estremi è rumore.** 5% di 0.008 = 0.0004.

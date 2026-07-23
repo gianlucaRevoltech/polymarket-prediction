@@ -1,5 +1,5 @@
 """
-Backtester storico per strategie copy / consenso su Polymarket.
+Wallet history profiler per strategie copy / consenso su Polymarket.
 
 Ricostruisce dal feed /activity dei wallet monitorati le posizioni e calcola
 quanto avrebbe reso copiarle, valutando ogni posizione fino alla sua RISOLUZIONE.
@@ -16,7 +16,9 @@ PUNTI CHIAVE DI METODO (per evitare risultati falsati):
   - Conta solo posizioni DECISE (vendute, o risolte a 0/1). Le posizioni ancora
     aperte (prezzo 0<p<1) sono escluse dal ROI realizzato.
 
-NON modella latenza/slippage del copy live (entreremmo dopo il wallet).
+ATTENZIONE: seleziona e valuta i wallet sulla stessa storia e usa il loro prezzo
+medio, non il best ask CLOB disponibile quando il bot rileva il segnale. Quindi
+NON è un backtest out-of-sample e non dimostra un edge eseguibile.
 """
 import sys
 import json
@@ -246,7 +248,7 @@ class Backtester:
             min_price: float = 0.0, max_price: float = 1.0,
             late_entry: bool = False) -> Dict:
         print(f"\n{'='*70}")
-        print(f"  BACKTEST STORICO - copy vs consenso (valutazione fino a risoluzione)")
+        print(f"  WALLET HISTORY PROFILER - dati in-sample, NON prova di edge")
         print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | finestra ~{self.activity_limit} attivita/wallet")
         print(f"{'='*70}\n")
         print(f"  {'wallet':22} | {'pos':>3} | {'ROI':>8} | {'WR':>4} | {'PnL':>12}")
@@ -327,6 +329,12 @@ class Backtester:
         print(f"{'='*70}\n")
 
         report = {
+            "report_type": "wallet_history_profiler",
+            "edge_claim": False,
+            "methodology_warning": (
+                "In-sample wallet selection; wallet average entry, not "
+                "detection-time executable CLOB ask."
+            ),
             "generated_at": datetime.now().isoformat(),
             "activity_limit": self.activity_limit,
             "min_consensus": min_consensus,

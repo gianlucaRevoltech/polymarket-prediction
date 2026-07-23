@@ -54,6 +54,8 @@ class Opportunity:
     # mercato (gamma volumeNum) — non depth best-level. Usato da execute_opportunity
     # come filtro hard: skip se < min_market_volume_usdc config.
     market_volume: float = 0.0
+    event_id: str = ""
+    event_title: str = ""
 
 
 # ----------------------------------------------------------------------
@@ -142,6 +144,8 @@ class ArbBinaryStrategy:
                 condition_id=m["condition_id"],
                 market_title=m["question"],
                 event_slug=m["event_slug"],
+                event_id=m.get("event_id", ""),
+                event_title=m.get("event_title", ""),
                 category=m["category"],
                 end_date=m["end_date"],
                 assets=[tokens[0], tokens[1]],
@@ -229,6 +233,8 @@ class HarvestStrategy:
                     condition_id=m["condition_id"],
                     market_title=m["question"],
                     event_slug=m["event_slug"],
+                    event_id=m.get("event_id", ""),
+                    event_title=m.get("event_title", ""),
                     category=m["category"],
                     end_date=m["end_date"],
                     assets=[tok, ""],
@@ -339,6 +345,8 @@ class ArbCrossStrategy:
                 condition_id=slug,  # uso slug come id bundle (n-mercato)
                 market_title=title,
                 event_slug=slug,
+                event_id=str(ev.get("id", "")),
+                event_title=ev.get("title", ""),
                 category="other",   # n-leg, variegato
                 end_date=end_date,
                 assets=assets,
@@ -566,6 +574,8 @@ class MomentumStrategy:
                 condition_id=m["condition_id"],
                 market_title=m["question"],
                 event_slug=m["event_slug"],
+                event_id=m.get("event_id", ""),
+                event_title=m.get("event_title", ""),
                 category=m["category"],
                 end_date=m["end_date"],
                 assets=[tok, ""],
@@ -821,6 +831,8 @@ class WhaleStrategy:
                 condition_id=cid,
                 market_title=sig["title"] or m["question"],
                 event_slug=sig["slug"] or m.get("event_slug", ""),
+                event_id=m.get("event_id", ""),
+                event_title=m.get("event_title", ""),
                 category=m["category"],
                 end_date=m["end_date"],
                 assets=[asset, ""],
@@ -905,6 +917,8 @@ class SniperStrategy:
                 opp = Opportunity(
                     strategy=self.name, condition_id=m["condition_id"],
                     market_title=m["question"], event_slug=m["event_slug"],
+                    event_id=m.get("event_id", ""),
+                    event_title=m.get("event_title", ""),
                     category=m["category"], end_date=m["end_date"],
                     assets=[tok, ""], outcomes=[out, ""],
                     cost_per_share=ask, best_asks=[ask], book_sizes=[ask_sz],
@@ -987,6 +1001,8 @@ class ThetaStrategy:
             opp = Opportunity(
                 strategy=self.name, condition_id=m["condition_id"],
                 market_title=m["question"], event_slug=m["event_slug"],
+                event_id=m.get("event_id", ""),
+                event_title=m.get("event_title", ""),
                 category=m["category"], end_date=m["end_date"],
                 assets=[tok, ""], outcomes=[out, ""],
                 cost_per_share=ask, best_asks=[ask], book_sizes=[ask_sz],
@@ -1115,6 +1131,8 @@ class ContrarianStrategy:
                 strategy=self.name, condition_id=cid,
                 market_title=sig["title"] or m["question"],
                 event_slug=sig["slug"] or m.get("event_slug", ""),
+                event_id=m.get("event_id", ""),
+                event_title=m.get("event_title", ""),
                 category=m["category"], end_date=m["end_date"],
                 assets=[tok, ""], outcomes=[out, ""],
                 cost_per_share=ask, best_asks=[ask], book_sizes=[ask_sz],
