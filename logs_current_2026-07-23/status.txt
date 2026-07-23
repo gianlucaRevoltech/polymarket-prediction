@@ -1,0 +1,7 @@
+
+=================== STATO ===================
+  bot: IN ESECUZIONE (PID 2821795)
+  dashboard: IN ESECUZIONE (PID 2821780)
+  latency_arb: fermo
+  Dashboard: http://localhost:5000
+=============================================
