@@ -456,6 +456,10 @@
              border:1px solid #ef4444;background:rgba(239,68,68,.18);color:#fecaca;
              border-radius:10px;font-weight:700"></div>
 
+        <div id="observeBanner" style="display:none;margin:0 0 18px;padding:14px 18px;
+             border:1px solid #60a5fa;background:rgba(59,130,246,.16);color:#dbeafe;
+             border-radius:10px;font-weight:600"></div>
+
         <!-- Grafico andamento equity -->
         <div class="section">
             <div class="section-title">
@@ -574,6 +578,20 @@
             </div>
             <div id="clusterContainer">
                 <div class="empty-state"><div>Caricamento...</div></div>
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">
+                <span>🔎</span>
+                <span>Candidate Journal</span>
+                <span class="count" id="candidateCount">0 candidati</span>
+            </div>
+            <div id="candidateSummary"></div>
+            <div id="candidatesContainer">
+                <div class="empty-state">
+                    <div>Nessun candidato rilevato nel run corrente</div>
+                </div>
             </div>
         </div>
 
@@ -843,12 +861,15 @@
             const summary = data.summary || {};
             const mode = (data.execution_mode || summary.execution_mode || 'observe').toUpperCase();
             const haltReason = data.halt_reason || summary.halt_reason || '';
-            const savedAt = data.state_saved_at || summary.state_saved_at;
-            const savedMs = savedAt ? new Date(savedAt).getTime() : 0;
-            const stale = !savedMs || (Date.now() - savedMs > 60000);
+            const health = data.bot_health || {};
+            const stale = Boolean(health.stale);
             const banner = document.getElementById('safetyBanner');
             const bannerParts = [];
-            if (haltReason) bannerParts.push(haltReason);
+            const realHalt = haltReason && mode !== 'OBSERVE';
+            if (realHalt) bannerParts.push(haltReason);
+            if ((data.bot_status || health.process_status) !== 'running') {
+                bannerParts.push('PROCESSO BOT FERMO');
+            }
             if (stale) bannerParts.push('STATO STALE: ledger non salvato da oltre 60 secondi');
             if (bannerParts.length) {
                 banner.style.display = 'block';
@@ -857,9 +878,19 @@
                 banner.style.display = 'none';
             }
 
+            const observeBanner = document.getElementById('observeBanner');
+            if (mode === 'OBSERVE') {
+                observeBanner.style.display = 'block';
+                observeBanner.textContent =
+                    'OBSERVE — candidati valutati e registrati; nessuna posizione viene aperta.';
+            } else {
+                observeBanner.style.display = 'none';
+            }
+
             // Dashboard v2: risk + cluster
             updateRiskDashboard(summary);
             updateClusterExposure(summary);
+            updateCandidateJournal(data.candidate_summary || {}, data.recent_candidates || []);
 
             const statusEl = document.getElementById('botStatus');
             const status = data.bot_status || 'unknown';
@@ -1067,6 +1098,71 @@
             }
         }
 
+        function updateCandidateJournal(summary, rows) {
+            const total = Number(summary.total || 0);
+            const eligible = Number(summary.eligible || 0);
+            const rejected = Number(summary.rejected || 0);
+            const rate = Number(summary.eligibility_rate || 0) * 100;
+            document.getElementById('candidateCount').textContent = total + ' candidati';
+            const reasonText = Object.entries(summary.top_reasons || {})
+                .map(([reason, count]) => `${escapeHtml(reason)}: ${count}`)
+                .join(' · ') || 'nessun motivo disponibile';
+            document.getElementById('candidateSummary').innerHTML =
+                `<div class="strat-summary">
+                    <div class="strat-card" style="border-left-color:#60a5fa">
+                        <div class="label">Unici</div><div class="val">${Number(summary.unique || 0)}</div>
+                    </div>
+                    <div class="strat-card" style="border-left-color:#34d399">
+                        <div class="label">Eligible</div><div class="val">${eligible}</div>
+                        <div class="label">${rate.toFixed(1)}% dei candidati</div>
+                    </div>
+                    <div class="strat-card" style="border-left-color:#f87171">
+                        <div class="label">Rejected</div><div class="val">${rejected}</div>
+                    </div>
+                    <div class="strat-card" style="border-left-color:#fbbf24">
+                        <div class="label">Motivi principali</div>
+                        <div class="label">${reasonText}</div>
+                    </div>
+                </div>`;
+
+            const container = document.getElementById('candidatesContainer');
+            if (!Array.isArray(rows) || rows.length === 0) {
+                container.innerHTML =
+                    '<div class="empty-state"><div>Nessun candidato rilevato nel run corrente</div></div>';
+                return;
+            }
+            let html = '<div class="table-wrap"><table><thead><tr>' +
+                '<th>Rilevato</th><th>Mercato</th><th>Wallet</th><th>Categoria</th>' +
+                '<th>Bid / Ask</th><th>Latenza</th><th>Decisione</th></tr></thead><tbody>';
+            rows.forEach(row => {
+                const detected = row.detected_at
+                    ? new Date(row.detected_at).toLocaleString('it-IT', {
+                        day:'2-digit', month:'2-digit', hour:'2-digit',
+                        minute:'2-digit', second:'2-digit'
+                    }) : '-';
+                const wallet = row.wallet
+                    ? row.wallet.slice(0, 8) + '…' + row.wallet.slice(-5) : '-';
+                const bid = row.best_bid == null ? '-' : Number(row.best_bid).toFixed(3);
+                const ask = row.best_ask == null ? '-' : Number(row.best_ask).toFixed(3);
+                const latencySeconds = row.latency_seconds ?? row.detection_latency_seconds;
+                const latency = latencySeconds == null
+                    ? '-' : Number(latencySeconds).toFixed(1) + 's';
+                const decisionClass = row.decision === 'eligible' ? 'positive' : 'negative';
+                html += `<tr>
+                    <td class="trade-time">${detected}</td>
+                    <td>${escapeHtml((row.market || '').slice(0, 55))}</td>
+                    <td title="${escapeHtml(row.wallet || '')}">${escapeHtml(wallet)}</td>
+                    <td>${escapeHtml(row.category || 'other')}</td>
+                    <td>${bid} / ${ask}</td>
+                    <td>${latency}</td>
+                    <td class="${decisionClass}">${escapeHtml(row.decision || '')}<br>
+                        <span class="label">${escapeHtml(row.reason || '')}</span></td>
+                </tr>`;
+            });
+            html += '</tbody></table></div>';
+            container.innerHTML = html;
+        }
+
         function stratColor(name) {
             const colors = {copy:'#60a5fa', harvest:'#34d399', arb_binary:'#c084fc', arb_cross:'#f472b6', momentum:'#fbbf24', whale:'#2dd4bf', sniper:'#f87171', theta:'#818cf8', contrarian:'#ec4899'};
             return colors[name] || '#94a3b8';
@@ -1127,8 +1223,13 @@
             try {
                 const indicator = document.getElementById('refreshIndicator');
                 indicator.classList.add('active');
-                const response = await fetch(API_URL, {cache: 'no-store'});
+                const [response, candidateResponse] = await Promise.all([
+                    fetch(API_URL, {cache: 'no-store'}),
+                    fetch('/api/candidates?limit=50', {cache: 'no-store'})
+                ]);
                 const data = await response.json();
+                data.recent_candidates = candidateResponse.ok
+                    ? await candidateResponse.json() : [];
                 updateDashboard(data);
                 setTimeout(() => indicator.classList.remove('active'), 500);
             } catch (error) {

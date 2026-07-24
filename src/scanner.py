@@ -22,6 +22,7 @@ from portfolio_sync import PolymarketPositionFetcher
 from backtester import Backtester
 from categories import categorize_market
 from config import POLYMARKET_API, SCANNER, CATEGORIES, DATA_DIR
+from time_utils import utc_now_iso
 
 
 class PolymarketScanner:
@@ -357,6 +358,12 @@ class PolymarketScanner:
             {roi, pnl, bought, decided, win_rate}
         """
         activity = self.bt.fetch_activity(address)
+        if activity is None:
+            return {
+                "roi": 0.0, "pnl": 0.0, "bought": 0.0, "decided": 0,
+                "win_rate": 0.0, "status": "unknown",
+                "error": "activity_fetch_failed",
+            }
         posmap = self.bt.positions_map(address)
         closed = self.bt.reconstruct_positions(activity, posmap)
 
@@ -365,8 +372,11 @@ class PolymarketScanner:
         n = len(closed)
         wins = sum(1 for p in closed.values() if p["realized_pnl"] > 0)
         roi = (pnl / bought) if bought > 0 else 0.0
-        return {"roi": roi, "pnl": pnl, "bought": bought,
-                "decided": n, "win_rate": (wins / n if n else 0.0)}
+        return {
+            "roi": roi, "pnl": pnl, "bought": bought,
+            "decided": n, "win_rate": (wins / n if n else 0.0),
+            "status": "ok",
+        }
 
     # ------------------------------------------------------------------
     #  Helper riusabili: overlap holder -> candidati -> qualificazione ROI
@@ -736,7 +746,7 @@ class PolymarketScanner:
             })
 
         data = {
-            "scan_time": datetime.now().isoformat(),
+            "scan_time": utc_now_iso(),
             "total_wallets": len(wallets),
             "wallets": wallets_out,
         }

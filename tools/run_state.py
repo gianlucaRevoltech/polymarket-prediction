@@ -20,6 +20,8 @@ LEDGER_FILES = (
     "safety_state.json",
     "candidate_journal.jsonl",
     "monitored_wallets.json",
+    "wallet_quality.json",
+    "runtime_status.json",
 )
 
 CLEAR_FILES = LEDGER_FILES + (

@@ -2,6 +2,12 @@
 
 Il bot parte in `observe`: scansiona COPY e registra i candidati, ma non apre
 posizioni. HARVEST, arb-cross, le altre strategie e latency-arb restano spenti.
+Ogni candidato viene comunque valutato con book eseguibile, spread, profondità,
+scadenza, drift e fee. `eligible` significa soltanto che i controlli pre-trade
+sono stati superati; non è un trade e non implica profitto.
+
+I wallet sono congelati per l'intero run. Lo scan e le sostituzioni si eseguono
+solo tra run con `new-run scan`, così il campione non cambia adattivamente.
 
 La modalità `paper_validation` richiede
 `POLYMARKET_EXECUTION_MODE=paper_validation`. Usa size fissa $5, massimo due
@@ -26,8 +32,13 @@ Operazioni VPS:
 ```bash
 ./start_all.sh restart        # conserva sempre stato e run
 ./start_all.sh new-run        # archivia ledger/config, poi crea un nuovo run
+./start_all.sh new-run scan   # nuovo run + nuova selezione wallet (raccomandato)
 ./start_all.sh reset --force  # archivia prima di cancellare; non riavvia
 ```
+
+Il dashboard espone il riepilogo candidati in `/api/status` e le righe recenti
+in `/api/candidates?limit=50`. Tutti i timestamp nuovi sono UTC con offset; lo
+stale viene calcolato sul server e scatta dopo 60 secondi senza ledger.
 
 Una quarantena per tre perdite consecutive si rimuove solo esplicitamente:
 

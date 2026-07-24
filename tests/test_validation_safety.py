@@ -25,8 +25,11 @@ class FakeFetcher:
     def get_book(self, asset):
         return self.books.get(asset)
 
-    def get_executable_price(self, asset, side):
+    def get_executable_price(self, asset, side, size_shares=0):
         book = self.get_book(asset) or {}
+        override = "buy_vwap" if side == "BUY" else "sell_vwap"
+        if override in book:
+            return book[override]
         return book.get("best_ask" if side == "BUY" else "best_bid")
 
     def get_market(self, condition_id):
@@ -102,9 +105,89 @@ class SimulatorSafetyTests(unittest.TestCase):
             json.loads(line)
             for line in (self.data / "candidate_journal.jsonl").read_text().splitlines()
         ]
-        self.assertEqual(rows[-1]["decision"], "rejected")
-        self.assertEqual(rows[-1]["reason"], "execution_mode=observe")
+        self.assertEqual(rows[-1]["journal_version"], 2)
+        self.assertEqual(rows[-1]["decision"], "eligible")
+        self.assertEqual(rows[-1]["reason"], "passed_pretrade_checks")
         self.assertEqual(rows[-1]["best_ask"], 0.50)
+        self.assertEqual(rows[-1]["executable_ask_vwap"], 0.50)
+        self.assertEqual(rows[-1]["executable_bid_vwap"], 0.49)
+        self.assertEqual(sim.portfolio.cash, 300.0)
+        self.assertEqual(sim.recent_opens, {})
+
+    def test_observe_records_specific_pretrade_rejection_reasons(self):
+        EXECUTION["mode"] = "observe"
+        sim = PaperTradingSimulator()
+        feed = FakeFetcher()
+
+        no_book = candidate(asset="asset-no-book", condition="cond-no-book")
+        self.assertFalse(sim.open_position("wallet-a", no_book, fetcher=feed))
+
+        feed.books["asset-band"] = book(0.89, 0.90)
+        out_of_band = candidate(asset="asset-band", condition="cond-band")
+        self.assertFalse(
+            sim.open_position("wallet-a", out_of_band, num_holders=1, fetcher=feed)
+        )
+
+        feed.books["asset-drift"] = book(0.59, 0.60)
+        drift = candidate(asset="asset-drift", condition="cond-drift")
+        drift["avg_price"] = 0.40
+        self.assertFalse(sim.open_position("wallet-a", drift, fetcher=feed))
+
+        feed.books["asset-spread"] = book(0.40, 0.50)
+        wide = candidate(asset="asset-spread", condition="cond-spread")
+        self.assertFalse(sim.open_position("wallet-a", wide, fetcher=feed))
+
+        feed.books["asset-depth"] = book(depth=10)
+        shallow = candidate(asset="asset-depth", condition="cond-depth")
+        self.assertFalse(sim.open_position("wallet-a", shallow, fetcher=feed))
+
+        feed.books["asset-expiry"] = book()
+        expires = candidate(asset="asset-expiry", condition="cond-expiry")
+        expires["end_date_iso"] = "future"
+        feed.days_to_expiry = lambda _value: 100.0
+        self.assertFalse(sim.open_position("wallet-a", expires, fetcher=feed))
+
+        feed.books["asset-vwap"] = {
+            **book(),
+            "buy_vwap": None,
+        }
+        no_full_fill = candidate(asset="asset-vwap", condition="cond-vwap")
+        self.assertFalse(sim.open_position("wallet-a", no_full_fill, fetcher=feed))
+
+        rows = [
+            json.loads(line)
+            for line in (self.data / "candidate_journal.jsonl").read_text().splitlines()
+        ]
+        self.assertEqual(
+            [row["reason"] for row in rows],
+            [
+                "no_executable_two_sided_book",
+                "entry_price_out_of_band",
+                "entry_drift_too_high",
+                "spread_too_wide",
+                "insufficient_top_level_depth",
+                "expiry_too_far",
+                "insufficient_ask_depth_for_full_fill",
+            ],
+        )
+
+    def test_signal_id_deduplicates_after_restart(self):
+        EXECUTION["mode"] = "observe"
+        feed = FakeFetcher()
+        feed.books["asset-1"] = book()
+        info = candidate()
+        info["transaction_hash"] = "0xsource-trade"
+        info["source_trade_at"] = "2026-07-24T07:00:00+00:00"
+
+        sim = PaperTradingSimulator()
+        self.assertFalse(sim.open_position("wallet-a", info, fetcher=feed))
+        sim._save_state()
+        journal = self.data / "candidate_journal.jsonl"
+        self.assertEqual(len(journal.read_text().splitlines()), 1)
+
+        restarted = PaperTradingSimulator()
+        self.assertFalse(restarted.open_position("wallet-a", info, fetcher=feed))
+        self.assertEqual(len(journal.read_text().splitlines()), 1)
 
     def test_duplicate_condition_and_event_survive_restart_and_cooldown(self):
         feed = FakeFetcher()
@@ -240,10 +323,11 @@ class SimulatorSafetyTests(unittest.TestCase):
             )
         )
         restarted.reactivate_strategy("copy")
+        feed.books["asset-5"] = book()
         self.assertTrue(
             restarted.open_position(
                 "wallet-4",
-                candidate(asset="asset-4", condition="cond-4", event="event-4"),
+                candidate(asset="asset-5", condition="cond-5", event="event-5"),
                 fetcher=feed,
             )
         )

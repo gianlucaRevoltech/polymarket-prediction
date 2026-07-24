@@ -1,5 +1,57 @@
 # Progress Log — Polymarket Copy Bot
 
+## SESSIONE 2026-07-24 — Phase CL avviata
+
+- Commit VPS `c2f4d52`; bot/dashboard UP, latency-arb fermo.
+- Ledger aggiornato ogni ~20s, equity $300, zero trade.
+- Journal: 555 candidati tutti bloccati prematuramente da OBSERVE.
+- Refresh wallet: HTTP 400 per `/activity?limit=1000`.
+- Due tentativi di patch dei file di piano falliti per contesto con encoding
+  speciale; nessun file modificato, retry riuscito con anchor ASCII.
+- Obiettivo: dry-run completo, journal v2, UTC/health, wallet congelati,
+  paginazione API, dashboard candidati, test, commit e push.
+- Aggiunti `time_utils.py`, lookup BUY sorgente e paginazione activity 500.
+- Gli errori activity ora producono qualità `unknown`, non falsi zero-trade.
+- Due patch simulator ampie non applicate per commenti con encoding legacy;
+  intervento suddiviso con successo in helper journal e valutatore puro.
+- Journal v2 e dedup persistente aggiunti; OBSERVE ora può emettere `eligible`
+  dopo book, banda, drift, scadenza, liquidità, VWAP ask/bid e fee.
+- `reconcile()` arricchisce i nuovi delta con il BUY sorgente quando disponibile.
+- Primo patch UTC multi-file fallito sul solo contesto import di scanner;
+  retry parziale riuscito, restano scanner/main/dashboard da aggiornare.
+- Wallet manifest congelato per qualsiasi modalità del run; auto-rescan e
+  quality swap sono disattivati durante il campione.
+- Aggiunto `runtime_status.json` con fase, ciclo, ultimo completamento ed errore.
+- Patch archivio multi-script fallita perché Windows delega a `tools/run_state`;
+  Linux e tool Python verranno aggiornati separatamente.
+- Prima suite dopo CL: 15/17 passano. Due failure attese di contratto:
+  il test OBSERVE richiede ancora `rejected/execution_mode=observe`, e il test
+  riattivazione riusa lo stesso segnale ora correttamente deduplicato.
+- Test aggiornati e ampliati: 24/24 PASS. Coperti eligible/reject specifici,
+  dedup restart, paginazione max 500, errori activity, BUY sorgente, timestamp
+  UTC/legacy, candidate API corrente e archivio wallet quality.
+- Seconda suite: 26/26 PASS dopo aggiunta di spread/depth/expiry distinti,
+  freeze manifest OBSERVE e stale reale >60s. `compileall` e `diff --check` OK.
+- Controllo diff ha trovato import `datetime` dashboard rimosso ma ancora usato
+  per trade chiusi; ripristinato prima dello smoke test.
+- Verifica finale ripetuta: 26/26 test PASS. Il comando `bash` trovato da
+  PowerShell punta a WSL senza `/bin/bash`; non è un errore dello script e il
+  controllo `bash -n` verrà eseguito con Git Bash. La catena si è fermata prima
+  del controllo JavaScript, che resta da rilanciare separatamente.
+- `bash -n start_all.sh`, sintassi JavaScript e `git diff --check`: OK.
+- Primo smoke UI con fixture isolate: OBSERVE informativo, health fresco, 2
+  candidati correnti (1 eligible/1 rejected) e motivi corretti. Trovato un
+  mapping errato della latenza (`detection_latency_seconds` invece del campo v2
+  `latency_seconds`); corretto con fallback compatibile v1.
+- Smoke UI ripetuto dopo riavvio del server: latenze 2.1s/1.2s visibili,
+  nessun banner rosso, OBSERVE informativo, nessun errore console. Fixture e
+  server locali erano isolati in `%TEMP%`; server arrestato a fine verifica.
+- Controllo documentazione activity: oltre a `limit <= 500`, l'API impone
+  `offset <= 5000`. Il profiler ora limita una finestra a 5.500 record e un test
+  impedisce regressioni verso offset che causerebbero HTTP 400.
+- Verifica integrata finale: `compileall`, 27/27 `unittest`, `bash -n`,
+  sintassi JavaScript e `git diff --check` tutti OK.
+
 ## Session: 2026-07-13 TARDI (Studio 3 guide online + diagnosi COPY 0W/3L)
 
 ### Contesto post-deploy stamattina (dashboard 14:45)

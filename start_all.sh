@@ -155,7 +155,8 @@ archive_run() {
   for file in \
     portfolio_state.json portfolio_state.json.bak trades_log.json \
     equity_curve.json peak_equity.json recent_opens.json daily_halt.json \
-    safety_state.json candidate_journal.jsonl monitored_wallets.json; do
+    safety_state.json candidate_journal.jsonl monitored_wallets.json \
+    wallet_quality.json runtime_status.json; do
     if [ -f "$DATA_DIR/$file" ]; then
       cp -a "$DATA_DIR/$file" "$archive_dir/$file"
     fi
@@ -198,6 +199,7 @@ clear_trading_state() {
   rm -f "$DATA_DIR/recent_opens.json"
   rm -f "$DATA_DIR/safety_state.json" "$DATA_DIR/candidate_journal.jsonl"
   rm -f "$DATA_DIR/monitored_wallets.json"
+  rm -f "$DATA_DIR/wallet_quality.json" "$DATA_DIR/runtime_status.json"
   # Phase W: price history (momentum tracker) — no stale trend data dopo reset
   rm -f "$DATA_DIR/price_history.json"
   # Phase BB: whale wallet list — no stale whale list dopo reset

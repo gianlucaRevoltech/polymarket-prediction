@@ -26,6 +26,7 @@ class RunStateTests(unittest.TestCase):
                 "cash": 297.0869,
             }))
             (data / "trades_log.json").write_text("[]")
+            (data / "wallet_quality.json").write_text('{"wallet": {"pnl": -1}}')
 
             with mock.patch.object(run_state, "ROOT", root), \
                  mock.patch.object(run_state, "DATA", data), \
@@ -33,8 +34,10 @@ class RunStateTests(unittest.TestCase):
                 archived = run_state.archive()
                 self.assertTrue(archived.resolve().is_relative_to((data / "runs").resolve()))
                 self.assertTrue((archived / "portfolio_state.json").exists())
+                self.assertTrue((archived / "wallet_quality.json").exists())
                 run_state.clear(force=True)
                 self.assertFalse((data / "portfolio_state.json").exists())
+                self.assertFalse((data / "wallet_quality.json").exists())
                 self.assertTrue((archived / "portfolio_state.json").exists())
 
     def test_clear_without_force_refuses(self):

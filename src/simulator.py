@@ -11,6 +11,7 @@ il nostro portafoglio simulato e:
 """
 import json
 import uuid
+import hashlib
 import os
 import tempfile
 import shutil
@@ -23,6 +24,7 @@ from config import (
     BUDGET, FEES, SIMULATOR, STRATEGY, STRATEGIES, MONITOR, DATA_DIR, LOGS_DIR,
     EXECUTION,
 )
+from time_utils import parse_utc, utc_iso, utc_now_iso
 
 
 class PaperTradingSimulator:
@@ -63,6 +65,8 @@ class PaperTradingSimulator:
         self.strategy_mode: str = STRATEGY["mode"]
 
         self._load_state()
+        self.seen_candidate_signal_ids: Set[str] = set()
+        self._load_seen_candidate_signals()
         self._cleanup_legacy_positions()
         self._load_safety_state()
         self.wallet_quality: Dict[str, Dict] = {}
@@ -135,7 +139,7 @@ class PaperTradingSimulator:
                 "blocked_conditions": self.blocked_conditions,
                 "strategy_loss_streaks": self.strategy_loss_streaks,
                 "quarantined_strategies": sorted(self.quarantined_strategies),
-                "saved_at": datetime.now().isoformat(),
+                "saved_at": utc_now_iso(),
             })
         except Exception as exc:
             print(f"[ERRORE] Salvataggio safety_state: {exc}")
@@ -185,7 +189,7 @@ class PaperTradingSimulator:
         strategy = pos.strategy or "copy"
         if reason == "stop_loss" and pos.condition_id:
             self.blocked_conditions[pos.condition_id] = {
-                "blocked_at": datetime.now().isoformat(),
+                "blocked_at": utc_now_iso(),
                 "event_slug": pos.event_slug,
                 "market": pos.market_title,
                 "reason": "stop_loss_until_resolution",
@@ -209,16 +213,37 @@ class PaperTradingSimulator:
     def _journal(self, decision: str, reason: str, *, strategy: str,
                  signal_id: str = "", wallet: str = "", info: Optional[Dict] = None,
                  opp=None, book: Optional[Dict] = None, position: Optional[Position] = None,
-                 costs: Optional[Dict] = None) -> None:
+                 costs: Optional[Dict] = None,
+                 evaluation: Optional[Dict] = None) -> bool:
         """Una riga JSON immutabile per ogni candidato/decisione/chiusura."""
         info = info or {}
-        now = datetime.now().isoformat()
+        evaluation = evaluation or {}
+        now = utc_now_iso()
+        resolved_signal_id = (
+            signal_id or getattr(position, "signal_id", "") or uuid.uuid4().hex
+        )
+        candidate_decisions = {"eligible", "rejected", "opened"}
+        if (
+            decision in candidate_decisions
+            and resolved_signal_id in self.seen_candidate_signal_ids
+        ):
+            return False
+        source_trade_at = utc_iso(
+            info.get("source_trade_at") or info.get("source_trade_timestamp")
+        )
+        source_dt = parse_utc(source_trade_at)
+        detected_dt = parse_utc(now)
+        latency_seconds = (
+            max(0.0, (detected_dt - source_dt).total_seconds())
+            if source_dt and detected_dt else None
+        )
         row = {
-            "journal_version": 1,
+            "journal_version": 2,
             "run_id": self.run_id,
-            "signal_id": signal_id or getattr(position, "signal_id", "") or uuid.uuid4().hex,
+            "signal_id": resolved_signal_id,
             "strategy": strategy,
             "wallet": wallet or info.get("source_wallet", ""),
+            "transaction_hash": info.get("transaction_hash", ""),
             "event_id": info.get("event_id", "") or getattr(opp, "event_id", "") or
                         getattr(position, "event_id", ""),
             "event_slug": info.get("event_slug", "") or getattr(opp, "event_slug", "") or
@@ -234,16 +259,24 @@ class PaperTradingSimulator:
                      getattr(position, "asset", ""),
             "market": info.get("title", "") or getattr(opp, "market_title", "") or
                       getattr(position, "market_title", ""),
-            "source_trade_at": info.get("source_trade_at") or
-                               info.get("source_trade_timestamp"),
+            "outcome": info.get("outcome", "") or getattr(position, "outcome", ""),
+            "category": info.get("category", "") or getattr(position, "category", ""),
+            "source_trade_at": source_trade_at,
             "detected_at": now,
+            "detection_latency_seconds": latency_seconds,
             "best_bid": (book or {}).get("best_bid"),
             "best_ask": (book or {}).get("best_ask"),
             "bid_depth": (book or {}).get("bid_size"),
             "ask_depth": (book or {}).get("ask_size"),
+            "executable_ask_vwap": evaluation.get("executable_ask_vwap"),
+            "executable_bid_vwap": evaluation.get("executable_bid_vwap"),
+            "planned_size_usdc": evaluation.get("planned_size_usdc"),
             "decision": decision,
             "reason": reason,
-            "entry_price": getattr(position, "entry_price", None),
+            "entry_price": (
+                getattr(position, "entry_price", None)
+                or evaluation.get("entry_price")
+            ),
             "exit_price": getattr(position, "exit_price", None),
             "costs": costs or {},
         }
@@ -251,8 +284,48 @@ class PaperTradingSimulator:
             DATA_DIR.mkdir(parents=True, exist_ok=True)
             with open(self.candidate_journal, "a", encoding="utf-8") as fh:
                 fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+            if decision in candidate_decisions:
+                self.seen_candidate_signal_ids.add(resolved_signal_id)
+            return True
         except Exception as exc:
             print(f"[ERRORE] candidate journal: {exc}")
+            return False
+
+    def _load_seen_candidate_signals(self) -> None:
+        """Ricostruisce il dedup append-only del run corrente dopo restart."""
+        if not self.candidate_journal.exists():
+            return
+        try:
+            with open(self.candidate_journal, encoding="utf-8") as fh:
+                for line in fh:
+                    try:
+                        row = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if row.get("run_id") != self.run_id:
+                        continue
+                    if row.get("decision") not in {"eligible", "rejected", "opened"}:
+                        continue
+                    signal_id = str(row.get("signal_id", ""))
+                    if signal_id:
+                        self.seen_candidate_signal_ids.add(signal_id)
+        except Exception as exc:
+            print(f"[WARNING] candidate journal non leggibile: {exc}")
+
+    @staticmethod
+    def _copy_signal_id(source_wallet: str, info: Dict) -> str:
+        explicit = info.get("signal_id") or info.get("transaction_hash")
+        if explicit:
+            return str(explicit)
+        fingerprint = "|".join([
+            "copy",
+            str(source_wallet or "").lower(),
+            str(info.get("asset", "")),
+            str(info.get("source_trade_at") or ""),
+            str(info.get("avg_price") or ""),
+            str(info.get("size") or info.get("notional_usdc") or ""),
+        ])
+        return hashlib.sha256(fingerprint.encode("utf-8")).hexdigest()
 
     @staticmethod
     def _best_bid(fetcher, asset: str, size_shares: float = 0.0) -> Optional[float]:
@@ -435,7 +508,7 @@ class PaperTradingSimulator:
             with open(self._daily_halt_file(), "w") as f:
                 json.dump({"date": (self.daily_halt_date or date.today()).isoformat(),
                            "halt": self.daily_halt_active,
-                           "saved_at": datetime.now().isoformat()}, f)
+                           "saved_at": utc_now_iso()}, f)
         except Exception:
             pass
 
@@ -459,7 +532,7 @@ class PaperTradingSimulator:
         return exit_price * (1.0 - fee_frac)
 
     def _alert(self, msg: str):
-        line = f"[{datetime.now().isoformat()}] {msg}"
+        line = f"[{utc_now_iso()}] {msg}"
         print(f"[ALERT] {msg}")
         try:
             self._alert_path.parent.mkdir(parents=True, exist_ok=True)
@@ -475,7 +548,7 @@ class PaperTradingSimulator:
         try:
             with open(self._peak_file(), "w") as f:
                 json.dump({"peak_equity": self.peak_equity,
-                           "saved_at": datetime.now().isoformat()}, f)
+                           "saved_at": utc_now_iso()}, f)
         except Exception:
             pass
 
@@ -667,6 +740,128 @@ class PaperTradingSimulator:
     # ------------------------------------------------------------------
     # Apertura posizioni
     # ------------------------------------------------------------------
+    def evaluate_copy_candidate(self, source_wallet: str, info: Dict,
+                                num_holders: int = 1, fetcher=None) -> Dict:
+        """Valuta un candidato COPY senza modificare stato, cash o cooldown."""
+        info = dict(info)
+        asset = str(info.get("asset", ""))
+        condition_id = str(info.get("condition_id", ""))
+
+        if fetcher is not None and condition_id and not info.get("event_slug"):
+            market = fetcher.get_market(condition_id)
+            if market:
+                info["event_id"] = market.get("event_id", "")
+                info["event_slug"] = market.get("event_slug", "")
+                info["event_title"] = market.get("event_title", "")
+                info["category"] = market.get("category") or info.get("category", "")
+
+        signal_id = self._copy_signal_id(source_wallet, info)
+        result = {
+            "eligible": False,
+            "duplicate": signal_id in self.seen_candidate_signal_ids,
+            "reason": "",
+            "signal_id": signal_id,
+            "info": info,
+            "book": None,
+            "planned_size_usdc": float(EXECUTION.get("paper_size_usdc", 5.0)),
+        }
+        if result["duplicate"]:
+            result["reason"] = "duplicate_signal"
+            return result
+
+        def reject(reason: str) -> Dict:
+            result["reason"] = reason
+            return result
+
+        if not asset:
+            return reject("missing_asset")
+        book = fetcher.get_book(asset) if fetcher is not None else None
+        result["book"] = book
+        if not book or book.get("best_ask") is None or book.get("best_bid") is None:
+            return reject("no_executable_two_sided_book")
+        price = float(book["best_ask"])
+        if price <= 0 or price >= 1:
+            return reject("invalid_best_ask")
+
+        price_min = float(STRATEGY.get("entry_price_min", 0.0))
+        price_max = float(STRATEGY.get("entry_price_max", 1.0))
+        soft_min = float(STRATEGY.get("soft_price_min", price_min))
+        soft_max = float(STRATEGY.get("soft_price_max", price_max))
+        soft_consensus = int(STRATEGY.get("soft_requires_consensus", 99))
+        if not (
+            price_min <= price <= price_max
+            or (num_holders >= soft_consensus and soft_min <= price <= soft_max)
+        ):
+            return reject("entry_price_out_of_band")
+
+        avg_price = float(info.get("avg_price", 0.0) or 0.0)
+        max_drift = float(STRATEGY.get("max_entry_drift", 1.0))
+        if avg_price > 0 and price > avg_price * (1 + max_drift):
+            return reject("entry_drift_too_high")
+
+        end_iso = info.get("end_date_iso") or info.get("end_date", "")
+        if end_iso and fetcher is not None:
+            days = fetcher.days_to_expiry(end_iso)
+            max_days = STRATEGY.get("max_days_to_expiry")
+            min_days = float(STRATEGY.get("min_days_to_expiry", 0.0))
+            if days is not None and max_days is not None and days > max_days:
+                return reject("expiry_too_far")
+            if days is not None and min_days > 0 and days < min_days:
+                return reject("expiry_too_near")
+
+        if fetcher is not None and STRATEGY.get("min_book_size_usdc"):
+            min_depth = float(STRATEGY["min_book_size_usdc"])
+            if (
+                float(book.get("bid_size", 0) or 0) < min_depth
+                or float(book.get("ask_size", 0) or 0) < min_depth
+            ):
+                return reject("insufficient_top_level_depth")
+            spread = book.get("spread")
+            max_spread = float(STRATEGY.get("max_spread_ticks", 3)) * 0.01
+            if spread is None or float(spread) > max_spread:
+                return reject("spread_too_wide")
+
+        category = info.get("category") or categorize_market(
+            info.get("title", ""), event_slug=info.get("event_slug", "")
+        )
+        info["category"] = category
+        size = result["planned_size_usdc"]
+        planned_shares = size / price
+        try:
+            executable_ask = (
+                fetcher.get_executable_price(asset, "BUY", planned_shares)
+                if fetcher is not None else price
+            )
+        except TypeError:
+            executable_ask = price
+        if executable_ask is None:
+            return reject("insufficient_ask_depth_for_full_fill")
+        executable_ask = float(executable_ask)
+        if executable_ask <= 0 or executable_ask >= 1:
+            return reject("invalid_executable_ask_vwap")
+        fee_fraction = taker_fee_fraction(category, executable_ask)
+        entry_price = min(0.999, executable_ask * (1 + fee_fraction))
+        shares = size / entry_price
+        executable_bid = self._best_bid(fetcher, asset, shares)
+        if executable_bid is None:
+            return reject("insufficient_bid_depth_for_full_exit")
+
+        result.update({
+            "eligible": True,
+            "reason": "passed_pretrade_checks",
+            "executable_ask_vwap": executable_ask,
+            "executable_bid_vwap": float(executable_bid),
+            "entry_price": entry_price,
+            "shares": shares,
+            "fee_fraction": fee_fraction,
+            "costs": {
+                "fee_fraction": fee_fraction,
+                "fee_price": entry_price - executable_ask,
+                "slippage_price": executable_ask - price,
+            },
+        })
+        return result
+
     def open_position(self, source_wallet: str, info: Dict, num_holders: int = 1,
                       fetcher=None) -> bool:
         """
@@ -677,10 +872,15 @@ class PaperTradingSimulator:
         Phase B: soft-disable (size dimezzata) per wallet con win-rate basso.
         Phase C: chiamata solo per asset NUOVI (delta-snapshot), vedi reconcile.
         """
-        info = dict(info)
+        evaluation = self.evaluate_copy_candidate(
+            source_wallet, info, num_holders=num_holders, fetcher=fetcher
+        )
+        if evaluation["duplicate"]:
+            return False
+        info = evaluation["info"]
         asset = info.get("asset", "")
         condition_id = info.get("condition_id", "")
-        signal_id = uuid.uuid4().hex
+        signal_id = evaluation["signal_id"]
 
         # Arricchisce l'identità evento per snapshot data-api legacy che non la
         # espongono. Per la correlazione non usiamo mai market_slug come evento.
@@ -692,11 +892,26 @@ class PaperTradingSimulator:
                 info["event_title"] = market.get("event_title", "")
                 info["category"] = market.get("category") or info.get("category", "")
 
-        book = fetcher.get_book(asset) if fetcher is not None and asset else None
+        book = evaluation["book"]
+        if not evaluation["eligible"]:
+            self._journal(
+                "rejected", evaluation["reason"], strategy="copy",
+                signal_id=signal_id, wallet=source_wallet, info=info, book=book,
+                evaluation=evaluation,
+            )
+            return False
+        if self.execution_mode == "observe":
+            self._journal(
+                "eligible", "passed_pretrade_checks", strategy="copy",
+                signal_id=signal_id, wallet=source_wallet, info=info, book=book,
+                costs=evaluation.get("costs"), evaluation=evaluation,
+            )
+            return False
+
         def reject(reason: str) -> bool:
             self._journal("rejected", reason, strategy="copy",
                           signal_id=signal_id, wallet=source_wallet,
-                          info=info, book=book)
+                          info=info, book=book, evaluation=evaluation)
             return False
 
         halt = self._opening_halt_reason("copy")
@@ -942,6 +1157,7 @@ class PaperTradingSimulator:
                 "fee_price": eff_price_with_fee - eff_price,
                 "slippage_price": eff_price - price,
             },
+            evaluation=evaluation,
         )
 
         print(f"\n[POSIZIONE APERTA] ({self.strategy_mode}, holders={num_holders}, cat={category})")
@@ -1161,7 +1377,13 @@ class PaperTradingSimulator:
             else:
                 source_pool = entry["holders"]
             source = sorted(source_pool)[0]
-            self.open_position(source, entry["info"],
+            candidate_info = dict(entry["info"])
+            candidate_info["source_wallet"] = source
+            if hasattr(fetcher, "get_recent_buy"):
+                source_trade = fetcher.get_recent_buy(source, asset)
+                if source_trade:
+                    candidate_info.update(source_trade)
+            self.open_position(source, candidate_info,
                                num_holders=len(entry["holders"]),
                                fetcher=fetcher)
 
@@ -1822,7 +2044,7 @@ class PaperTradingSimulator:
 
     def _log_strategy_trade(self, position: Position, opp):
         trade_log = {
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": utc_now_iso(),
             "run_id": self.run_id,
             "signal_id": position.signal_id,
             "strategy": position.strategy,
@@ -1873,7 +2095,7 @@ class PaperTradingSimulator:
         pnl_pct = ((exit_price - position.entry_price) / position.entry_price * 100) if position.entry_price > 0 else 0
         hold_sec = (datetime.now() - position.entry_time).total_seconds() if position.entry_time else 0
         close_log = {
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": utc_now_iso(),
             "run_id": position.run_id or self.run_id,
             "signal_id": position.signal_id,
             "strategy": position.strategy or "copy",
@@ -2074,7 +2296,7 @@ class PaperTradingSimulator:
             unrealized = sum(pos.pnl for pos in self.portfolio.positions.values())
             realized = sum(pos.pnl for pos in self.portfolio.closed_positions)
             point = {
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": utc_now_iso(),
                 "strategy": self.strategy_mode,
                 "equity": round(self.portfolio.total_value, 2),
                 "cash": round(self.portfolio.cash, 2),
@@ -2103,7 +2325,7 @@ class PaperTradingSimulator:
     # ------------------------------------------------------------------
     def _log_trade(self, wallet_address: str, position: Position, num_holders: int):
         trade_log = {
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": utc_now_iso(),
             "run_id": position.run_id or self.run_id,
             "signal_id": position.signal_id,
             "strategy": self.strategy_mode,
@@ -2139,7 +2361,7 @@ class PaperTradingSimulator:
     # ------------------------------------------------------------------
     def _save_state(self):
         try:
-            saved_at = datetime.now().isoformat()
+            saved_at = utc_now_iso()
             state = {
                 "state_version": 2,
                 "run_id": self.run_id,

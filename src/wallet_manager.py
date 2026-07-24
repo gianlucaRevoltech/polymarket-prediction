@@ -95,6 +95,16 @@ class WalletManager:
             try:
                 perf = self.scanner._wallet_realized_performance(addr)
                 our = self.our_wallet_stats(addr)
+                if perf.get("status") == "unknown":
+                    qualities[addr.lower()] = {
+                        "win_rate": 0.0, "roi": 0.0, "pnl": 0.0,
+                        "decided": 0, "status": "unknown",
+                        "our_trades": our.get("trades", 0),
+                        "our_pnl": our.get("pnl", 0.0),
+                        "our_wins": our.get("wins", 0),
+                        "our_losses": our.get("losses", 0),
+                    }
+                    continue
                 # status: active / disabled (perdente)
                 wr = perf.get("win_rate", 0.0)
                 our_trades = our.get("trades", 0)

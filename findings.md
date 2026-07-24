@@ -3,6 +3,35 @@
 > Estensione sessione 2026-07-01 (post-dashboard VPS: WR 20%, poche aperture, obiettivo doubling/settimana).
 > Vecchi punti P1-P9 ancora validi (vedi sezione "Diagnosi storica" sotto).
 
+## Incident OBSERVE VPS — 2026-07-24
+
+- Deploy confermato su `c2f4d52`; bot e dashboard attivi, latency-arb fermo.
+- Il loop completa snapshot ogni ~20 secondi e salva il ledger: nessun crash.
+- Il journal contiene 555 righe, tutte `rejected/execution_mode=observe`.
+  `open_position()` controlla la modalità prima dei filtri, quindi il campione
+  non distingue segnali validi da book/spread/scadenza/drift non validi.
+- `saved_at` è UTC naïve; il browser Europe/Rome lo interpreta come ora locale
+  e calcola un falso stale di circa due ore.
+- Il profiler usa `/activity?limit=1000`; l'API accetta massimo 500. I refresh
+  qualità restituiscono HTTP 400 e non producono metriche affidabili.
+- Il full rescan automatico è sincrono e interrompe i cicli. Per un campione
+  prospettico stabile, wallet e selezione restano congelati nel run.
+- `wallet_quality.json` non è attualmente archiviato/azzerato da `new-run`.
+- `reconcile()` salva già il ledger a fine ciclo: per health basta calcolare
+  l'età sul backend con parsing UTC, senza heartbeat artificiale.
+- `source_trade_at` nello snapshot `/positions` non è garantito; il lookup deve
+  interrogare `/activity` solo quando appare un nuovo `(wallet, asset)`.
+- La valutazione deve distinguere filtri pre-trade puri dai limiti dipendenti
+  dal portfolio. In OBSERVE si registra `eligible`, poi si esce prima di ogni
+  mutazione; in paper si applicano halt/cap/dedup persistente e si apre.
+- Il manifest wallet è oggi congelato solo in paper. Verrà riutilizzato per
+  qualunque modalità quando il `run_id` coincide e marcato sempre `frozen`.
+- La dashboard dispone già di un unico refresh ogni 10s: `/api/status` conterrà
+  il riepilogo leggero e lo stesso ciclo caricherà `/api/candidates?limit=50`
+  per la tabella, entrambi `no-store`.
+- Il banner attuale fonde OBSERVE e guasti reali. Verrà separato in banner
+  informativo OBSERVE e banner rosso basato su `bot_health.stale`/halt reale.
+
 ## Requirements (sessione 2026-07-01)
 - Aumentare nr. aperture (ora 1/12h, wallet attivissimi)
 - Rimediare alla perdita (-$0.80, WR 20% su 5 trade)

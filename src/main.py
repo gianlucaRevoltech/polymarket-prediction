@@ -25,8 +25,9 @@ from wallet_manager import WalletManager
 from models import WalletAnalysis
 from config import (
     BUDGET, STRATEGY, STRATEGIES, TRACKING, SCANNER, MONITOR, WALLET_MONITOR,
-    DATA_DIR, BASE_DIR, EXECUTION,
+    DATA_DIR, EXECUTION,
 )
+from time_utils import age_seconds, utc_now_iso
 
 
 class PolymarketPaperTradingBot:
@@ -57,11 +58,14 @@ class PolymarketPaperTradingBot:
         # Phase Z: hook copy close -> wallet manager tracking P&L per-wallet
         self.simulator.on_copy_close = self.wallet_mgr.record_copy_close
         self._cycle_count = 0
+        self.runtime_status_file = DATA_DIR / "runtime_status.json"
+        self.last_cycle_at: Optional[str] = None
 
-        pid_file = BASE_DIR / "data" / "bot.pid"
+        pid_file = DATA_DIR / "bot.pid"
         pid_file.parent.mkdir(parents=True, exist_ok=True)
         with open(pid_file, 'w') as f:
             f.write(str(os.getpid()))
+        self._write_runtime_status("starting")
 
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
@@ -69,9 +73,28 @@ class PolymarketPaperTradingBot:
     def _signal_handler(self, signum, frame):
         print("\n\n[BOT] Shutdown richiesto...")
         self.running = False
-        pid_file = BASE_DIR / "data" / "bot.pid"
+        self._write_runtime_status("stopping")
+        pid_file = DATA_DIR / "bot.pid"
         if pid_file.exists():
             pid_file.unlink()
+
+    def _write_runtime_status(self, phase: str, error: str = "") -> None:
+        payload = {
+            "run_id": self.simulator.run_id,
+            "updated_at": utc_now_iso(),
+            "last_cycle_at": self.last_cycle_at,
+            "phase": phase,
+            "cycle": self._cycle_count,
+            "error": error,
+        }
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = self.runtime_status_file.with_suffix(".json.tmp")
+        try:
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(payload, fh, indent=2)
+            os.replace(tmp, self.runtime_status_file)
+        except Exception as exc:
+            print(f"[WARNING] runtime status: {exc}")
 
     # ------------------------------------------------------------------
     # Selezione wallet da monitorare
@@ -79,7 +102,7 @@ class PolymarketPaperTradingBot:
     def load_monitored_from_file(self) -> List[str]:
         """Carica gli indirizzi dei top wallet da data/scan_results.json se presente."""
         manifest = DATA_DIR / "monitored_wallets.json"
-        if self.simulator.execution_mode == "paper_validation" and manifest.exists():
+        if manifest.exists():
             try:
                 with open(manifest, encoding="utf-8") as fh:
                     data = json.load(fh)
@@ -128,8 +151,8 @@ class PolymarketPaperTradingBot:
         payload = {
             "run_id": self.simulator.run_id,
             "execution_mode": self.simulator.execution_mode,
-            "frozen": self.simulator.execution_mode == "paper_validation",
-            "updated_at": datetime.now().isoformat(),
+            "frozen": True,
+            "updated_at": utc_now_iso(),
             "wallets": wallets,
         }
         path = DATA_DIR / "monitored_wallets.json"
@@ -150,8 +173,7 @@ class PolymarketPaperTradingBot:
             scan_time = data.get("scan_time")
             if not scan_time:
                 return None
-            scanned_at = datetime.fromisoformat(scan_time)
-            return (datetime.now() - scanned_at).total_seconds()
+            return age_seconds(scan_time)
         except Exception:
             return None
 
@@ -201,10 +223,7 @@ class PolymarketPaperTradingBot:
 
     def _maybe_auto_rescan(self) -> None:
         """Durante il loop, aggiorna la lista wallet se lo scan e' obsoleto."""
-        if (
-            self.simulator.execution_mode == "paper_validation"
-            and EXECUTION.get("freeze_wallets_in_validation", True)
-        ):
+        if EXECUTION.get("freeze_wallets_for_run", True):
             return
         if not self._is_scan_stale():
             return
@@ -216,10 +235,7 @@ class PolymarketPaperTradingBot:
     # Phase Z: wallet quality refresh frequente + swap perdenti
     def _maybe_wallet_quality_refresh(self) -> None:
         """Ogni 15min re-fetch win_rate wallet attivi e swap perdenti con riserve."""
-        if (
-            self.simulator.execution_mode == "paper_validation"
-            and EXECUTION.get("freeze_wallets_in_validation", True)
-        ):
+        if EXECUTION.get("freeze_wallets_for_run", True):
             return
         if not self.wallet_mgr.should_refresh():
             return
@@ -311,17 +327,16 @@ class PolymarketPaperTradingBot:
         self._persist_monitored_wallets()
         print(f"[BOT] {len(addresses)} wallet caricati da scan_results.json")
 
-        frozen_validation = (
-            self.simulator.execution_mode == "paper_validation"
-            and EXECUTION.get("freeze_wallets_in_validation", True)
-        )
-        if self._is_scan_stale() and not frozen_validation:
+        frozen_run = EXECUTION.get("freeze_wallets_for_run", True)
+        if self._is_scan_stale() and not frozen_run:
             age_h = (self._scan_age_sec() or 0) / 3600
             print(f"[BOT] Lista datata ({age_h:.1f}h) — refresh automatico all'avvio...")
             if self._run_wallet_scan():
                 self._reload_monitored_wallets()
 
-        if SCANNER.get("auto_rescan_enabled", False):
+        if frozen_run:
+            print("[BOT] Wallet CONGELATI per il run; refresh solo con new-run scan")
+        elif SCANNER.get("auto_rescan_enabled", False):
             next_h = SCANNER["auto_rescan_interval_sec"] / 3600
             print(f"[BOT] Auto-rescan ogni {next_h:.0f}h (nessun intervento manuale richiesto)")
         else:
@@ -396,11 +411,13 @@ class PolymarketPaperTradingBot:
         try:
             while self.running:
                 try:
+                    self._write_runtime_status("maintenance")
                     self._maybe_auto_rescan()
                     self._maybe_wallet_quality_refresh()
 
                     cycle_start = datetime.now().strftime('%H:%M:%S')
                     print(f"\n[{cycle_start}] Snapshot posizioni...")
+                    self._write_runtime_status("snapshot")
 
                     aggregate = self.fetcher.snapshot_wallets(self.monitored_addresses)
                     print(f"  {len(aggregate)} asset distinti rilevati tra i wallet")
@@ -467,6 +484,8 @@ class PolymarketPaperTradingBot:
                     self.simulator.reconcile(
                         aggregate, min_wallets, self.fetcher, new_holdings=new_holdings,
                         monitored_wallets=set(self.monitored_addresses))
+                    self.last_cycle_at = utc_now_iso()
+                    self._write_runtime_status("idle")
 
                     summary = self.simulator.get_portfolio_summary()
                     print(f"  Equity: ${summary['current_value']:.2f} "
@@ -491,6 +510,7 @@ class PolymarketPaperTradingBot:
                         time.sleep(1)
                 except Exception as e:
                     print(f"[ERRORE] Ciclo fallito: {e}")
+                    self._write_runtime_status("error", str(e))
                     import traceback
                     traceback.print_exc()
                     for _ in range(TRACKING["poll_interval"]):

@@ -32,7 +32,7 @@ EXECUTION = {
     "daily_loss_usdc": 3.0,
     "run_loss_usdc": 6.0,
     "max_consecutive_losses": 3,
-    "freeze_wallets_in_validation": True,
+    "freeze_wallets_for_run": True,
     "latency_arb_enabled": False,
 }
 if EXECUTION["mode"] not in {"observe", "paper_validation"}:

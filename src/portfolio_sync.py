@@ -14,6 +14,7 @@ import json as _json
 from typing import Dict, List, Optional
 from config import POLYMARKET_API, STRATEGY
 from categories import categorize_market
+from time_utils import utc_iso
 
 
 class PolymarketPositionFetcher:
@@ -53,6 +54,45 @@ class PolymarketPositionFetcher:
             if norm["asset"] and norm["size"] > 0:
                 positions.append(norm)
         return positions
+
+    def get_recent_buy(self, wallet_address: str, asset: str,
+                       limit: int = 100) -> Optional[Dict]:
+        """Trova il BUY sorgente più recente per un nuovo asset del wallet."""
+        if not wallet_address or not asset:
+            return None
+        try:
+            url = f"{self.data_api}/activity"
+            params = {
+                "user": wallet_address,
+                "type": "TRADE",
+                "side": "BUY",
+                "limit": min(max(int(limit), 1), 500),
+                "offset": 0,
+                "sortBy": "TIMESTAMP",
+                "sortDirection": "DESC",
+            }
+            response = self.session.get(url, params=params, timeout=15)
+            response.raise_for_status()
+            matches = [
+                row for row in response.json()
+                if str(row.get("asset", "")) == str(asset)
+                and str(row.get("side", "")).upper() == "BUY"
+                and str(row.get("type", "TRADE")).upper() == "TRADE"
+            ]
+            if not matches:
+                return None
+            row = max(matches, key=lambda item: float(item.get("timestamp", 0) or 0))
+            return {
+                "transaction_hash": row.get("transactionHash", ""),
+                "source_trade_at": utc_iso(row.get("timestamp")),
+                "source_trade_price": float(row.get("price", 0) or 0),
+                "source_trade_size": float(
+                    row.get("usdcSize", row.get("size", 0)) or 0
+                ),
+            }
+        except Exception as exc:
+            print(f"[SYNC] Errore activity BUY {wallet_address[:10]}...: {exc}")
+            return None
 
     @staticmethod
     def _normalize(p: Dict) -> Dict:

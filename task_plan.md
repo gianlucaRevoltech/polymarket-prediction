@@ -1,5 +1,20 @@
 # Task Plan: Polymarket Bot — FIX EMERGENZA PERFORMANCE (-5.63%, WR 24%)
 
+## Active Phase CL: OBSERVE misurabile e health corretto (2026-07-24)
+
+- [x] CL1: pipeline comune di valutazione COPY e journal v2 deduplicato
+- [x] CL2: lookup trade sorgente `/activity` e paginazione API max 500
+- [x] CL3: timestamp UTC, state age backend e bot health
+- [x] CL4: wallet congelati per run e archiviazione completa wallet quality
+- [x] CL5: API/dashboard candidate journal e banner separati
+- [x] CL6: test, smoke test, documentazione, commit e push
+
+Decisioni bloccate:
+- OBSERVE valuta i filtri pre-trade ma non muta portfolio/cash/cooldown.
+- `eligible` significa controlli pre-trade superati, non profitto atteso.
+- I wallet restano fissi per tutto il run; refresh solo con `new-run scan`.
+- Il run VPS `run-20260723T095411-5d89b02d` resta solo diagnostico.
+
 ## Goal
 Fermare l'emorragia di capitale ($300→$283, -5.63%, WR 24%) e trasformare il bot
 in un sistema profittevole. ROOT CAUSE: il bot entra a prezzi estremi (0.999, 0.036,
@@ -7,7 +22,7 @@ in un sistema profittevole. ROOT CAUSE: il bot entra a prezzi estremi (0.999, 0.
 dal fallimento del segnale. Risk/reward invertito: gain minuscolo, loss enorme.
 
 ## Current Phase
-Phase CK1-CK6 IMPLEMENTATION COMPLETE → VPS deploy/24h observation pending
+Phase CL1-CL6 IMPLEMENTATION COMPLETE → VPS `new-run scan` e osservazione 48h pending
 
 ## Phase CK: Arresto perdite e nuova validazione (2026-07-23)
 

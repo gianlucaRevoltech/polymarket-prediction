@@ -25,7 +25,7 @@ import json
 import time
 from collections import defaultdict
 from datetime import datetime
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import requests
 
@@ -35,6 +35,7 @@ if sys.platform.startswith('win'):
 from config import POLYMARKET_API, BUDGET, STRATEGY, SIMULATOR, DATA_DIR
 from portfolio_sync import PolymarketPositionFetcher
 from categories import categorize_market, taker_fee_fraction
+from time_utils import utc_now_iso
 
 RESOLVED_LOW = 0.02
 RESOLVED_HIGH = 0.98
@@ -60,15 +61,34 @@ class Backtester:
         })
 
     # ------------------------------------------------------------------
-    def fetch_activity(self, wallet: str) -> List[Dict]:
+    def fetch_activity(self, wallet: str) -> Optional[List[Dict]]:
+        """Recupera activity paginando entro il limite API di 500 per request."""
         try:
             url = f"{self.data_api}/activity"
-            r = self.session.get(url, params={"user": wallet, "limit": self.activity_limit}, timeout=25)
-            r.raise_for_status()
-            return r.json()
+            # Data API: limit <= 500 e offset <= 5000. Una singola finestra
+            # può quindi leggere al massimo 5.500 record senza HTTP 400.
+            requested = min(max(int(self.activity_limit), 0), 5500)
+            rows: List[Dict] = []
+            offset = 0
+            while len(rows) < requested:
+                page_limit = min(500, requested - len(rows))
+                r = self.session.get(
+                    url,
+                    params={"user": wallet, "limit": page_limit, "offset": offset},
+                    timeout=25,
+                )
+                r.raise_for_status()
+                page = r.json()
+                if not isinstance(page, list):
+                    raise ValueError("activity response non-list")
+                rows.extend(page)
+                if len(page) < page_limit:
+                    break
+                offset += len(page)
+            return rows
         except Exception as e:
             print(f"[BT] Errore activity {wallet[:10]}...: {e}")
-            return []
+            return None
 
     def positions_map(self, wallet: str) -> Dict[str, Dict]:
         """asset -> {cur_price, redeemable} dallo snapshot corrente."""
@@ -262,6 +282,13 @@ class Backtester:
             addr = w["address"]
             name = w.get("name") or addr[:10]
             activity = self.fetch_activity(addr)
+            if activity is None:
+                per_wallet[addr] = {
+                    "name": name, "error": "activity_fetch_failed",
+                    "positions": 0, "pnl": 0.0, "bought": 0.0,
+                    "roi": 0.0, "win_rate": 0.0,
+                }
+                continue
             rewards_sum += self.rewards_total(activity)
             posmap = self.positions_map(addr)
             closed = self.reconstruct_positions(activity, posmap)
@@ -335,7 +362,7 @@ class Backtester:
                 "In-sample wallet selection; wallet average entry, not "
                 "detection-time executable CLOB ask."
             ),
-            "generated_at": datetime.now().isoformat(),
+            "generated_at": utc_now_iso(),
             "activity_limit": self.activity_limit,
             "min_consensus": min_consensus,
             "late_entry": late_entry,

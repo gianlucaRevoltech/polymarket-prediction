@@ -6,13 +6,14 @@ import sys
 import json
 import os
 import subprocess
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
 if sys.platform.startswith('win'):
     sys.stdout.reconfigure(encoding='utf-8')
 
-from flask import Flask, render_template, jsonify
+from flask import Flask, render_template, jsonify, request
 
 # Aggiungi path src
 BASE_DIR = Path(__file__).parent.parent
@@ -20,8 +21,85 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from simulator import PaperTradingSimulator
 from config import BUDGET, STRATEGY, DATA_DIR
+from time_utils import age_seconds, utc_now_iso
 
 app = Flask(__name__, template_folder=str(Path(__file__).parent / "templates"))
+
+
+def _candidate_rows(run_id: str):
+    path = DATA_DIR / "candidate_journal.jsonl"
+    rows = []
+    if not path.exists():
+        return rows
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if row.get("run_id") == run_id:
+                    rows.append(row)
+    except OSError:
+        return []
+    return rows
+
+
+def get_candidate_summary(run_id: str):
+    rows = _candidate_rows(run_id)
+    candidate_rows = [
+        row for row in rows
+        if row.get("decision") in {"eligible", "rejected", "opened"}
+    ]
+    unique_ids = {
+        row.get("signal_id") for row in candidate_rows if row.get("signal_id")
+    }
+    decisions = Counter(row.get("decision") for row in candidate_rows)
+    reasons = Counter(
+        row.get("reason") for row in candidate_rows if row.get("reason")
+    )
+    return {
+        "total": len(candidate_rows),
+        "unique": len(unique_ids),
+        "eligible": decisions.get("eligible", 0),
+        "rejected": decisions.get("rejected", 0),
+        "opened": decisions.get("opened", 0),
+        "eligibility_rate": (
+            decisions.get("eligible", 0) / len(candidate_rows)
+            if candidate_rows else 0.0
+        ),
+        "top_reasons": dict(reasons.most_common(8)),
+        "last_detected_at": (
+            candidate_rows[-1].get("detected_at") if candidate_rows else None
+        ),
+        "last_candidate": candidate_rows[-1] if candidate_rows else None,
+    }
+
+
+def get_runtime_status():
+    path = DATA_DIR / "runtime_status.json"
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def get_bot_health(state_saved_at):
+    runtime = get_runtime_status()
+    state_age = age_seconds(state_saved_at)
+    process_status = get_bot_status()
+    stale = state_age is None or state_age > 60
+    return {
+        "process_status": process_status,
+        "state_age_seconds": state_age,
+        "stale": stale,
+        "phase": runtime.get("phase", "unknown"),
+        "last_cycle_at": runtime.get("last_cycle_at"),
+        "runtime_updated_at": runtime.get("updated_at"),
+        "last_error": runtime.get("error", ""),
+    }
 
 
 @app.after_request
@@ -123,6 +201,9 @@ def get_portfolio_data():
             "run_id": summary.get("run_id"),
             "state_saved_at": summary.get("state_saved_at"),
             "deployed_commit": get_deployed_commit(),
+            "state_age_seconds": age_seconds(summary.get("state_saved_at")),
+            "bot_health": get_bot_health(summary.get("state_saved_at")),
+            "candidate_summary": get_candidate_summary(summary.get("run_id", "")),
         }
     except Exception as e:
         return {
@@ -242,8 +323,24 @@ def index():
 def api_status():
     """API endpoint per stato bot"""
     data = get_portfolio_data()
-    data["timestamp"] = datetime.now().isoformat()
+    data["timestamp"] = utc_now_iso()
     return jsonify(data)
+
+
+@app.route("/api/candidates")
+def api_candidates():
+    try:
+        requested = int(request.args.get("limit", 50))
+    except (TypeError, ValueError):
+        requested = 50
+    limit = min(max(requested, 1), 200)
+    sim = PaperTradingSimulator(BUDGET["initial_capital"])
+    rows = _candidate_rows(sim.run_id)
+    candidates = [
+        row for row in rows
+        if row.get("decision") in {"eligible", "rejected", "opened"}
+    ]
+    return jsonify(list(reversed(candidates[-limit:])))
 
 
 @app.route("/api/portfolio")
