@@ -238,7 +238,7 @@ class PaperTradingSimulator:
             if source_dt and detected_dt else None
         )
         row = {
-            "journal_version": 2,
+            "journal_version": 3,
             "run_id": self.run_id,
             "signal_id": resolved_signal_id,
             "strategy": strategy,
@@ -261,15 +261,27 @@ class PaperTradingSimulator:
                       getattr(position, "market_title", ""),
             "outcome": info.get("outcome", "") or getattr(position, "outcome", ""),
             "category": info.get("category", "") or getattr(position, "category", ""),
+            "source_trade_status": info.get("source_trade_status", ""),
             "source_trade_at": source_trade_at,
+            "source_trade_price": info.get("source_trade_price"),
+            "source_trade_size": info.get("source_trade_size"),
             "detected_at": now,
             "detection_latency_seconds": latency_seconds,
+            "end_date": info.get("end_date", ""),
+            "end_date_iso": info.get("end_date_iso", "") or info.get("end_date", ""),
+            "book_observed_at": (book or {}).get("observed_at"),
             "best_bid": (book or {}).get("best_bid"),
             "best_ask": (book or {}).get("best_ask"),
             "bid_depth": (book or {}).get("bid_size"),
             "ask_depth": (book or {}).get("ask_size"),
             "executable_ask_vwap": evaluation.get("executable_ask_vwap"),
             "executable_bid_vwap": evaluation.get("executable_bid_vwap"),
+            "ask_requested_shares": evaluation.get("ask_requested_shares"),
+            "ask_available_shares": evaluation.get("ask_available_shares"),
+            "ask_levels_used": evaluation.get("ask_levels_used", []),
+            "bid_requested_shares": evaluation.get("bid_requested_shares"),
+            "bid_available_shares": evaluation.get("bid_available_shares"),
+            "bid_levels_used": evaluation.get("bid_levels_used", []),
             "planned_size_usdc": evaluation.get("planned_size_usdc"),
             "decision": decision,
             "reason": reason,
@@ -322,10 +334,59 @@ class PaperTradingSimulator:
             str(source_wallet or "").lower(),
             str(info.get("asset", "")),
             str(info.get("source_trade_at") or ""),
-            str(info.get("avg_price") or ""),
-            str(info.get("size") or info.get("notional_usdc") or ""),
+            str(info.get("source_trade_price") or info.get("avg_price") or ""),
+            str(info.get("source_trade_size") or info.get("size") or
+                info.get("notional_usdc") or ""),
         ])
         return hashlib.sha256(fingerprint.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _book_fill(book: Optional[Dict], side: str,
+                   requested_shares: float) -> Dict:
+        """VWAP e livelli consumati derivati da un singolo snapshot CLOB."""
+        requested = max(0.0, float(requested_shares or 0.0))
+        is_buy = side.upper() == "BUY"
+        levels_key = "ask_levels" if is_buy else "bid_levels"
+        top_key = "best_ask" if is_buy else "best_bid"
+        size_key = "ask_size" if is_buy else "bid_size"
+        raw_levels = list((book or {}).get(levels_key) or [])
+        if not raw_levels and (book or {}).get(top_key) is not None:
+            raw_levels = [{
+                "price": (book or {}).get(top_key),
+                "size": (book or {}).get(size_key, 0.0),
+            }]
+        levels = sorted(
+            [
+                {"price": float(level["price"]), "size": float(level["size"])}
+                for level in raw_levels
+                if float(level.get("size", 0) or 0) > 0
+            ],
+            key=lambda level: level["price"], reverse=not is_buy,
+        )
+        available = sum(level["size"] for level in levels)
+        remaining = requested
+        filled = 0.0
+        notional = 0.0
+        used = []
+        for level in levels:
+            if remaining <= 1e-9:
+                break
+            take = min(remaining, level["size"])
+            if take <= 0:
+                continue
+            used.append({"price": level["price"], "size": take})
+            filled += take
+            notional += take * level["price"]
+            remaining -= take
+        full_fill = requested > 0 and remaining <= 1e-9 and filled > 0
+        return {
+            "vwap": (notional / filled) if full_fill else None,
+            "requested_shares": requested,
+            "filled_shares": filled,
+            "available_shares": available,
+            "levels_used": used,
+            "full_fill": full_fill,
+        }
 
     @staticmethod
     def _best_bid(fetcher, asset: str, size_shares: float = 0.0) -> Optional[float]:
@@ -775,6 +836,35 @@ class PaperTradingSimulator:
 
         if not asset:
             return reject("missing_asset")
+
+        source_status = str(info.get("source_trade_status") or "").lower()
+        if not source_status:
+            source_status = (
+                "ok" if info.get("source_trade_at")
+                and info.get("source_trade_price") is not None else "not_found"
+            )
+            info["source_trade_status"] = source_status
+        if source_status == "error":
+            return reject("source_trade_lookup_error")
+        if source_status != "ok":
+            return reject("source_trade_unavailable")
+        if not info.get("transaction_hash"):
+            return reject("source_trade_missing_transaction_hash")
+        source_dt = parse_utc(info.get("source_trade_at"))
+        source_price = float(info.get("source_trade_price", 0.0) or 0.0)
+        detected_dt = parse_utc(utc_now_iso())
+        if source_dt is None or source_price <= 0 or source_price >= 1:
+            return reject("source_trade_unavailable")
+        source_age = (
+            (detected_dt - source_dt).total_seconds() if detected_dt else None
+        )
+        result["source_trade_age_seconds"] = source_age
+        if source_age is not None and source_age < -5:
+            return reject("source_trade_in_future")
+        max_source_age = float(STRATEGY.get("max_source_trade_age_sec", 60.0))
+        if source_age is not None and source_age > max_source_age:
+            return reject("source_trade_stale")
+
         book = fetcher.get_book(asset) if fetcher is not None else None
         result["book"] = book
         if not book or book.get("best_ask") is None or book.get("best_bid") is None:
@@ -794,9 +884,8 @@ class PaperTradingSimulator:
         ):
             return reject("entry_price_out_of_band")
 
-        avg_price = float(info.get("avg_price", 0.0) or 0.0)
         max_drift = float(STRATEGY.get("max_entry_drift", 1.0))
-        if avg_price > 0 and price > avg_price * (1 + max_drift):
+        if price > source_price * (1 + max_drift):
             return reject("entry_drift_too_high")
 
         end_iso = info.get("end_date_iso") or info.get("end_date", "")
@@ -827,13 +916,13 @@ class PaperTradingSimulator:
         info["category"] = category
         size = result["planned_size_usdc"]
         planned_shares = size / price
-        try:
-            executable_ask = (
-                fetcher.get_executable_price(asset, "BUY", planned_shares)
-                if fetcher is not None else price
-            )
-        except TypeError:
-            executable_ask = price
+        ask_fill = self._book_fill(book, "BUY", planned_shares)
+        result.update({
+            "ask_requested_shares": ask_fill["requested_shares"],
+            "ask_available_shares": ask_fill["available_shares"],
+            "ask_levels_used": ask_fill["levels_used"],
+        })
+        executable_ask = ask_fill["vwap"]
         if executable_ask is None:
             return reject("insufficient_ask_depth_for_full_fill")
         executable_ask = float(executable_ask)
@@ -842,7 +931,13 @@ class PaperTradingSimulator:
         fee_fraction = taker_fee_fraction(category, executable_ask)
         entry_price = min(0.999, executable_ask * (1 + fee_fraction))
         shares = size / entry_price
-        executable_bid = self._best_bid(fetcher, asset, shares)
+        bid_fill = self._book_fill(book, "SELL", shares)
+        result.update({
+            "bid_requested_shares": bid_fill["requested_shares"],
+            "bid_available_shares": bid_fill["available_shares"],
+            "bid_levels_used": bid_fill["levels_used"],
+        })
+        executable_bid = bid_fill["vwap"]
         if executable_bid is None:
             return reject("insufficient_bid_depth_for_full_exit")
 
@@ -996,10 +1091,10 @@ class PaperTradingSimulator:
                 return reject("entry_price_out_of_band")
 
         # Guardrail 2 - anti entrata tardiva (Phase C: drift 5%)
-        avg_price = info.get("avg_price", 0.0)
+        source_price = float(info.get("source_trade_price", 0.0) or 0.0)
         max_drift = STRATEGY.get("max_entry_drift", 1.0)
-        if avg_price > 0 and price > avg_price * (1 + max_drift):
-            print(f"[SKIP] Entrata tardiva: prezzo {price:.3f} > avg wallet {avg_price:.3f} "
+        if source_price > 0 and price > source_price * (1 + max_drift):
+            print(f"[SKIP] Entrata tardiva: prezzo {price:.3f} > BUY sorgente {source_price:.3f} "
                   f"+{max_drift:.0%}: {info['title'][:40]}")
             return reject("entry_drift_too_high")
 
@@ -1093,27 +1188,19 @@ class PaperTradingSimulator:
         category = info.get("category") or categorize_market(
             info["title"], event_slug=info.get("event_slug", "")
         )
-        # VWAP sul book per l'intera size. Se la profondità non basta, il paper
-        # non inventa un fill.
-        planned_shares = size / price
-        try:
-            executable_ask = fetcher.get_executable_price(
-                asset, "BUY", planned_shares
-            ) if fetcher is not None else price
-        except TypeError:
-            executable_ask = price
-        if executable_ask is None:
-            return reject("insufficient_ask_depth_for_full_fill")
-        eff_price = float(executable_ask)
+        # Riusa la valutazione derivata dall'unico snapshot CLOB pre-trade.
+        # In paper_validation la size è fissa e coincide con planned_size_usdc.
+        eff_price = float(evaluation["executable_ask_vwap"])
         if eff_price <= 0 or eff_price >= 1:
             return reject("invalid_executable_ask_vwap")
         fee_frac = taker_fee_fraction(category, eff_price)
         # Prezzo effettivo pagato includendo la fee taker (sport ~ rate*min(p,1-p))
         eff_price_with_fee = min(0.999, eff_price * (1 + fee_frac))
         shares = size / eff_price_with_fee
-        mark_bid = self._best_bid(fetcher, asset, shares)
+        mark_bid = evaluation.get("executable_bid_vwap")
         if mark_bid is None:
             return reject("insufficient_bid_depth_for_full_exit")
+        mark_bid = float(mark_bid)
 
         position_id = str(uuid.uuid4())
         position = Position(
@@ -1229,7 +1316,8 @@ class PaperTradingSimulator:
     # ------------------------------------------------------------------
     def reconcile(self, aggregate: Dict[str, Dict], min_wallets: int, fetcher,
                   new_holdings: Optional[set] = None,
-                  monitored_wallets: Optional[set] = None) -> None:
+                  monitored_wallets: Optional[set] = None,
+                  failed_wallets: Optional[set] = None) -> None:
         """
         Phase I: copy-trade puntuale via DELTA per-WALLET.
 
@@ -1247,6 +1335,8 @@ class PaperTradingSimulator:
                 sorgente di una posizione copy NON e' piu' in questo set (rotazione/
                 swap), la posizione NON viene chiusa a "exit" forzato — viene gestita
                 solo con SL/TP. Evita chiusure premature da wallet rotation.
+            failed_wallets: wallet il cui snapshot corrente è fallito. L'assenza
+                di un asset da questi wallet non prova una vendita e non chiude.
         """
         qualifying = {a for a, e in aggregate.items() if len(e["holders"]) >= min_wallets}
 
@@ -1294,32 +1384,41 @@ class PaperTradingSimulator:
                     self.close_by_asset(asset, 1.0 if hint >= 0.5 else 0.0, "resolved")
                 continue
             if asset not in qualifying:
-                # Phase CI: se il wallet sorgente e' ancora monitorato, l'asset
-                # non in aggregate significa che il wallet ha VENDUTO → exit.
-                # Ma se il wallet NON e' piu' monitorato (rotazione/swap), NON
-                # chiudere forzatamente — gestisci con SL/TP al prossimo check.
+                # Solo uno snapshot riuscito in cui il wallet sorgente non ha
+                # più l'asset prova una vendita. Timeout, rotazione o semplice
+                # perdita del consenso non autorizzano un'uscita.
                 src = (pos.source_wallet or "").lower()
                 mon_set = monitored_wallets or set()
                 mon_set_lower = {w.lower() for w in mon_set}
-                if src and src in mon_set_lower:
-                    # wallet ancora monitorato → ha venduto → exit legittimo
+                failed_set_lower = {w.lower() for w in (failed_wallets or set())}
+                source_still_holds = bool(
+                    entry and src and any(
+                        str(holder).lower() == src
+                        for holder in entry.get("holders", set())
+                    )
+                )
+                if (
+                    src and src in mon_set_lower
+                    and src not in failed_set_lower
+                    and not source_still_holds
+                ):
+                    # Snapshot sorgente riuscito e asset assente: exit legittimo.
                     self.close_by_asset(asset, cur, "exit")
                     continue
                 else:
-                    # wallet rimosso dalla lista → NON chiudere a exit forzato.
-                    # Aggiorna prezzo e gestisci con SL/TP sotto.
+                    # Sorgente non confermata: aggiorna e applica solo SL/TP.
                     self.update_price_by_asset(asset, cur)
                     # Phase CI5: SL assoluto per copy-sport, percentuale per altri.
                     decision = self._copy_sl_tp_decision(pos, cur, stop_loss, take_profit)
                     pnl_pct = (cur - pos.entry_price) / pos.entry_price if pos.entry_price > 0 else 0
                     if decision == "hard_sl":
-                        print(f"[HARD SL] {pos.market_title[:40]} P&L {pnl_pct:.1%} (wallet rimosso)")
+                        print(f"[HARD SL] {pos.market_title[:40]} P&L {pnl_pct:.1%} (sorgente non confermata)")
                         self.close_by_asset(asset, cur, "stop_loss")
                     elif decision == "stop_loss":
-                        print(f"[STOP LOSS] {pos.market_title[:40]} P&L {pnl_pct:.1%} (wallet rimosso)")
+                        print(f"[STOP LOSS] {pos.market_title[:40]} P&L {pnl_pct:.1%} (sorgente non confermata)")
                         self.close_by_asset(asset, cur, "stop_loss")
                     elif decision == "take_profit":
-                        print(f"[TAKE PROFIT] {pos.market_title[:40]} P&L {pnl_pct:.1%} (wallet rimosso)")
+                        print(f"[TAKE PROFIT] {pos.market_title[:40]} P&L {pnl_pct:.1%} (sorgente non confermata)")
                         self.close_by_asset(asset, cur, "take_profit")
                     continue
             self.update_price_by_asset(asset, cur)
@@ -1379,10 +1478,22 @@ class PaperTradingSimulator:
             source = sorted(source_pool)[0]
             candidate_info = dict(entry["info"])
             candidate_info["source_wallet"] = source
-            if hasattr(fetcher, "get_recent_buy"):
+            if hasattr(fetcher, "get_recent_buy_result"):
+                lookup = fetcher.get_recent_buy_result(source, asset)
+                candidate_info["source_trade_status"] = lookup.status
+                if lookup.trade:
+                    candidate_info.update(lookup.trade)
+                if lookup.error:
+                    candidate_info["source_trade_error"] = lookup.error
+            elif hasattr(fetcher, "get_recent_buy"):
                 source_trade = fetcher.get_recent_buy(source, asset)
+                candidate_info["source_trade_status"] = (
+                    "ok" if source_trade else "not_found"
+                )
                 if source_trade:
                     candidate_info.update(source_trade)
+            else:
+                candidate_info["source_trade_status"] = "not_found"
             self.open_position(source, candidate_info,
                                num_holders=len(entry["holders"]),
                                fetcher=fetcher)

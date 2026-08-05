@@ -1,5 +1,60 @@
 # Progress Log — Polymarket Copy Bot
 
+## SESSIONE 2026-08-05 — Phase CN hardening pre-paper
+
+### Perimetro approvato
+- Implementare tutte le correzioni bloccanti emerse dall'audit OBSERVE.
+- Protezione/autenticazione della dashboard esclusa per ora su richiesta.
+- Nessun passaggio automatico a paper o capitale reale: prima serve un nuovo
+  run OBSERVE di regressione con feed e sorgenti verificabili.
+
+### In corso
+- [x] Risultati fetch strutturati per distinguere empty valido da errore.
+- [x] Baseline per-wallet resiliente al flapping e reconcile senza false uscite.
+- [x] Trade sorgente obbligatorio e drift sul prezzo sorgente.
+- [x] Top-book/VWAP da singolo snapshot e journal v3 ricostruibile.
+- [x] Suite `unittest`: 35/35 test OK.
+- [x] `compileall`, `git diff --check` e `bash -n start_all.sh`: OK.
+- [x] Protocollo rollout aggiornato: nuovo OBSERVE 48h sul cohort esistente,
+  poi eventuale `paper_validation` in un run separato.
+- [ ] Commit e push su `main`.
+
+### Nota verifica
+- Un primo tentativo di smoke JavaScript ha puntato a `static/js/dashboard.js`,
+  file inesistente perché lo script UI è inline in `src/templates/index.html`.
+  Nessun file dashboard è stato modificato; la verifica richiesta riguarda il
+  backend e la suite API, entrambi passati.
+
+## SESSIONE 2026-08-03 — Phase CM audit OBSERVE
+
+- Ricevuto bundle locale `polymarket-observe-20260803T152827Z`, raccolto dopo
+  circa due settimane in OBSERVE.
+- Avviato audit read-only di integrità, journal candidati, prezzi eseguibili,
+  latenze, concentrazione e salute operativa.
+- Nessun `new-run`, reset o passaggio a paper durante l'analisi.
+- Integrità e journal profilati: 4.484 record validi, 48 eligible, 29 eventi.
+- Primo lookup Gamma live fallito per mismatch del certificato TLS nel proxy
+  locale (`gamma-api.polymarket.com`): nessun dato live è stato interpretato
+  come risultato. Retry previsto con verifica TLS disabilitata solo per questa
+  lettura pubblica, senza credenziali né endpoint di trading.
+- Retry Gamma senza verifica TLS: connessione raggiunta ma Cloudflare risponde
+  403 su 36/36 condition; anche l'apertura diretta via browser web non restituisce
+  contenuto utilizzabile. Nessun P&L corrente è stato inventato. Prossimo
+  tentativo alternativo: endpoint pubblico CLOB per token, poi stop ai lookup
+  locali se anche quello è bloccato.
+- CLOB locale ugualmente bloccato (TLS mismatch, poi HTTP 403). Lookup live
+  terminati senza risultati; nessun terzo retry identico.
+- Ispezione del codice conferma falsi delta dopo timeout positions e drift
+  calcolato sul prezzo medio storico anziché sul BUY sorgente.
+- Analisi equity/dashboard: ultimo buffer 10.000 cicli senza gap >60s; nessun
+  500/traceback. Primo comando terminato code 1 per assenza di match `rg`, non
+  per errore del servizio; parser alternativo usato con successo.
+- Rilevata scansione Internet ostile sul Flask pubblico (546 richieste 404).
+- Audit concluso: durata 10,30 giorni, ciclo medio 21,97s, 37 eligible con
+  source verificato (3,59/giorno), 25 eventi verificati. Verdetto: NON passare
+  ancora a paper; correggere flapping/error propagation, source gate, drift e
+  journal, poi nuovo OBSERVE di regressione per almeno 48 ore.
+
 ## SESSIONE 2026-07-24 — Phase CL avviata
 
 - Commit VPS `c2f4d52`; bot/dashboard UP, latency-arb fermo.

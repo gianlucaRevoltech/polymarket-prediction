@@ -1,5 +1,192 @@
 # Findings & Decisions — Polymarket Copy Bot
 
+## Implementazione Phase CN — decisioni tecniche (2026-08-05)
+
+- Compatibilità pubblica preservata: `get_positions`, `get_recent_buy` e
+  `snapshot_wallets` restano wrapper legacy; i nuovi call-site usano risultati
+  strutturati con stato `ok/not_found/error`.
+- Un wallet al primo fetch riuscito viene baselinato senza generare delta; un
+  errore successivo non cancella la sua baseline. Solo uno snapshot riuscito
+  può provare una vendita e autorizzare una chiusura `exit`.
+- La valutazione COPY richiederà un BUY sorgente verificato, recente e con
+  transaction hash. Il prezzo del BUY sarà la base del filtro drift.
+- Top book, profondità e VWAP verranno derivati dallo stesso payload CLOB per
+  eliminare incoerenze e ridurre le richieste da tre a una per candidato.
+- Il journal passa a v3 aggiungendo stato/prezzo/size sorgente, osservazione del
+  book, scadenza e livelli consumati; i lettori restano compatibili con v1/v2.
+- La protezione della dashboard resta deliberatamente invariata in questa fase.
+
+## Audit OBSERVE 2026-08-03 — integrità iniziale
+
+- Bundle: `polymarket-observe-20260803T152827Z`, 9 file, circa 13.7 MB
+  non compressi; journal 4.84 MB e bot log 6.41 MB.
+- Commit VPS corretto: `ec7071087ddf1b89ffc1cad2f3de88ddc754be66`,
+  branch `main`; bot e dashboard attivi, latency-arb fermo.
+- Run corrente: `run-20260724T081332-57a5bf9c`, modalità `observe`, wallet
+  congelati dal 24/07, snapshot raccolto il 03/08 alle 15:28 UTC: circa 10,3
+  giorni di osservazione, non ancora 14 giorni pieni.
+- Salute al prelievo: ciclo 40.512, fase `idle`, ledger/runtime aggiornati 14
+  secondi prima del bundle, nessun errore runtime.
+- Portfolio invariato: capitale/cash $300, zero posizioni aperte e chiuse, come
+  richiesto da OBSERVE. `baseline_done=true`; la lunga lista baseline non è
+  attività del bot ma stock iniziale dei wallet.
+- Manifest coerente e congelato: 12 wallet effettivamente monitorati. Mancano
+  dal bundle `wallet_quality.json`, `safety_state.json` e `trades_log.json`,
+  plausibilmente perché non creati in questo run senza esecuzioni/halt.
+
+### Journal e filtri
+
+- 4.484 righe JSON valide, tutte journal v2, stesso run e strategia COPY;
+  4.484 `signal_id` unici: dedup perfetto nel file, zero righe duplicate.
+- 4.436 rejected (98,93%) e 48 eligible (1,07%). Motivi principali:
+  `expiry_too_near` 3.380, banda prezzo 567, drift 250, book non eseguibile
+  162, scadenza lontana 63, top-depth 12, spread 2.
+- Il filtro scadenza elimina tutta l'attività crypto 5m: 3.740 segnali, quasi
+  tutti prodotti da tugator. È comportamento intenzionale ma gonfia del 83,4%
+  il volume grezzo senza generare opportunità COPY utilizzabili.
+- I 48 eligible coprono 38 asset, 36 condition, 29 eventi, 5 wallet e categorie:
+  geopolitics 14, other 14, sport 9, macro 7, politics 4; crypto/weather zero.
+- Concentrazione eligible elevata: ArmageddonRewardsBilly 33/48 (68,75%),
+  AnonymousUsername 9, denizz 4, Logan 1, TwoEyes 1. Sette wallet congelati non
+  hanno prodotto alcun candidato eligible.
+- Prezzi eligible ragionevoli: ask 0,31–0,70, mediana 0,545; spread mediano 1
+  cent, p90 2,3 cent, massimo 3,6 cent. La size $5 è interamente eseguibile al
+  top level in tutti i 48 casi, quindi VWAP coincide col best price; profondità
+  minima bid/ask rispettivamente 34,37/57,90.
+- Fee positive soprattutto sullo sport: fee fraction media 0,24%, p95 1,40%.
+- Latenza eligible: n=37 con trade sorgente, mediana 15,84s, p90 25,25s,
+  massimo 57,95s. Undici eligible non hanno timestamp/tx sorgente.
+- Globalmente 330/4.484 record non hanno `transaction_hash/source_trade_at`;
+  35 rejected hanno latenze >120s, incluso un outlier ~95 giorni. Nessun
+  eligible supera 60s, ma va chiarita la causa dei fallback/stale source trade.
+- Frequenza giornaliera precipita da 349–622 candidati/giorno (24–31 luglio) a
+  44 il 1 agosto, 58 il 2 e 18 fino alle 14:24 UTC del 3 agosto: verificare nei
+  log se è attività wallet reale o degrado del feed.
+
+### Salute log e concentrazione economica
+
+- `bot.log` contiene esattamente 40.512 snapshot, uno per ciclo, un solo avvio,
+  nessun traceback, nessun HTTP 400 e nessun errore di ciclo. Solo 25 errori
+  isolati: 21 timeout testuali (18 timeout positions effettivi) e 4 HTTP 429
+  sul lookup BUY; incidenza trascurabile rispetto ai cicli.
+- Il crollo dei candidati dall'1 agosto coincide con la scomparsa dell'attività
+  crypto di tugator (3.739 segnali fino al 31/07, uno il 01/08, zero dopo), non
+  con un arresto del bot: il 03/08 continua a vedere ~931 asset ogni 22 secondi.
+- I 330 source mancanti non derivano solo dai quattro 429: sono soprattutto
+  nuovi asset per cui `/activity?limit=100` non trova un BUY corrispondente.
+  Distribuzione: ChetterHummin 130, Armageddon 125, Logan 48, altri 27.
+- I 35 source stale >60s sono tutti rejected; gli outlier enormi sono nuovi
+  snapshot di posizioni acquistate giorni/mesi prima, non segnali eligible.
+- I 48 eligible non equivalgono a 48 aperture paper: 36 condition e 29 eventi.
+  Nove condition ricompaiono più volte e 11 eventi hanno più segnali.
+- Esistono segnali contraddittori sullo stesso evento/condition (es. ceasefire
+  Yes e No; Fed September +25bps Yes poi No, insieme a no-change Yes). Il cap
+  globale una posizione/evento impedirebbe esposizioni simultanee, ma l'ordine
+  di arrivo determinerebbe quale tesi viene copiata.
+- Caso più concentrato: evento “largest company end of August” 6 eligible, di
+  cui Apple No quattro volte e NVIDIA Yes due volte, tutti dallo stesso wallet.
+  Questo conferma che il conteggio raw non misura opportunità indipendenti.
+- Il helper locale `get_market()` espone `closed` ma scarta `outcomePrices` e
+  altri campi di risoluzione Gamma; l'audit retrospettivo deve quindi leggere la
+  risposta Gamma raw e mappare outcome/token senza alterare il bot.
+- La documentazione ufficiale conferma che Gamma è pubblico e che `outcomes` e
+  `outcomePrices` sono array 1:1. Il primo accesso locale è stato bloccato da un
+  certificato proxy con hostname mismatch; il tentativo ha prodotto 0/36
+  risposte, quindi non è stato usato per alcuna metrica o verdetto.
+- Disabilitare la verifica TLS non risolve l'accesso locale: Gamma restituisce
+  HTTP 403 per tutte le condition. Di conseguenza il bundle, da solo, non
+  consente di misurare esiti/mark successivi; contiene solo lo snapshot
+  pre-trade. La decisione non deve usare i P&L null stampati dal tentativo.
+
+### Difetti bloccanti scoperti dal campione
+
+- Confermata nel codice la causa del flapping: `get_positions()` trasforma ogni
+  errore HTTP/timeout in `[]`; `snapshot_wallets()` non comunica quali wallet
+  sono falliti; `main` sostituisce comunque `prev_holdings` con lo snapshot
+  incompleto. Al recupero, tutte le vecchie posizioni del wallet diventano
+  falsi delta “nuovi”. I cluster di 130 record ChetterHummin, 48 Logan e 10
+  Treadmilled senza source combaciano con questo comportamento.
+- `reconcile()` continua a valutare il candidato anche quando
+  `get_recent_buy()` non trova un BUY: usa hash fallback e può classificarlo
+  `eligible`. Nel campione accade 11 volte su 48 (22,9%). Questi record non
+  dimostrano un segnale nuovo e non devono poter aprire in paper.
+- Eliminando i candidate privi di source o con latenza >60s restano 37 eligible,
+  30 asset, 29 condition, 25 eventi e solo 3 wallet. Armageddon pesa 24/37
+  (64,9%), AnonymousUsername 9 e denizz 4.
+- Il drift è calcolato contro `avg_price` della posizione aggregata, non contro
+  `source_trade_price` del BUY appena recuperato. Inoltre il journal non salva
+  `source_trade_price/source_trade_size`, sebbene il lookup li produca. Non è
+  quindi possibile verificare a posteriori il vero drift del trade sorgente.
+- Anche CLOB è bloccato localmente da certificato proxy + HTTP 403. Gli esiti
+  correnti non sono recuperabili da questa macchina; servirà, se desiderato,
+  uno snapshot pubblico generato dalla VPS che già accede ai feed.
+
+### Continuità e superficie dashboard
+
+- `equity_curve.json` è un buffer degli ultimi 10.000 cicli (01/08 02:30 UTC →
+  03/08 15:28 UTC), tutto a $300. Intervallo massimo 28,65s e zero gap >60s:
+  conferma operatività continua nell'ultima finestra, non solo al prelievo.
+- Il primo comando di analisi dashboard è uscito con codice 1 solo perché `rg`
+  non trovava traceback/500; i dati precedenti erano validi. Parser alternativo
+  conferma zero 500 e zero traceback.
+- La dashboard è esposta pubblicamente e ha ricevuto almeno 546 richieste 404,
+  molte chiaramente ostili/scanner (`/.git/config`, path traversal `/etc/passwd`,
+  `/v2/_catalog`, `/login`, `/sdk`). Non risultano successi su tali path, ma API
+  e dati operativi sono raggiungibili senza autenticazione. Raccomandazione:
+  bind localhost + tunnel SSH, oppure firewall/reverse proxy autenticato.
+
+### Completezza e produttività wallet
+
+- Nei 48 eligible, book/top depth/VWAP/size/entry/costi sono completi 48/48;
+  source trade solo 37/48. `event_slug` è completo ma `event_title` è vuoto in
+  tutte le 4.484 righe. Il journal non conserva end date né livelli completi del
+  book, quindi non permette di ricostruire integralmente scadenza e VWAP.
+- Il massimo spread eligible 3,6 cent è conforme alla configurazione COPY
+  (`max_spread_ticks=4`), non una violazione.
+- Tolto il rumore crypto intenzionalmente escluso, il tasso verified eligible è
+  37/744 = 4,97%.
+- Produttività verified: AnonymousUsername 9/11 (81,8%, soprattutto MLB), denizz
+  4/45 (8,9%), Armageddon 24/477 (5,0%); gli altri nove wallet zero. Le percentuali
+  alte su n piccoli non provano edge, ma mostrano forte squilibrio del cohort.
+- ChetterHummin (130/131 source mancanti), Logan (48/55), Treadmilled (10/11) e
+  Armageddon (125/477) evidenziano l'effetto timeout/flapping: i source mancanti
+  arrivano in blocchi, non come rumore casuale.
+- In `paper_validation` lo stesso timeout sarebbe più grave: `reconcile()` vede
+  l'asset assente, considera ancora monitorato il source wallet e chiude la
+  posizione come `exit`, scambiando un feed failure per una vendita reale.
+  Quindi il bug può falsare sia ingressi sia uscite/P&L ed è bloccante.
+- La dashboard Flask usa davvero `host="0.0.0.0"`; `start_all.sh` stampa
+  “localhost” ma non limita il bind. La superficie pubblica osservata nei log
+  deriva quindi dalla configurazione corrente, non da un falso positivo.
+
+### Verdetto Phase CM
+
+**NON promuovere ancora COPY a `paper_validation`.** Il bot è stabile e i
+prezzi pre-trade sono realistici, ma il contratto di identità del segnale non è
+sicuro: 22,9% degli eligible non ha trade sorgente e un timeout può produrre sia
+falsi ingressi sia false uscite. L'OBSERVE corrente resta evidenza diagnostica,
+non campione valido di edge.
+
+Fix obbligatori prima del paper:
+1. propagare success/error per wallet da `/positions` e preservare holdings
+   precedenti dei wallet falliti; mai interpretare errore come vendita;
+2. richiedere BUY sorgente con tx hash e timestamp recente (es. <=60s), con
+   reject distinti `source_trade_unavailable`/`source_trade_stale`;
+3. calcolare drift da `source_trade_price`, non da `avg_price` aggregato;
+4. journalizzare source price/size, end date e dati sufficienti a ricostruire
+   il VWAP; mantenere compatibilità v2 introducendo una versione successiva;
+5. mettere dashboard dietro localhost/firewall/auth.
+
+Dopo il fix: archiviare il run, nuovo OBSERVE con lo stesso cohort (senza scan
+adattivo) per almeno 48 ore. Gate regressione: zero eligible senza source, zero
+falsi delta/exit dopo timeout mockato, zero errori ciclo, source latency p95
+coerente. Solo allora avviare un nuovo `paper_validation` da $5/max 2.
+
+Il sample OBSERVE non contiene lifecycle/exit delle posizioni virtuali, quindi
+non può dimostrare P&L o EV. I criteri 100 chiuse/30 eventi/14 giorni si applicano
+al successivo run paper; al ritmo osservato (~3,59 segnali verified/giorno), 100
+segnali richiederebbero teoricamente ~27,8 giorni prima dei limiti portfolio.
+
 > Estensione sessione 2026-07-01 (post-dashboard VPS: WR 20%, poche aperture, obiettivo doubling/settimana).
 > Vecchi punti P1-P9 ancora validi (vedi sezione "Diagnosi storica" sotto).
 

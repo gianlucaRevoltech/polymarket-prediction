@@ -1,5 +1,34 @@
 # Task Plan: Polymarket Bot — FIX EMERGENZA PERFORMANCE (-5.63%, WR 24%)
 
+## Active Phase CN: hardening pre-paper dopo audit OBSERVE (2026-08-05)
+
+- [x] CN1: distinguere snapshot wallet vuoto valido da errore/timeout
+- [x] CN2: preservare baseline wallet durante flapping ed evitare falsi delta
+- [x] CN3: impedire false uscite COPY quando il wallet sorgente non è leggibile
+- [x] CN4: rendere obbligatorio il trade sorgente verificato e usare il suo prezzo per il drift
+- [x] CN5: calcolare top-book e VWAP da un unico snapshot e journal v3 ricostruibile
+- [ ] CN6: test regressione, smoke test, documentazione, commit e push
+
+Vincoli:
+- protezione/autenticazione dashboard esplicitamente fuori scope su richiesta;
+- nessun capitale reale e nessuna attivazione automatica di `paper_validation`;
+- il run OBSERVE analizzato resta evidenza archiviata e non viene riscritto.
+
+## Active Phase CM: audit campione OBSERVE (2026-08-03)
+
+- [x] CM1: verificare integrità bundle, commit, run_id, periodo e salute servizi
+- [x] CM2: profilare journal per decisioni, motivi, wallet, categorie ed eventi
+- [x] CM3: analizzare latenze, spread, profondità, VWAP, fee e qualità dati
+- [x] CM4: verificare duplicati, copertura temporale, concentrazione e anomalie
+- [x] CM5: decidere se promuovere COPY a `paper_validation` o prolungare OBSERVE
+- [x] CM6: documentare verdetto e comandi VPS sicuri
+
+Vincoli:
+- nessuna modifica al campione VPS durante l'audit;
+- `eligible` non equivale a trade profittevole;
+- nessun capitale reale;
+- decisione basata solo sul run corrente prospettico.
+
 ## Active Phase CL: OBSERVE misurabile e health corretto (2026-07-24)
 
 - [x] CL1: pipeline comune di valutazione COPY e journal v2 deduplicato
@@ -22,7 +51,7 @@ in un sistema profittevole. ROOT CAUSE: il bot entra a prezzi estremi (0.999, 0.
 dal fallimento del segnale. Risk/reward invertito: gain minuscolo, loss enorme.
 
 ## Current Phase
-Phase CL1-CL6 IMPLEMENTATION COMPLETE → VPS `new-run scan` e osservazione 48h pending
+Phase CN hardening COMPLETE nel codice → pubblicazione e nuovo OBSERVE 48h
 
 ## Phase CK: Arresto perdite e nuova validazione (2026-07-23)
 

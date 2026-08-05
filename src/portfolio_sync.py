@@ -11,10 +11,39 @@ posizioni simulate in modo fedele.
 """
 import requests
 import json as _json
-from typing import Dict, List, Optional
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Set
 from config import POLYMARKET_API, STRATEGY
 from categories import categorize_market
-from time_utils import utc_iso
+from time_utils import utc_iso, utc_now_iso
+
+
+@dataclass
+class PositionsFetchResult:
+    """Esito non ambiguo di uno snapshot `/positions` per un wallet."""
+
+    wallet: str
+    ok: bool
+    positions: List[Dict] = field(default_factory=list)
+    error: str = ""
+
+
+@dataclass
+class WalletSnapshotResult:
+    """Snapshot aggregato con copertura esplicita dei wallet richiesti."""
+
+    aggregate: Dict[str, Dict] = field(default_factory=dict)
+    successful_wallets: Set[str] = field(default_factory=set)
+    failed_wallets: Dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
+class RecentBuyResult:
+    """Esito lookup BUY: `ok`, `not_found` oppure `error`."""
+
+    status: str
+    trade: Optional[Dict] = None
+    error: str = ""
 
 
 class PolymarketPositionFetcher:
@@ -30,12 +59,11 @@ class PolymarketPositionFetcher:
                           "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         })
 
-    def get_positions(self, wallet_address: str, limit: int = 200) -> List[Dict]:
+    def get_positions_result(self, wallet_address: str,
+                             limit: int = 200) -> PositionsFetchResult:
         """
-        Ritorna le posizioni aperte di un wallet, normalizzate.
-
-        Returns:
-            Lista di dict normalizzati (vedi `_normalize`).
+        Ritorna uno snapshot strutturato. Una lista vuota con `ok=True` prova
+        che il wallet non ha posizioni; `ok=False` non è mai una vendita.
         """
         try:
             url = f"{self.data_api}/positions"
@@ -45,21 +73,43 @@ class PolymarketPositionFetcher:
             raw = response.json()
         except Exception as e:
             print(f"[SYNC] Errore positions {wallet_address[:10]}...: {e}")
-            return []
+            return PositionsFetchResult(
+                wallet=wallet_address, ok=False, error=str(e)
+            )
+
+        if not isinstance(raw, list):
+            error = f"payload inatteso: {type(raw).__name__}"
+            print(f"[SYNC] Errore positions {wallet_address[:10]}...: {error}")
+            return PositionsFetchResult(
+                wallet=wallet_address, ok=False, error=error
+            )
 
         positions = []
-        for p in raw:
-            norm = self._normalize(p)
-            # Scarta dust / posizioni vuote
-            if norm["asset"] and norm["size"] > 0:
-                positions.append(norm)
-        return positions
+        try:
+            for p in raw:
+                norm = self._normalize(p)
+                # Scarta dust / posizioni vuote
+                if norm["asset"] and norm["size"] > 0:
+                    positions.append(norm)
+        except Exception as exc:
+            error = f"payload positions non valido: {exc}"
+            print(f"[SYNC] Errore positions {wallet_address[:10]}...: {error}")
+            return PositionsFetchResult(
+                wallet=wallet_address, ok=False, error=error
+            )
+        return PositionsFetchResult(
+            wallet=wallet_address, ok=True, positions=positions
+        )
 
-    def get_recent_buy(self, wallet_address: str, asset: str,
-                       limit: int = 100) -> Optional[Dict]:
-        """Trova il BUY sorgente più recente per un nuovo asset del wallet."""
+    def get_positions(self, wallet_address: str, limit: int = 200) -> List[Dict]:
+        """Wrapper legacy: i nuovi call-site devono usare l'esito strutturato."""
+        return self.get_positions_result(wallet_address, limit).positions
+
+    def get_recent_buy_result(self, wallet_address: str, asset: str,
+                              limit: int = 100) -> RecentBuyResult:
+        """Trova il BUY sorgente senza confondere assenza valida ed errore API."""
         if not wallet_address or not asset:
-            return None
+            return RecentBuyResult(status="not_found")
         try:
             url = f"{self.data_api}/activity"
             params = {
@@ -80,19 +130,25 @@ class PolymarketPositionFetcher:
                 and str(row.get("type", "TRADE")).upper() == "TRADE"
             ]
             if not matches:
-                return None
+                return RecentBuyResult(status="not_found")
             row = max(matches, key=lambda item: float(item.get("timestamp", 0) or 0))
-            return {
+            return RecentBuyResult(status="ok", trade={
                 "transaction_hash": row.get("transactionHash", ""),
                 "source_trade_at": utc_iso(row.get("timestamp")),
                 "source_trade_price": float(row.get("price", 0) or 0),
                 "source_trade_size": float(
                     row.get("usdcSize", row.get("size", 0)) or 0
                 ),
-            }
+            })
         except Exception as exc:
             print(f"[SYNC] Errore activity BUY {wallet_address[:10]}...: {exc}")
-            return None
+            return RecentBuyResult(status="error", error=str(exc))
+
+    def get_recent_buy(self, wallet_address: str, asset: str,
+                       limit: int = 100) -> Optional[Dict]:
+        """Wrapper legacy che ritorna il trade solo quando il lookup è riuscito."""
+        result = self.get_recent_buy_result(wallet_address, asset, limit)
+        return result.trade if result.status == "ok" else None
 
     @staticmethod
     def _normalize(p: Dict) -> Dict:
@@ -171,6 +227,7 @@ class PolymarketPositionFetcher:
                 key=lambda x: x["price"],
             )
             return {
+                "observed_at": utc_now_iso(),
                 "best_bid": best_bid,
                 "best_ask": best_ask,
                 "bid_size": bid_size,
@@ -384,20 +441,23 @@ class PolymarketPositionFetcher:
         except Exception:
             return []
 
-    def snapshot_wallets(self, wallet_addresses: List[str]) -> Dict[str, Dict]:
+    def snapshot_wallets_with_status(
+        self, wallet_addresses: List[str]
+    ) -> WalletSnapshotResult:
         """
-        Aggrega le posizioni di piu wallet per asset.
-
-        Returns:
-            Dict asset -> {
-                "info": <ultima posizione normalizzata per quell'asset>,
-                "holders": set(wallet_address),
-                "max_notional": float
-            }
+        Aggrega le posizioni e conserva l'esito di ogni wallet. Gli errori non
+        vengono trasformati in snapshot vuoti.
         """
         aggregate: Dict[str, Dict] = {}
+        successful_wallets: Set[str] = set()
+        failed_wallets: Dict[str, str] = {}
         for addr in wallet_addresses:
-            for pos in self.get_positions(addr):
+            result = self.get_positions_result(addr)
+            if not result.ok:
+                failed_wallets[addr] = result.error
+                continue
+            successful_wallets.add(addr)
+            for pos in result.positions:
                 asset = pos["asset"]
                 entry = aggregate.get(asset)
                 if entry is None:
@@ -413,7 +473,15 @@ class PolymarketPositionFetcher:
                     # preferiamo quella con redeemable=True se presente)
                     if pos["redeemable"]:
                         entry["info"] = pos
-        return aggregate
+        return WalletSnapshotResult(
+            aggregate=aggregate,
+            successful_wallets=successful_wallets,
+            failed_wallets=failed_wallets,
+        )
+
+    def snapshot_wallets(self, wallet_addresses: List[str]) -> Dict[str, Dict]:
+        """Wrapper legacy: ritorna solo l'aggregato degli snapshot riusciti."""
+        return self.snapshot_wallets_with_status(wallet_addresses).aggregate
 
 
 if __name__ == "__main__":

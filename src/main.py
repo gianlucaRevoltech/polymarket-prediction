@@ -10,7 +10,7 @@ import json
 import signal
 import os
 from datetime import datetime
-from typing import List, Optional
+from typing import Dict, List, Optional, Set, Tuple
 
 # Force UTF-8 encoding for Windows console
 if sys.platform.startswith('win'):
@@ -393,6 +393,41 @@ class PolymarketPaperTradingBot:
         except Exception:
             pass
 
+    def _compute_holding_deltas(
+        self, aggregate: Dict[str, Dict], successful_wallets: Set[str]
+    ) -> Tuple[Set[Tuple[str, str]], int, int]:
+        """
+        Calcola delta solo per wallet letti con successo.
+
+        Un wallet al primo snapshot riuscito viene baselinato; un errore non
+        cancella mai la baseline precedente e quindi il recupero non produce un
+        falso dump del bag preesistente.
+        """
+        if self.prev_holdings is None:
+            self.prev_holdings = {}
+
+        current: Dict[str, Set[str]] = {
+            wallet: set() for wallet in successful_wallets
+        }
+        for asset, entry in aggregate.items():
+            for wallet in entry.get("holders", set()):
+                if wallet in current:
+                    current[wallet].add(asset)
+
+        new_holdings: Set[Tuple[str, str]] = set()
+        baseline_pairs = 0
+        initialized_wallets = 0
+        for wallet, assets in current.items():
+            old = self.prev_holdings.get(wallet)
+            if old is None:
+                baseline_pairs += len(assets)
+                initialized_wallets += 1
+            else:
+                new_holdings.update((wallet, asset) for asset in assets - old)
+            self.prev_holdings[wallet] = assets
+
+        return new_holdings, baseline_pairs, initialized_wallets
+
     def run_mirror_loop(self):
         if not self.monitored_addresses:
             print("[ERRORE] Nessun wallet da monitorare.")
@@ -419,34 +454,29 @@ class PolymarketPaperTradingBot:
                     print(f"\n[{cycle_start}] Snapshot posizioni...")
                     self._write_runtime_status("snapshot")
 
-                    aggregate = self.fetcher.snapshot_wallets(self.monitored_addresses)
+                    snapshot = self.fetcher.snapshot_wallets_with_status(
+                        self.monitored_addresses
+                    )
+                    aggregate = snapshot.aggregate
                     print(f"  {len(aggregate)} asset distinti rilevati tra i wallet")
+                    if snapshot.failed_wallets:
+                        failed_preview = ", ".join(
+                            addr[:10] for addr in snapshot.failed_wallets
+                        )
+                        print(
+                            f"  [FEED] {len(snapshot.failed_wallets)} wallet non "
+                            f"leggibili; baseline preservata: {failed_preview}"
+                        )
 
                     # Phase I: copy-trade puntuale via DELTA per-WALLET
-                    # Holdings correnti: wallet -> set(asset)
-                    current_holdings: Dict[str, set] = {addr: set() for addr in self.monitored_addresses}
-                    for asset, entry in aggregate.items():
-                        for w in entry.get("holders", set()):
-                            if w in current_holdings:
-                                current_holdings[w].add(asset)
-
-                    if self.prev_holdings is None:
-                        # Primo ciclo: baseline = holdings attuali, NON copiamo bag preesistente
-                        self.prev_holdings = current_holdings
-                        new_holdings = set()
-                        n_base = sum(len(s) for s in current_holdings.values())
+                    new_holdings, n_base, initialized = self._compute_holding_deltas(
+                        aggregate, snapshot.successful_wallets
+                    )
+                    if initialized:
                         print(f"  [BASELINE] {n_base} (wallet,asset) preesistenti "
-                              f"-> nessuna apertura (zero-dump)")
-                    else:
-                        # Delta per-wallet: (wallet, asset) NUOVI rispetto al ciclo precedente
-                        new_holdings = set()
-                        for w, assets in current_holdings.items():
-                            old = self.prev_holdings.get(w, set())
-                            for a in assets - old:
-                                new_holdings.add((w, a))
-                        self.prev_holdings = current_holdings
-                        if new_holdings:
-                            print(f"  {len(new_holdings)} NUOVI (wallet,asset) delta rilevati")
+                              f"su {initialized} wallet -> nessuna apertura (zero-dump)")
+                    if new_holdings:
+                        print(f"  {len(new_holdings)} NUOVI (wallet,asset) delta rilevati")
 
                     # Phase M/W: STRATEGIE COMPLEMENTARI (arb/harvest/cross/momentum)
                     self._cycle_count += 1
@@ -483,7 +513,9 @@ class PolymarketPaperTradingBot:
 
                     self.simulator.reconcile(
                         aggregate, min_wallets, self.fetcher, new_holdings=new_holdings,
-                        monitored_wallets=set(self.monitored_addresses))
+                        monitored_wallets=set(self.monitored_addresses),
+                        failed_wallets=set(snapshot.failed_wallets),
+                    )
                     self.last_cycle_at = utc_now_iso()
                     self._write_runtime_status("idle")
 

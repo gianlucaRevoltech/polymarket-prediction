@@ -137,6 +137,8 @@ STRATEGY = {
     "soft_requires_consensus": 2,
     # anti entrata tardiva (Phase S: drift 0.05 -> 0.08, ingressi meno tardivi OK)
     "max_entry_drift": 0.08,
+    # Il delta snapshot deve essere confermato da un BUY recente e identificabile.
+    "max_source_trade_age_sec": 60.0,
     # copy-trade puntuale via delta-snapshot PER-WALLET (Phase I)
     "delta_copy": True,
     # filtro scadenza (Phase S: min_days 0.5 -> 0.25, sport intraday 6h+)

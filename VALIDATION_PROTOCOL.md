@@ -6,6 +6,17 @@ Ogni candidato viene comunque valutato con book eseguibile, spread, profondità,
 scadenza, drift e fee. `eligible` significa soltanto che i controlli pre-trade
 sono stati superati; non è un trade e non implica profitto.
 
+Dal journal v3 un candidato COPY è valutabile solo se `/activity` conferma un
+BUY sorgente con `transactionHash`, prezzo valido e timestamp non più vecchio di
+60 secondi. Il drift usa quel prezzo, non il prezzo medio storico del wallet.
+Ask, bid, profondità e VWAP sono derivati dallo stesso snapshot CLOB e il journal
+salva i livelli consumati, la scadenza e lo stato del lookup sorgente.
+
+Gli errori `/positions` non vengono interpretati come wallet vuoti: baseline e
+posizioni restano invariate. Solo uno snapshot riuscito che dimostra l'assenza
+dell'asset può produrre un'uscita COPY. Anche il primo successo di un wallet
+dopo un timeout viene usato come baseline, senza copiare il bag preesistente.
+
 I wallet sono congelati per l'intero run. Lo scan e le sostituzioni si eseguono
 solo tra run con `new-run scan`, così il campione non cambia adattivamente.
 
@@ -35,6 +46,29 @@ Operazioni VPS:
 ./start_all.sh new-run scan   # nuovo run + nuova selezione wallet (raccomandato)
 ./start_all.sh reset --force  # archivia prima di cancellare; non riavvia
 ```
+
+Rollout del hardening pre-paper mantenendo lo stesso cohort già auditato:
+
+```bash
+git pull --ff-only
+unset POLYMARKET_EXECUTION_MODE LATENCY_ARB_ENABLED
+./start_all.sh new-run
+./start_all.sh status
+```
+
+Il nuovo OBSERVE deve girare almeno 48 ore senza traceback, false riaperture o
+`eligible` privi di sorgente verificata. Solo dopo la revisione di quel journal
+si crea un run paper separato:
+
+```bash
+export POLYMARKET_EXECUTION_MODE=paper_validation
+unset LATENCY_ARB_ENABLED
+./start_all.sh new-run
+./start_all.sh status
+```
+
+L'export va mantenuto nell'ambiente usato per i successivi restart del run paper;
+in sua assenza il default torna intenzionalmente a `observe`.
 
 Il dashboard espone il riepilogo candidati in `/api/status` e le righe recenti
 in `/api/candidates?limit=50`. Tutti i timestamp nuovi sono UTC con offset; lo

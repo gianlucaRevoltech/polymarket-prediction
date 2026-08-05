@@ -3,7 +3,7 @@ import shutil
 import sys
 import tempfile
 import unittest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -15,6 +15,7 @@ from categories import categorize_market
 from config import EXECUTION
 from portfolio_sync import PolymarketPositionFetcher
 from simulator import PaperTradingSimulator
+from time_utils import utc_now_iso
 
 
 class FakeFetcher:
@@ -53,6 +54,9 @@ def book(bid=0.49, ask=0.50, depth=100.0):
         "best_bid": bid, "best_ask": ask,
         "bid_size": depth, "ask_size": depth,
         "spread": ask - bid, "mid": (ask + bid) / 2,
+        "observed_at": utc_now_iso(),
+        "bid_levels": [{"price": bid, "size": depth}],
+        "ask_levels": [{"price": ask, "size": depth}],
     }
 
 
@@ -71,6 +75,11 @@ def candidate(asset="asset-1", condition="cond-1", event="fed-decision-in-july-1
         "category": "macro",
         "redeemable": False,
         "end_date_iso": "",
+        "transaction_hash": f"tx-{asset}",
+        "source_trade_status": "ok",
+        "source_trade_at": utc_now_iso(),
+        "source_trade_price": 0.50,
+        "source_trade_size": 25.0,
     }
 
 
@@ -105,12 +114,15 @@ class SimulatorSafetyTests(unittest.TestCase):
             json.loads(line)
             for line in (self.data / "candidate_journal.jsonl").read_text().splitlines()
         ]
-        self.assertEqual(rows[-1]["journal_version"], 2)
+        self.assertEqual(rows[-1]["journal_version"], 3)
         self.assertEqual(rows[-1]["decision"], "eligible")
         self.assertEqual(rows[-1]["reason"], "passed_pretrade_checks")
         self.assertEqual(rows[-1]["best_ask"], 0.50)
         self.assertEqual(rows[-1]["executable_ask_vwap"], 0.50)
-        self.assertEqual(rows[-1]["executable_bid_vwap"], 0.49)
+        self.assertAlmostEqual(rows[-1]["executable_bid_vwap"], 0.49)
+        self.assertEqual(rows[-1]["source_trade_status"], "ok")
+        self.assertEqual(rows[-1]["source_trade_price"], 0.50)
+        self.assertEqual(rows[-1]["ask_levels_used"][0]["price"], 0.50)
         self.assertEqual(sim.portfolio.cash, 300.0)
         self.assertEqual(sim.recent_opens, {})
 
@@ -130,7 +142,7 @@ class SimulatorSafetyTests(unittest.TestCase):
 
         feed.books["asset-drift"] = book(0.59, 0.60)
         drift = candidate(asset="asset-drift", condition="cond-drift")
-        drift["avg_price"] = 0.40
+        drift["source_trade_price"] = 0.40
         self.assertFalse(sim.open_position("wallet-a", drift, fetcher=feed))
 
         feed.books["asset-spread"] = book(0.40, 0.50)
@@ -149,7 +161,7 @@ class SimulatorSafetyTests(unittest.TestCase):
 
         feed.books["asset-vwap"] = {
             **book(),
-            "buy_vwap": None,
+            "ask_levels": [{"price": 0.50, "size": 1.0}],
         }
         no_full_fill = candidate(asset="asset-vwap", condition="cond-vwap")
         self.assertFalse(sim.open_position("wallet-a", no_full_fill, fetcher=feed))
@@ -177,7 +189,7 @@ class SimulatorSafetyTests(unittest.TestCase):
         feed.books["asset-1"] = book()
         info = candidate()
         info["transaction_hash"] = "0xsource-trade"
-        info["source_trade_at"] = "2026-07-24T07:00:00+00:00"
+        info["source_trade_at"] = utc_now_iso()
 
         sim = PaperTradingSimulator()
         self.assertFalse(sim.open_position("wallet-a", info, fetcher=feed))
@@ -356,6 +368,105 @@ class SimulatorSafetyTests(unittest.TestCase):
             categorize_market("Will Israel and Iran agree to a ceasefire?"),
             "geopolitics",
         )
+
+    def test_source_trade_is_required_recent_and_verified(self):
+        EXECUTION["mode"] = "observe"
+        sim = PaperTradingSimulator()
+        feed = FakeFetcher()
+        reasons = []
+
+        cases = [
+            ("asset-missing", {"source_trade_status": "not_found"},
+             "source_trade_unavailable"),
+            ("asset-error", {"source_trade_status": "error"},
+             "source_trade_lookup_error"),
+            ("asset-no-hash", {"transaction_hash": ""},
+             "source_trade_missing_transaction_hash"),
+            (
+                "asset-stale",
+                {"source_trade_at": (
+                    datetime.now(timezone.utc) - timedelta(seconds=61)
+                ).isoformat()},
+                "source_trade_stale",
+            ),
+        ]
+        for asset, overrides, expected in cases:
+            feed.books[asset] = book()
+            info = candidate(asset=asset, condition=f"cond-{asset}")
+            info.update(overrides)
+            self.assertFalse(sim.open_position("wallet-a", info, fetcher=feed))
+            reasons.append(expected)
+
+        rows = [
+            json.loads(line)
+            for line in (self.data / "candidate_journal.jsonl").read_text().splitlines()
+        ]
+        self.assertEqual([row["reason"] for row in rows], reasons)
+
+    def test_drift_uses_source_trade_price_not_wallet_average(self):
+        EXECUTION["mode"] = "observe"
+        sim = PaperTradingSimulator()
+        feed = FakeFetcher()
+        feed.books["asset-1"] = book(0.52, 0.53)
+        info = candidate()
+        info["avg_price"] = 0.10
+        info["source_trade_price"] = 0.50
+
+        self.assertFalse(sim.open_position("wallet-a", info, fetcher=feed))
+        row = json.loads(
+            (self.data / "candidate_journal.jsonl").read_text().splitlines()[-1]
+        )
+        self.assertEqual(row["decision"], "eligible")
+
+    def test_pretrade_vwap_uses_exactly_one_book_snapshot(self):
+        EXECUTION["mode"] = "observe"
+        sim = PaperTradingSimulator()
+        feed = FakeFetcher()
+        feed.books["asset-1"] = book()
+        original_get_book = feed.get_book
+        feed.get_book = mock.Mock(wraps=original_get_book)
+        feed.get_executable_price = mock.Mock(
+            wraps=feed.get_executable_price
+        )
+
+        self.assertFalse(sim.open_position("wallet-a", candidate(), fetcher=feed))
+
+        self.assertEqual(feed.get_book.call_count, 1)
+        feed.get_executable_price.assert_not_called()
+
+    def test_failed_source_wallet_does_not_trigger_false_exit(self):
+        feed = FakeFetcher()
+        feed.books["asset-1"] = book()
+        sim = PaperTradingSimulator()
+        self.assertTrue(sim.open_position("wallet-a", candidate(), fetcher=feed))
+
+        # Il wallet sorgente detiene ancora l'asset: la perdita del consenso
+        # non equivale a una vendita.
+        sim.reconcile(
+            {
+                "asset-1": {
+                    "info": candidate(),
+                    "holders": {"wallet-a"},
+                    "max_notional": 100,
+                }
+            },
+            2, feed, new_holdings=set(),
+            monitored_wallets={"wallet-a"}, failed_wallets=set(),
+        )
+        self.assertEqual(sim.portfolio.open_positions_count, 1)
+
+        sim.reconcile(
+            {}, 1, feed, new_holdings=set(),
+            monitored_wallets={"wallet-a"}, failed_wallets={"wallet-a"},
+        )
+        self.assertEqual(sim.portfolio.open_positions_count, 1)
+
+        sim.reconcile(
+            {}, 1, feed, new_holdings=set(),
+            monitored_wallets={"wallet-a"}, failed_wallets=set(),
+        )
+        self.assertEqual(sim.portfolio.open_positions_count, 0)
+        self.assertEqual(sim.portfolio.closed_positions[-1].close_reason, "exit")
 
     def test_executable_price_walks_depth_as_vwap(self):
         fetcher = PolymarketPositionFetcher()

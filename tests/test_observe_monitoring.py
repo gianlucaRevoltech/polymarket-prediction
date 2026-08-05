@@ -95,6 +95,86 @@ class ObserveMonitoringTests(unittest.TestCase):
             fetcher.session.get.call_args.kwargs["params"]["limit"], 500
         )
 
+    def test_positions_distinguishes_valid_empty_from_feed_error(self):
+        fetcher = PolymarketPositionFetcher()
+        fetcher.session.get = mock.Mock(side_effect=[
+            response([]),
+            response([], 429),
+        ])
+
+        empty = fetcher.get_positions_result("0xempty")
+        failed = fetcher.get_positions_result("0xfailed")
+
+        self.assertTrue(empty.ok)
+        self.assertEqual(empty.positions, [])
+        self.assertFalse(failed.ok)
+        self.assertEqual(failed.positions, [])
+        self.assertIn("HTTP 429", failed.error)
+
+    def test_recent_buy_distinguishes_not_found_from_error(self):
+        fetcher = PolymarketPositionFetcher()
+        fetcher.session.get = mock.Mock(side_effect=[
+            response([]),
+            response([], 500),
+        ])
+
+        missing = fetcher.get_recent_buy_result("0xwallet", "asset")
+        failed = fetcher.get_recent_buy_result("0xwallet", "asset")
+
+        self.assertEqual(missing.status, "not_found")
+        self.assertEqual(failed.status, "error")
+        self.assertIn("HTTP 500", failed.error)
+
+    def test_wallet_flapping_preserves_baseline_and_avoids_false_delta(self):
+        bot = main_module.PolymarketPaperTradingBot.__new__(
+            main_module.PolymarketPaperTradingBot
+        )
+        bot.prev_holdings = None
+        wallet = "0xwallet"
+
+        aggregate = {
+            "asset-old": {"holders": {wallet}, "info": {}},
+        }
+        delta, baseline, initialized = bot._compute_holding_deltas(
+            aggregate, {wallet}
+        )
+        self.assertEqual(delta, set())
+        self.assertEqual((baseline, initialized), (1, 1))
+
+        delta, baseline, initialized = bot._compute_holding_deltas({}, set())
+        self.assertEqual(delta, set())
+        self.assertEqual(bot.prev_holdings[wallet], {"asset-old"})
+
+        delta, _, initialized = bot._compute_holding_deltas(
+            aggregate, {wallet}
+        )
+        self.assertEqual(delta, set())
+        self.assertEqual(initialized, 0)
+
+        recovered_with_buy = {
+            **aggregate,
+            "asset-new": {"holders": {wallet}, "info": {}},
+        }
+        delta, _, _ = bot._compute_holding_deltas(
+            recovered_with_buy, {wallet}
+        )
+        self.assertEqual(delta, {(wallet, "asset-new")})
+
+    def test_wallet_first_success_after_initial_failure_is_baseline_only(self):
+        bot = main_module.PolymarketPaperTradingBot.__new__(
+            main_module.PolymarketPaperTradingBot
+        )
+        bot.prev_holdings = None
+        wallet = "0xlate"
+
+        delta, _, initialized = bot._compute_holding_deltas({}, set())
+        self.assertEqual((delta, initialized), (set(), 0))
+        delta, baseline, initialized = bot._compute_holding_deltas(
+            {"asset-old": {"holders": {wallet}, "info": {}}}, {wallet}
+        )
+        self.assertEqual(delta, set())
+        self.assertEqual((baseline, initialized), (1, 1))
+
     def test_legacy_naive_and_aware_timestamps_have_same_age(self):
         now = datetime(2026, 7, 24, 7, 30, tzinfo=timezone.utc)
         self.assertEqual(
