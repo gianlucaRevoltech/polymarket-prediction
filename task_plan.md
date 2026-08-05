@@ -7,7 +7,7 @@
 - [x] CN3: impedire false uscite COPY quando il wallet sorgente non è leggibile
 - [x] CN4: rendere obbligatorio il trade sorgente verificato e usare il suo prezzo per il drift
 - [x] CN5: calcolare top-book e VWAP da un unico snapshot e journal v3 ricostruibile
-- [ ] CN6: test regressione, smoke test, documentazione, commit e push
+- [x] CN6: test regressione, smoke test, documentazione, commit e push
 
 Vincoli:
 - protezione/autenticazione dashboard esplicitamente fuori scope su richiesta;

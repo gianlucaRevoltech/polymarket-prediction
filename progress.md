@@ -17,7 +17,7 @@
 - [x] `compileall`, `git diff --check` e `bash -n start_all.sh`: OK.
 - [x] Protocollo rollout aggiornato: nuovo OBSERVE 48h sul cohort esistente,
   poi eventuale `paper_validation` in un run separato.
-- [ ] Commit e push su `main`.
+- [x] Commit `3599421` e push su `main` completati.
 
 ### Nota verifica
 - Un primo tentativo di smoke JavaScript ha puntato a `static/js/dashboard.js`,
