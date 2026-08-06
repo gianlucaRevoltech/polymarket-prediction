@@ -15,7 +15,7 @@
   unknown e rinviati, senza bloccare il ledger per oltre due minuti.
 - [x] Suite finale dopo il fix: 39/39 test OK; compileall, bash syntax e
   `git diff --check` superati.
-- [ ] Verifica finale, commit e rollout VPS.
+- [x] Commit `32ab7c4` e push `main` completati; rollout VPS pronto.
 
 ## SESSIONE 2026-08-05 — Phase CN hardening pre-paper
 

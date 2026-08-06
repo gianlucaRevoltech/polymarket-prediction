@@ -6,7 +6,7 @@
 - [x] CO2: ampliare il lookup BUY sorgente senza superare i limiti API
 - [x] CO3: ridurre l'impatto dei timeout burst senza creare falsi stati
 - [x] CO4: test paginazione, error propagation, dedup e regressioni complete
-- [ ] CO5: documentazione, commit, push e nuovo rollout OBSERVE
+- [x] CO5: documentazione, commit e push; rollout OBSERVE pronto per VPS
 
 Vincoli:
 - il run VPS corrente resta OBSERVE e non viene promosso a paper;
