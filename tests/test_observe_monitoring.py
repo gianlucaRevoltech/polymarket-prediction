@@ -15,7 +15,7 @@ import main as main_module
 import simulator as simulator_module
 from backtester import Backtester
 from config import EXECUTION
-from portfolio_sync import PolymarketPositionFetcher
+from portfolio_sync import PolymarketPositionFetcher, PositionsFetchResult
 from simulator import PaperTradingSimulator
 from time_utils import age_seconds
 
@@ -30,6 +30,16 @@ def response(payload, status_code=200):
     else:
         value.raise_for_status.return_value = None
     return value
+
+
+def raw_position(asset):
+    return {
+        "asset": asset,
+        "size": 1,
+        "avgPrice": 0.5,
+        "conditionId": f"condition-{asset}",
+        "title": f"Market {asset}",
+    }
 
 
 class ObserveMonitoringTests(unittest.TestCase):
@@ -91,9 +101,39 @@ class ObserveMonitoringTests(unittest.TestCase):
         self.assertEqual(trade["transaction_hash"], "0xtx")
         self.assertTrue(trade["source_trade_at"].endswith("+00:00"))
         self.assertEqual(trade["source_trade_price"], 0.51)
-        self.assertLessEqual(
+        self.assertEqual(
             fetcher.session.get.call_args.kwargs["params"]["limit"], 500
         )
+
+    def test_positions_paginates_stably_up_to_500_per_page(self):
+        fetcher = PolymarketPositionFetcher()
+        fetcher.session.get = mock.Mock(side_effect=[
+            response([raw_position(f"asset-{i}") for i in range(500)]),
+            response([raw_position("asset-500")]),
+        ])
+
+        result = fetcher.get_positions_result("0xwallet")
+
+        self.assertTrue(result.ok)
+        self.assertEqual(len(result.positions), 501)
+        calls = fetcher.session.get.call_args_list
+        self.assertEqual(calls[0].kwargs["params"]["limit"], 500)
+        self.assertEqual(calls[0].kwargs["params"]["offset"], 0)
+        self.assertEqual(calls[1].kwargs["params"]["offset"], 500)
+        self.assertEqual(calls[0].kwargs["params"]["sortBy"], "TOKENS")
+
+    def test_positions_discards_partial_pages_after_later_error(self):
+        fetcher = PolymarketPositionFetcher()
+        fetcher.session.get = mock.Mock(side_effect=[
+            response([raw_position(f"asset-{i}") for i in range(500)]),
+            response([], 500),
+        ])
+
+        result = fetcher.get_positions_result("0xwallet")
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.positions, [])
+        self.assertIn("HTTP 500", result.error)
 
     def test_positions_distinguishes_valid_empty_from_feed_error(self):
         fetcher = PolymarketPositionFetcher()
@@ -110,6 +150,7 @@ class ObserveMonitoringTests(unittest.TestCase):
         self.assertFalse(failed.ok)
         self.assertEqual(failed.positions, [])
         self.assertIn("HTTP 429", failed.error)
+        self.assertTrue(failed.transient)
 
     def test_recent_buy_distinguishes_not_found_from_error(self):
         fetcher = PolymarketPositionFetcher()
@@ -124,6 +165,43 @@ class ObserveMonitoringTests(unittest.TestCase):
         self.assertEqual(missing.status, "not_found")
         self.assertEqual(failed.status, "error")
         self.assertIn("HTTP 500", failed.error)
+
+    def test_snapshot_circuit_breaker_stops_timeout_burst(self):
+        fetcher = PolymarketPositionFetcher()
+        fetcher.get_positions_result = mock.Mock(side_effect=[
+            PositionsFetchResult("wallet-1", False, error="timeout", transient=True),
+            PositionsFetchResult("wallet-2", False, error="timeout", transient=True),
+            PositionsFetchResult("wallet-3", False, error="timeout", transient=True),
+        ])
+        wallets = [f"wallet-{i}" for i in range(1, 7)]
+
+        snapshot = fetcher.snapshot_wallets_with_status(wallets)
+
+        self.assertEqual(fetcher.get_positions_result.call_count, 3)
+        self.assertEqual(snapshot.successful_wallets, set())
+        self.assertEqual(set(snapshot.failed_wallets), set(wallets))
+        self.assertIn("snapshot saltato", snapshot.failed_wallets["wallet-6"])
+
+    def test_snapshot_circuit_breaker_counts_only_consecutive_failures(self):
+        fetcher = PolymarketPositionFetcher()
+        timeout = lambda wallet: PositionsFetchResult(
+            wallet, False, error="timeout", transient=True
+        )
+        success = lambda wallet: PositionsFetchResult(wallet, True, positions=[])
+        fetcher.get_positions_result = mock.Mock(side_effect=[
+            timeout("wallet-1"), timeout("wallet-2"), success("wallet-3"),
+            timeout("wallet-4"), timeout("wallet-5"), success("wallet-6"),
+        ])
+        wallets = [f"wallet-{i}" for i in range(1, 7)]
+
+        snapshot = fetcher.snapshot_wallets_with_status(wallets)
+
+        self.assertEqual(fetcher.get_positions_result.call_count, 6)
+        self.assertEqual(snapshot.successful_wallets, {"wallet-3", "wallet-6"})
+        self.assertEqual(
+            set(snapshot.failed_wallets),
+            {"wallet-1", "wallet-2", "wallet-4", "wallet-5"},
+        )
 
     def test_wallet_flapping_preserves_baseline_and_avoids_false_delta(self):
         bot = main_module.PolymarketPaperTradingBot.__new__(

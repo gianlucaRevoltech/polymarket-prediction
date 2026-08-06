@@ -16,6 +16,10 @@ Gli errori `/positions` non vengono interpretati come wallet vuoti: baseline e
 posizioni restano invariate. Solo uno snapshot riuscito che dimostra l'assenza
 dell'asset può produrre un'uscita COPY. Anche il primo successo di un wallet
 dopo un timeout viene usato come baseline, senza copiare il bag preesistente.
+Lo snapshot pagina fino a 500 posizioni per richiesta e non usa mai pagine
+parziali. Dopo tre errori transitori consecutivi, i wallet restanti vengono
+rinviati al ciclo successivo come stato sconosciuto per evitare outage seriali.
+Il lookup BUY considera fino a 500 attività recenti con filtri server-side.
 
 I wallet sono congelati per l'intero run. Lo scan e le sostituzioni si eseguono
 solo tra run con `new-run scan`, così il campione non cambia adattivamente.

@@ -1,5 +1,33 @@
 # Findings & Decisions — Polymarket Copy Bot
 
+## Follow-up OBSERVE 2026-08-06 — copertura feed
+
+- Run v3 sano: 0 traceback, 28 candidati, 2 eligible, entrambi con sorgente
+  valida; 26 reject, inclusi 13 `source_trade_unavailable` e 2 stale.
+- Quattro episodi `[FEED]`: burst iniziale con 9 timeout consecutivi, poi 2,
+  4 e un timeout isolato. La baseline è rimasta preservata e i cicli sono
+  ripresi, quindi il fix CN ha impedito falsi delta/exit.
+- La documentazione ufficiale Data API conferma che `/positions` accetta
+  `limit` fino a 500 e `offset` fino a 10000. Il bot usa oggi una sola pagina
+  da 200: per wallet grandi può omettere posizioni e produrre variazioni
+  artificiali al bordo della pagina.
+- La documentazione ufficiale aggiornata conferma che `/activity` ha pagine
+  stabili, `limit<=500`, `offset<=5000`, filtri server-side `type=TRADE` e
+  `side=BUY`. Portare il singolo lookup da 100 a 500 non richiede pagine extra
+  e riduce i falsi `not_found` per wallet ad alta frequenza.
+- `/trades` consente `user`, `side`, finestre temporali e fino a 10000 record,
+  ma non filtra direttamente per asset. Non viene introdotto come fallback in
+  questa fase: una pagina activity 500 è più mirata e conserva un solo endpoint.
+- Il lookup BUY usa oggi una sola pagina `/activity` da 100. Il 46,4% dei nuovi
+  delta del run non trova la sorgente; questi candidati sono bloccati in modo
+  sicuro, ma la copertura del campione è insufficiente.
+- Decisione: aggiungere paginazione positions, portare activity a 500 e
+  mantenere la semantica fail-closed. Non promuovere ancora a paper.
+- Il circuit breaker conta solo errori transitori consecutivi (timeout,
+  connection error, HTTP 408/425/429/5xx); un successo azzera il contatore.
+  Dopo tre fallimenti rinvia i wallet restanti come `unknown`, preservandone
+  la baseline e limitando la durata di un ciclo durante un outage.
+
 ## Implementazione Phase CN — decisioni tecniche (2026-08-05)
 
 - Compatibilità pubblica preservata: `get_positions`, `get_recent_buy` e

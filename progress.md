@@ -1,5 +1,22 @@
 # Progress Log — Polymarket Copy Bot
 
+## SESSIONE 2026-08-06 — Phase CO copertura feed
+
+### Evidenza VPS
+- 0 traceback; 4 incidenti feed gestiti; 28 journal v3.
+- 2/2 eligible validi; 13/28 candidati senza BUY sorgente, tutti respinti.
+- Timeout burst fino a 9 wallet nello stesso ciclo, senza perdita baseline.
+
+### In corso
+- [x] Paginazione `/positions` ufficiale (`limit<=500`, `offset<=10000`) con
+  ordinamento stabile e rifiuto dell'intero snapshot se una pagina fallisce.
+- [x] Lookup sorgente ampliato da 100 a 500 BUY recenti.
+- [x] Circuit breaker dopo 3 timeout consecutivi: wallet restanti marcati
+  unknown e rinviati, senza bloccare il ledger per oltre due minuti.
+- [x] Suite finale dopo il fix: 39/39 test OK; compileall, bash syntax e
+  `git diff --check` superati.
+- [ ] Verifica finale, commit e rollout VPS.
+
 ## SESSIONE 2026-08-05 — Phase CN hardening pre-paper
 
 ### Perimetro approvato

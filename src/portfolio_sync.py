@@ -26,6 +26,7 @@ class PositionsFetchResult:
     ok: bool
     positions: List[Dict] = field(default_factory=list)
     error: str = ""
+    transient: bool = False
 
 
 @dataclass
@@ -60,29 +61,61 @@ class PolymarketPositionFetcher:
         })
 
     def get_positions_result(self, wallet_address: str,
-                             limit: int = 200) -> PositionsFetchResult:
+                             limit: int = 500) -> PositionsFetchResult:
         """
         Ritorna uno snapshot strutturato. Una lista vuota con `ok=True` prova
         che il wallet non ha posizioni; `ok=False` non è mai una vendita.
         """
-        try:
-            url = f"{self.data_api}/positions"
-            params = {"user": wallet_address, "limit": limit}
-            response = self.session.get(url, params=params, timeout=15)
-            response.raise_for_status()
-            raw = response.json()
-        except Exception as e:
-            print(f"[SYNC] Errore positions {wallet_address[:10]}...: {e}")
-            return PositionsFetchResult(
-                wallet=wallet_address, ok=False, error=str(e)
-            )
+        url = f"{self.data_api}/positions"
+        page_size = min(max(int(limit), 1), 500)
+        offset = 0
+        raw = []
+        while True:
+            response = None
+            try:
+                params = {
+                    "user": wallet_address,
+                    "limit": page_size,
+                    "offset": offset,
+                    "sortBy": "TOKENS",
+                    "sortDirection": "DESC",
+                }
+                response = self.session.get(
+                    url, params=params, timeout=(5, 10)
+                )
+                response.raise_for_status()
+                page = response.json()
+            except Exception as exc:
+                status_code = getattr(response, "status_code", None)
+                transient = (
+                    isinstance(exc, (requests.Timeout, requests.ConnectionError))
+                    or status_code in {408, 425, 429}
+                    or (isinstance(status_code, int) and status_code >= 500)
+                )
+                print(f"[SYNC] Errore positions {wallet_address[:10]}...: {exc}")
+                return PositionsFetchResult(
+                    wallet=wallet_address,
+                    ok=False,
+                    error=str(exc),
+                    transient=transient,
+                )
 
-        if not isinstance(raw, list):
-            error = f"payload inatteso: {type(raw).__name__}"
-            print(f"[SYNC] Errore positions {wallet_address[:10]}...: {error}")
-            return PositionsFetchResult(
-                wallet=wallet_address, ok=False, error=error
-            )
+            if not isinstance(page, list):
+                error = f"payload inatteso: {type(page).__name__}"
+                print(f"[SYNC] Errore positions {wallet_address[:10]}...: {error}")
+                return PositionsFetchResult(
+                    wallet=wallet_address, ok=False, error=error
+                )
+            raw.extend(page)
+            if len(page) < page_size:
+                break
+            if offset >= 10000:
+                error = "snapshot incompleto: superato offset massimo 10000"
+                print(f"[SYNC] Errore positions {wallet_address[:10]}...: {error}")
+                return PositionsFetchResult(
+                    wallet=wallet_address, ok=False, error=error
+                )
+            offset += page_size
 
         positions = []
         try:
@@ -101,12 +134,12 @@ class PolymarketPositionFetcher:
             wallet=wallet_address, ok=True, positions=positions
         )
 
-    def get_positions(self, wallet_address: str, limit: int = 200) -> List[Dict]:
+    def get_positions(self, wallet_address: str, limit: int = 500) -> List[Dict]:
         """Wrapper legacy: i nuovi call-site devono usare l'esito strutturato."""
         return self.get_positions_result(wallet_address, limit).positions
 
     def get_recent_buy_result(self, wallet_address: str, asset: str,
-                              limit: int = 100) -> RecentBuyResult:
+                              limit: int = 500) -> RecentBuyResult:
         """Trova il BUY sorgente senza confondere assenza valida ed errore API."""
         if not wallet_address or not asset:
             return RecentBuyResult(status="not_found")
@@ -145,7 +178,7 @@ class PolymarketPositionFetcher:
             return RecentBuyResult(status="error", error=str(exc))
 
     def get_recent_buy(self, wallet_address: str, asset: str,
-                       limit: int = 100) -> Optional[Dict]:
+                       limit: int = 500) -> Optional[Dict]:
         """Wrapper legacy che ritorna il trade solo quando il lookup è riuscito."""
         result = self.get_recent_buy_result(wallet_address, asset, limit)
         return result.trade if result.status == "ok" else None
@@ -451,11 +484,29 @@ class PolymarketPositionFetcher:
         aggregate: Dict[str, Dict] = {}
         successful_wallets: Set[str] = set()
         failed_wallets: Dict[str, str] = {}
-        for addr in wallet_addresses:
+        consecutive_transient_failures = 0
+        max_transient_failures = 3
+        for index, addr in enumerate(wallet_addresses):
             result = self.get_positions_result(addr)
             if not result.ok:
                 failed_wallets[addr] = result.error
+                consecutive_transient_failures = (
+                    consecutive_transient_failures + 1
+                    if result.transient else 0
+                )
+                if consecutive_transient_failures >= max_transient_failures:
+                    reason = (
+                        "snapshot saltato dopo 3 errori transitori consecutivi"
+                    )
+                    for remaining in wallet_addresses[index + 1:]:
+                        failed_wallets[remaining] = reason
+                    print(
+                        f"[SYNC] Circuit breaker feed: {reason}; "
+                        f"{len(wallet_addresses) - index - 1} wallet rinviati"
+                    )
+                    break
                 continue
+            consecutive_transient_failures = 0
             successful_wallets.add(addr)
             for pos in result.positions:
                 asset = pos["asset"]

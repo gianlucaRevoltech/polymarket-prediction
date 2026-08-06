@@ -1,5 +1,18 @@
 # Task Plan: Polymarket Bot — FIX EMERGENZA PERFORMANCE (-5.63%, WR 24%)
 
+## Active Phase CO: paginazione feed e copertura source (2026-08-06)
+
+- [x] CO1: paginare `/positions` oltre 200 record fino ai limiti ufficiali
+- [x] CO2: ampliare il lookup BUY sorgente senza superare i limiti API
+- [x] CO3: ridurre l'impatto dei timeout burst senza creare falsi stati
+- [x] CO4: test paginazione, error propagation, dedup e regressioni complete
+- [ ] CO5: documentazione, commit, push e nuovo rollout OBSERVE
+
+Vincoli:
+- il run VPS corrente resta OBSERVE e non viene promosso a paper;
+- dashboard protection ancora fuori scope;
+- nessun retry che trasformi errori in risposte vuote valide.
+
 ## Active Phase CN: hardening pre-paper dopo audit OBSERVE (2026-08-05)
 
 - [x] CN1: distinguere snapshot wallet vuoto valido da errore/timeout
@@ -51,7 +64,7 @@ in un sistema profittevole. ROOT CAUSE: il bot entra a prezzi estremi (0.999, 0.
 dal fallimento del segnale. Risk/reward invertito: gain minuscolo, loss enorme.
 
 ## Current Phase
-Phase CN hardening COMPLETE nel codice → pubblicazione e nuovo OBSERVE 48h
+Phase CO feed coverage COMPLETE nel codice → pubblicazione e nuovo OBSERVE 48h
 
 ## Phase CK: Arresto perdite e nuova validazione (2026-07-23)
 
