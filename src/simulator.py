@@ -2733,6 +2733,44 @@ class PaperTradingSimulator:
             for pos_data in state.get("closed_positions", []):
                 self.portfolio.closed_positions.append(self._deserialize_position(pos_data))
 
+            # La v2 calcolava correttamente exit_price/P&L netti, ma accreditava
+            # al cash il current_price lordo. Ricostruire e' sicuro soltanto per
+            # run interamente fee-v4 (metadati noti su ogni posizione) e con
+            # almeno una chiusura; gli snapshot legacy misti restano invariati.
+            all_positions = (
+                list(self.portfolio.positions.values())
+                + self.portfolio.closed_positions
+            )
+            state_version = int(state.get("state_version", 0) or 0)
+            can_rebuild_v2_cash = bool(
+                state_version == 2
+                and self.portfolio.closed_positions
+                and all_positions
+                and all(pos.fees_enabled is not None for pos in all_positions)
+                and all(
+                    pos.exit_price is not None
+                    for pos in self.portfolio.closed_positions
+                )
+            )
+            if can_rebuild_v2_cash:
+                initial = float(
+                    state.get("initial_capital", self.portfolio.initial_capital)
+                )
+                expected_cash = initial
+                expected_cash -= sum(
+                    pos.size_usdc for pos in all_positions
+                )
+                expected_cash += sum(
+                    pos.shares * pos.exit_price
+                    for pos in self.portfolio.closed_positions
+                )
+                if abs(self.portfolio.cash - expected_cash) > 1e-9:
+                    print(
+                        "[MIGRATION] Cash v2 lordo corretto: "
+                        f"${self.portfolio.cash:.6f} -> ${expected_cash:.6f}"
+                    )
+                    self.portfolio.cash = expected_cash
+
             print(f"[SIMULATOR] Stato ripristinato: ${self.portfolio.cash:.2f} cash, "
                   f"{len(self.portfolio.positions)} aperte, "
                   f"{len(self.portfolio.closed_positions)} chiuse")

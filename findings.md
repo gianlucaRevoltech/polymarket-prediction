@@ -993,7 +993,9 @@ HARVEST, perché HARVEST resta disabilitata e non ha edge dimostrato.
   il mark all'exit netto prima dell'accredito cash. Ledger portato a state v3.
 - Migrazione state v2 verificata sul caso reale: bid lordo 0.45 -> mark netto
   0.437625 una sola volta, preservando `run_id`, posizione e cash $295.
-- Verifica completa: 45/45 unittest, `compileall` e `git diff --check` OK.
+- Se la posizione viene chiusa prima del deploy, la migrazione v2 ricostruisce
+  anche il cash da size aperte e exit netti; si attiva solo su run fee-v4 puri.
+- Verifica completa: 46/46 unittest, `compileall` e `git diff --check` OK.
 
 ## Audit OBSERVE 24h - bundle 2026-08-07
 

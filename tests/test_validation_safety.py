@@ -372,6 +372,37 @@ class SimulatorSafetyTests(unittest.TestCase):
         pos_again = next(iter(reloaded.portfolio.positions.values()))
         self.assertAlmostEqual(pos_again.current_price, 0.437625, places=9)
 
+    def test_state_v2_gross_close_cash_is_rebuilt_from_net_exits(self):
+        feed = FakeFetcher()
+        feed.books["asset-1"] = book(0.39, 0.40)
+        feed.markets["cond-1"] = {
+            "category": "other",
+            "fees_enabled": True,
+            "fee_schedule": {
+                "rate": 0.05, "exponent": 1.0, "taker_only": True,
+            },
+            "fee_metadata_known": True,
+        }
+        sim = PaperTradingSimulator()
+        self.assertTrue(sim.open_position("wallet-a", candidate(), fetcher=feed))
+        self.assertTrue(sim.close_by_asset("asset-1", 0.50, "exit"))
+        sim._save_state()
+
+        state_path = self.data / "portfolio_state.json"
+        state = json.loads(state_path.read_text())
+        state["state_version"] = 2
+        stored = state["closed_positions"][0]
+        stored["current_price"] = 0.50
+        stored.pop("current_price_net_of_exit_fee", None)
+        state["cash"] = 295.0 + stored["shares"] * 0.50
+        state_path.write_text(json.dumps(state))
+
+        migrated = PaperTradingSimulator()
+        closed = migrated.portfolio.closed_positions[0]
+        expected_cash = 300.0 + closed.pnl
+        self.assertAlmostEqual(migrated.portfolio.cash, expected_cash, places=9)
+        self.assertAlmostEqual(migrated.portfolio.total_value, expected_cash, places=9)
+
     def test_fee_schedule_unknown_rejects_candidate_fail_closed(self):
         EXECUTION["mode"] = "observe"
         feed = FakeFetcher()

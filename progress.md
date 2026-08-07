@@ -763,4 +763,5 @@ OBSERVE di default, COPY unica candidata futura, nessun capitale reale.
 - Centralizzato il prezzo liquidabile: equity, drawdown e circuit breaker usano
   bid meno fee taker; la chiusura accredita esattamente il ricavo netto.
 - Aggiunto state v3 e migrazione one-shot della posizione aperta dal ledger v2,
-  senza `new-run`; 45/45 unittest, compileall e diff check superati.
+  inclusa ricostruzione cash se gia chiusa, senza `new-run`; 46/46 unittest,
+  compileall e diff check superati.
