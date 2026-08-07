@@ -6,16 +6,22 @@ ingresso) e backtester (fee nel calcolo realistico).
 
 CATEGORIE: sport, crypto, politics, weather, macro, geopolitics, other.
 
-FEE: i mercati sport su Polymarket usano lo schema `sports_fees_v2`
-(taker-only). Dal feeSchedule osservato su Gamma: {exponent:1, rate:0.03,
-takerOnly:true, rebateRate:0.25}. La fee effettiva NON e' un 3% piatto: e'
-proporzionale all'incertezza del prezzo (massima a 0.5, ~0 agli estremi).
-Modelliamo quindi la fee come rate * min(p, 1-p), un'approssimazione realistica
-e limitata. Le altre categorie non hanno trading fee sul CLOB (0%).
+FEE: dal 31 marzo 2026 la fonte autorevole e' il `feeSchedule` del singolo
+mercato. Le fee sono taker-only e dipendono dal prezzo. Il mapping categoria
+resta soltanto come fallback conservativo per ledger legacy; i nuovi candidati
+COPY richiedono sempre metadati fee per-market.
 """
-from typing import List, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
-SPORTS_FEE_RATE = 0.03  # da Gamma feeSchedule (sports_fees_v2, taker-only)
+FEE_RATE_BY_CATEGORY = {
+    "crypto": 0.07,
+    "sport": 0.05,
+    "politics": 0.04,
+    "macro": 0.05,
+    "weather": 0.05,
+    "geopolitics": 0.0,
+    "other": 0.05,
+}
 
 # Parole chiave per categoria (ordine = priorita di match dopo lo sport)
 # Phase CJ: keyword ampliate — prima molte finivano in "other" per match mancato.
@@ -126,14 +132,55 @@ def categorize_market(question: str = "", event_ticker: str = "",
     return "other"
 
 
-def taker_fee_fraction(category: str, price: float) -> float:
+def normalize_fee_schedule(raw) -> Optional[Dict[str, Union[float, bool]]]:
+    """Normalizza il feeSchedule Gamma/CLOB; None significa metadato ignoto."""
+    if not isinstance(raw, dict):
+        return None
+    try:
+        rate = float(raw.get("rate", raw.get("r")))
+        exponent = float(raw.get("exponent", raw.get("e", 1)))
+    except (TypeError, ValueError):
+        return None
+    if rate < 0 or exponent <= 0:
+        return None
+    return {
+        "rate": rate,
+        "exponent": exponent,
+        "taker_only": bool(raw.get("takerOnly", raw.get("to", True))),
+    }
+
+
+def taker_fee_per_share(category: str, price: float, *, fee_schedule=None,
+                        fees_enabled=None) -> float:
+    """Fee USDC per share taker usando il feeSchedule del mercato quando noto."""
+    p = max(0.0, min(1.0, float(price)))
+    if p <= 0 or p >= 1 or fees_enabled is False:
+        return 0.0
+    schedule = normalize_fee_schedule(fee_schedule)
+    if fees_enabled is True and schedule is None:
+        raise ValueError("fee_schedule mancante per mercato fee-enabled")
+    if schedule is not None:
+        rate = float(schedule["rate"])
+        exponent = float(schedule["exponent"])
+    else:
+        rate = float(FEE_RATE_BY_CATEGORY.get(category or "other", 0.05))
+        exponent = 1.0
+    # Formula feeSchedule generalizzata; con exponent=1 coincide con la formula
+    # ufficiale corrente: shares * rate * p * (1-p).
+    return rate * ((p * (1.0 - p)) ** exponent)
+
+
+def taker_fee_fraction(category: str, price: float, *, fee_schedule=None,
+                       fees_enabled=None) -> float:
     """
     Fee taker come frazione del valore scambiato, dipendente da categoria e prezzo.
 
     Returns:
         frazione (es. 0.012 = 1.2%) da applicare al notional in ingresso.
     """
-    if category == "sport":
-        p = max(0.0, min(1.0, price))
-        return SPORTS_FEE_RATE * min(p, 1.0 - p)
-    return 0.0
+    p = max(0.0, min(1.0, float(price)))
+    if p <= 0:
+        return 0.0
+    return taker_fee_per_share(
+        category, p, fee_schedule=fee_schedule, fees_enabled=fees_enabled
+    ) / p

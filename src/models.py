@@ -96,6 +96,13 @@ class Position:
     # Categoria di mercato (sport/crypto/politics/weather/other) per fee e analisi
     category: str = ""
 
+    # Parametri fee del mercato osservati all'ingresso. None mantiene la lettura
+    # compatibile dei ledger legacy, che useranno il fallback di categoria.
+    fees_enabled: Optional[bool] = None
+    fee_rate: Optional[float] = None
+    fee_exponent: float = 1.0
+    fee_source: str = "legacy_category_fallback"
+
     # Strategia di origine (Phase M multi-strategy): copy | arb_binary | harvest | arb_cross
     strategy: str = "copy"
     # Per arbitraggio binario: id del "bundle" (es. condition_id) che aggancia le

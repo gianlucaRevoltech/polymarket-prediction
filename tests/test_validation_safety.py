@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 import simulator as simulator_module
-from categories import categorize_market
+from categories import categorize_market, taker_fee_fraction
 from config import EXECUTION
 from portfolio_sync import PolymarketPositionFetcher
 from simulator import PaperTradingSimulator
@@ -34,7 +34,13 @@ class FakeFetcher:
         return book.get("best_ask" if side == "BUY" else "best_bid")
 
     def get_market(self, condition_id):
-        return self.markets.get(condition_id)
+        if condition_id in self.markets:
+            return self.markets[condition_id]
+        return {
+            "fees_enabled": False,
+            "fee_schedule": None,
+            "fee_metadata_known": True,
+        }
 
     @staticmethod
     def passes_liquidity(book, side_size_min, max_spread_ticks=3):
@@ -114,7 +120,7 @@ class SimulatorSafetyTests(unittest.TestCase):
             json.loads(line)
             for line in (self.data / "candidate_journal.jsonl").read_text().splitlines()
         ]
-        self.assertEqual(rows[-1]["journal_version"], 3)
+        self.assertEqual(rows[-1]["journal_version"], 4)
         self.assertEqual(rows[-1]["decision"], "eligible")
         self.assertEqual(rows[-1]["reason"], "passed_pretrade_checks")
         self.assertEqual(rows[-1]["best_ask"], 0.50)
@@ -265,6 +271,77 @@ class SimulatorSafetyTests(unittest.TestCase):
         self.assertAlmostEqual(sim.portfolio.total_value, 299.90, places=6)
         sim.close_by_asset("asset-1", 0.49, "exit")
         self.assertAlmostEqual(sim.portfolio.closed_positions[-1].pnl, -0.10, places=6)
+
+    def test_market_fee_schedule_applies_to_entry_journal_and_exit(self):
+        feed = FakeFetcher()
+        feed.books["asset-1"] = book(0.39, 0.40)
+        feed.markets["cond-1"] = {
+            "category": "other",
+            "fees_enabled": True,
+            "fee_schedule": {
+                "rate": 0.05, "exponent": 1.0, "taker_only": True,
+            },
+            "fee_metadata_known": True,
+        }
+        info = candidate()
+        info["category"] = "other"
+        sim = PaperTradingSimulator()
+
+        self.assertTrue(sim.open_position("wallet-a", info, fetcher=feed))
+
+        pos = next(iter(sim.portfolio.positions.values()))
+        # fee/share = 0.05 * 0.40 * 0.60 = 0.012
+        self.assertAlmostEqual(pos.entry_price, 0.412, places=9)
+        self.assertEqual(pos.fee_rate, 0.05)
+        self.assertEqual(pos.fee_source, "market_fee_schedule")
+        rows = [
+            json.loads(line)
+            for line in (self.data / "candidate_journal.jsonl").read_text().splitlines()
+        ]
+        self.assertEqual(rows[-1]["journal_version"], 4)
+        self.assertEqual(rows[-1]["fee_schedule"]["rate"], 0.05)
+        self.assertGreater(rows[-1]["costs"]["fee_usdc"], 0)
+
+        sim._save_state()
+        restarted = PaperTradingSimulator()
+        restored = next(iter(restarted.portfolio.positions.values()))
+        self.assertTrue(restored.fees_enabled)
+        self.assertEqual(restored.fee_rate, 0.05)
+        self.assertEqual(restored.fee_exponent, 1.0)
+
+        self.assertTrue(sim.close_by_asset("asset-1", 0.50, "exit"))
+        closed = sim.portfolio.closed_positions[-1]
+        # exit fee/share = 0.05 * 0.50 * 0.50 = 0.0125
+        self.assertAlmostEqual(closed.exit_price, 0.4875, places=9)
+        rows = [
+            json.loads(line)
+            for line in (self.data / "candidate_journal.jsonl").read_text().splitlines()
+        ]
+        self.assertEqual(rows[-1]["decision"], "closed")
+        self.assertEqual(rows[-1]["fee_schedule"]["rate"], 0.05)
+        self.assertGreater(rows[-1]["costs"]["exit_fee_usdc"], 0)
+
+    def test_fee_schedule_unknown_rejects_candidate_fail_closed(self):
+        EXECUTION["mode"] = "observe"
+        feed = FakeFetcher()
+        feed.books["asset-1"] = book()
+        feed.markets["cond-1"] = None
+        sim = PaperTradingSimulator()
+
+        self.assertFalse(sim.open_position("wallet-a", candidate(), fetcher=feed))
+
+        row = json.loads(
+            (self.data / "candidate_journal.jsonl").read_text().splitlines()[-1]
+        )
+        self.assertEqual(row["reason"], "fee_schedule_unavailable")
+
+    def test_fee_formula_matches_official_usdc_curve(self):
+        schedule = {"rate": 0.05, "exponent": 1.0, "taker_only": True}
+        # 100 shares @ 0.30: fee = 100 * .05 * .30 * .70 = $1.05.
+        fraction = taker_fee_fraction(
+            "other", 0.30, fee_schedule=schedule, fees_enabled=True
+        )
+        self.assertAlmostEqual(100 * 0.30 * fraction, 1.05, places=9)
 
     def test_observe_still_manages_preexisting_positions(self):
         feed = FakeFetcher()

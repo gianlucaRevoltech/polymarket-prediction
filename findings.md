@@ -975,3 +975,61 @@ HARVEST, perché HARVEST resta disabilitata e non ha edge dimostrato.
   sorgente/detection timestamp, costi e identità run/signal/evento.
 - La promozione può solo autorizzare un altro run paper indipendente; il campo
   `real_money_authorized` del valutatore resta sempre `False`.
+
+## Audit OBSERVE 24h - bundle 2026-08-07
+
+- Archivio: `logs/exports/polymarket-observe-20260807T135646Z.tar.gz`.
+- SHA-256: `848E35E8CCB1D0AF61B9C6B5A84E64ED50046E815980969E9A3E1D061F564C4E`.
+- Bundle integro e sostanziale: portfolio, journal, manifest wallet, runtime/API,
+  bot/dashboard log e metadati git presenti; file error API vuoti.
+- Snapshot creato 2026-08-07 15:56 locale VPS; journal aggiornato fino alle 15:52.
+- Commit deployato corretto: `8c9d3f98e4766e477874c147c06033678c924117`.
+- Run corrente: `run-20260806T135444-8c20a465`, `observe`, capitale/cash $300,
+  zero posizioni aperte o chiuse; wallet manifest congelato.
+- Durata dati preliminare: dal 2026-08-06 14:01:24 UTC al 2026-08-07
+  13:52:36 UTC (quasi 24 ore).
+- 191 candidati tutti unici: 46 eligible (24.08%), 145 rejected; 176/191
+  lookup sorgente `ok`, 14 `not_found`, 1 `error`.
+- Al momento dell'export bot e dashboard erano attivi, latency-arb fermo,
+  runtime al ciclo 3711 in fase idle, stato vecchio di 14.34 secondi.
+- Journal v3 coerente: 46/46 eligible hanno sorgente verificata, evento/asset,
+  bid/ask, VWAP, profondita, fee e latenza validi; nessun book crossed, fill
+  insufficiente o latenza fuori 0-60 secondi tra gli eligible.
+- Latenza eligible: mediana 11.38s, p95 27.14s, massimo 30.94s. Spread mediano
+  1 cent, p95 2 cent, massimo 3 cent. Size $5 interamente fillabile al primo
+  livello in tutti i 46 casi; nessun slippage VWAP aggiuntivo nel campione.
+- Concentrazione rilevante: 36/46 eligible (78.3%) provengono da un wallet e
+  10/46 dall'altro; soltanto 2 dei 12 wallet generano eligible. Gli eligible
+  coprono 28 eventi, 36 condition e 42 asset; categorie: 36 sport, 10 other.
+- Salute feed buona ma non perfetta: un timeout `/positions` su un wallet,
+  correttamente trattato come unknown con baseline preservata, e un HTTP 429
+  sul lookup `/activity`, correttamente registrato come lookup error. Zero
+  traceback, zero HTTP 400, zero halt e recupero al ciclo successivo.
+- Dashboard: zero risposte 500. Il log mostra scansioni automatiche da IP esterni
+  sulla porta pubblica; rischio noto, non bloccante per il paper su richiesta.
+- BLOCCANTE scoperto prima del paper: il modello locale applica fee solo a
+  `sport` (rate 0.03) e zero a tutte le altre categorie. La documentazione
+  Polymarket aggiornata al 2026 indica fee anche su crypto 0.07, finance/politics
+  0.04, economics/culture/weather/other 0.05, mentions/tech 0.04; geopolitics
+  resta fee-free. Le fee sono per-market (`feesEnabled`/`feeSchedule`).
+- Conseguenza: 10/46 eligible `other` del run sono stati valutati con fee zero;
+  un paper run avviato ora sottostimerebbe costi di ingresso e uscita. Il gate
+  tecnico non puo ancora essere promosso finche il fee model non e corretto e
+  verificato per mercato.
+- La pagina ufficiale letta il 2026-08-07 riporta ora sports rate 0.05 (non 0.03),
+  confermando che anche il fallback sport hardcoded e obsoleto. La formula
+  ufficiale e `shares * rate * p * (1-p)`; il codice corrente usa come frazione
+  del notional `rate * min(p,1-p)`, che coincide solo a p=0.5 e sottostima le
+  fee soprattutto sotto 0.5.
+- API autorevoli disponibili: Gamma `feesEnabled` + `feeSchedule`, oppure CLOB
+  `/clob-markets/{condition_id}` con `fd.r`, `fd.e`, `fd.to`. Il changelog
+  prescrive esplicitamente di usare `feeSchedule` per-market dal 31 marzo 2026.
+- Stress test conservativo sui 46 eligible, assumendo rate corrente 0.05 per
+  tutti: fee ingresso totale $5.70 invece dei $2.36 registrati dal vecchio
+  modello. Costo round-trip immediato medio $0.392 per trade da $5 (7.84%),
+  mediana 7.86%, p95 10.48%. Questo non prova perdita futura, ma mostra che il
+  paper deve superare un hurdle di costi molto piu alto di quello precedente.
+- Implementazione locale: journal v4, metadati fee Gamma per-market obbligatori,
+  reject fail-closed se assenti, fee ingresso/uscita persistite sulla Position,
+  formula ufficiale generalizzata con exponent. Suite finale: 44/44 test pass,
+  compileall e `git diff --check` puliti.

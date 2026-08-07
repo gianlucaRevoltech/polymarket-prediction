@@ -43,6 +43,32 @@ def raw_position(asset):
 
 
 class ObserveMonitoringTests(unittest.TestCase):
+    def test_gamma_market_normalizes_authoritative_fee_schedule(self):
+        market = PolymarketPositionFetcher._normalize_market({
+            "conditionId": "condition-1",
+            "question": "Example market",
+            "feesEnabled": True,
+            "feeSchedule": {
+                "rate": "0.05", "exponent": "1", "takerOnly": True,
+            },
+        })
+
+        self.assertTrue(market["fees_enabled"])
+        self.assertTrue(market["fee_metadata_known"])
+        self.assertEqual(market["fee_schedule"]["rate"], 0.05)
+        self.assertEqual(market["fee_schedule"]["exponent"], 1.0)
+
+    def test_gamma_fee_free_market_is_known_without_schedule(self):
+        market = PolymarketPositionFetcher._normalize_market({
+            "conditionId": "condition-1",
+            "question": "Geopolitical market",
+            "feesEnabled": False,
+        })
+
+        self.assertFalse(market["fees_enabled"])
+        self.assertTrue(market["fee_metadata_known"])
+        self.assertIsNone(market["fee_schedule"])
+
     def test_activity_paginates_with_maximum_500(self):
         profiler = Backtester(activity_limit=600)
         profiler.session.get = mock.Mock(side_effect=[

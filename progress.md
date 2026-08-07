@@ -745,3 +745,13 @@ OBSERVE di default, COPY unica candidata futura, nessun capitale reale.
 - Deploy VPS e verifica servizi.
 - Conferma zero aperture per 24 ore.
 - Raccolta journal per almeno 48 ore prima di qualunque paper_validation.
+
+## SESSIONE 2026-08-07 - Phase CP audit OBSERVE e fee v4
+
+- Auditato bundle VPS 24h: 191 candidati unici, 46 eligible, zero traceback,
+  un timeout positions e un 429 activity gestiti correttamente.
+- Scoperto modello fee obsoleto: sport 0.03 e altre categorie a zero, in
+  contrasto con feeSchedule per-market corrente.
+- Implementati journal v4, fee Gamma fail-closed, costi ingresso/uscita e
+  persistenza ledger; 44/44 unittest, compileall e diff check superati.
+- Verdetto: GO al paper solo dopo deploy del fix e nuovo run pulito.

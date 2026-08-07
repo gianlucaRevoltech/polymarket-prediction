@@ -14,7 +14,7 @@ import json as _json
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set
 from config import POLYMARKET_API, STRATEGY
-from categories import categorize_market
+from categories import categorize_market, normalize_fee_schedule
 from time_utils import utc_iso, utc_now_iso
 
 
@@ -384,6 +384,24 @@ class PolymarketPositionFetcher:
         tags = (events[0].get("tags") or []) if events else []
         tags = tags or m.get("tags") or []
         title = m.get("question") or m.get("title", "")
+        raw_fees_enabled = m.get("feesEnabled", m.get("fees_enabled"))
+        if isinstance(raw_fees_enabled, str):
+            fees_enabled = raw_fees_enabled.strip().lower() in {
+                "1", "true", "yes", "on"
+            }
+        elif raw_fees_enabled is None:
+            fees_enabled = None
+        else:
+            fees_enabled = bool(raw_fees_enabled)
+        fee_schedule = normalize_fee_schedule(
+            m.get("feeSchedule", m.get("fee_schedule"))
+        )
+        if fees_enabled is None and fee_schedule is not None:
+            fees_enabled = float(fee_schedule.get("rate", 0.0)) > 0
+        fee_metadata_known = (
+            fees_enabled is False
+            or (fees_enabled is True and fee_schedule is not None)
+        )
         return {
             "condition_id": m.get("conditionId", ""),
             "question": title,
@@ -397,6 +415,9 @@ class PolymarketPositionFetcher:
             "tokens": tokens,             # [asset_yes, asset_no]
             "end_date": m.get("endDate", ""),
             "fee_type": m.get("feeType", ""),
+            "fees_enabled": fees_enabled,
+            "fee_schedule": fee_schedule,
+            "fee_metadata_known": fee_metadata_known,
             "volume": float(m.get("volumeNum", 0) or 0),
             "closed": bool(m.get("closed", False)),
             "category": categorize_market(question=title, event_ticker=event_ticker,

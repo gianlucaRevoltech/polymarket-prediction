@@ -6,11 +6,15 @@ Ogni candidato viene comunque valutato con book eseguibile, spread, profondità,
 scadenza, drift e fee. `eligible` significa soltanto che i controlli pre-trade
 sono stati superati; non è un trade e non implica profitto.
 
-Dal journal v3 un candidato COPY è valutabile solo se `/activity` conferma un
+Dal journal v4 un candidato COPY è valutabile solo se `/activity` conferma un
 BUY sorgente con `transactionHash`, prezzo valido e timestamp non più vecchio di
 60 secondi. Il drift usa quel prezzo, non il prezzo medio storico del wallet.
 Ask, bid, profondità e VWAP sono derivati dallo stesso snapshot CLOB e il journal
-salva i livelli consumati, la scadenza e lo stato del lookup sorgente.
+salva i livelli consumati, la scadenza e lo stato del lookup sorgente. I costi
+usano inoltre `feesEnabled` e `feeSchedule` Gamma del singolo mercato; metadati
+fee mancanti o invalidi rendono il candidato non eleggibile, senza fallback a
+costo zero. Il ledger conserva rate/exponent per applicare la stessa curva fee
+anche all'uscita.
 
 Gli errori `/positions` non vengono interpretati come wallet vuoti: baseline e
 posizioni restano invariate. Solo uno snapshot riuscito che dimostra l'assenza
@@ -60,7 +64,7 @@ unset POLYMARKET_EXECUTION_MODE LATENCY_ARB_ENABLED
 ./start_all.sh status
 ```
 
-Il nuovo OBSERVE deve girare almeno 48 ore senza traceback, false riaperture o
+Il nuovo OBSERVE deve girare almeno 24 ore senza traceback, false riaperture o
 `eligible` privi di sorgente verificata. Solo dopo la revisione di quel journal
 si crea un run paper separato:
 

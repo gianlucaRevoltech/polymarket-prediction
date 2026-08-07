@@ -1,5 +1,30 @@
 # Task Plan: Polymarket Bot — FIX EMERGENZA PERFORMANCE (-5.63%, WR 24%)
 
+## Active Phase CP: audit OBSERVE abbreviato 24h (2026-08-07)
+
+- [x] CP1: verificare integrita bundle, commit, run_id e durata effettiva
+- [x] CP2: verificare process health, traceback, errori feed e freschezza stato
+- [x] CP3: profilare journal corrente per unicita, eleggibilita e motivi reali
+- [x] CP4: auditare prezzi eseguibili, latenza, profondita, eventi e wallet
+- [x] CP5: correggere fee dinamiche per-market e journal fail-closed
+- [x] CP6: testare regressioni e decidere GO/NO-GO per `paper_validation`
+
+Verdetto: GO condizionato al deploy della correzione fee. Il campione 24h passa
+il gate tecnico; il paper deve partire come nuovo run pulito e resta sottoposto
+ai criteri minimi 100 chiuse / 30 eventi / 14 giorni.
+
+Vincoli:
+- 24 ore sono un gate tecnico abbreviato, non una prova di redditivita;
+- nessuna mutazione del run o passaggio automatico al paper durante l'audit;
+- solo dati del `run_id` corrente contano nel verdetto.
+
+Errori incontrati:
+- Primo aggiornamento combinato dei planning file fallito per mismatch di encoding
+  nelle vecchie intestazioni; risolto applicando patch su ancore ASCII stabili.
+- Probe locale Gamma fallita prima per decoding Windows, poi per certificato TLS
+  locale con hostname mismatch; non verra usata come fonte operativa. Le prove
+  ufficiali sono state recuperate dalla documentazione Polymarket.
+
 ## Active Phase CO: paginazione feed e copertura source (2026-08-06)
 
 - [x] CO1: paginare `/positions` oltre 200 record fino ai limiti ufficiali

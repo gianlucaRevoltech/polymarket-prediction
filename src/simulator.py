@@ -238,7 +238,7 @@ class PaperTradingSimulator:
             if source_dt and detected_dt else None
         )
         row = {
-            "journal_version": 3,
+            "journal_version": 4,
             "run_id": self.run_id,
             "signal_id": resolved_signal_id,
             "strategy": strategy,
@@ -261,6 +261,26 @@ class PaperTradingSimulator:
                       getattr(position, "market_title", ""),
             "outcome": info.get("outcome", "") or getattr(position, "outcome", ""),
             "category": info.get("category", "") or getattr(position, "category", ""),
+            "fees_enabled": evaluation.get(
+                "fees_enabled", info.get("fees_enabled",
+                getattr(position, "fees_enabled", None))
+            ),
+            "fee_schedule": evaluation.get(
+                "fee_schedule", info.get("fee_schedule") or (
+                    {
+                        "rate": getattr(position, "fee_rate", None),
+                        "exponent": getattr(position, "fee_exponent", 1.0),
+                        "taker_only": True,
+                    }
+                    if position is not None
+                    and getattr(position, "fee_rate", None) is not None
+                    else None
+                )
+            ),
+            "fee_source": evaluation.get(
+                "fee_source", info.get("fee_source",
+                getattr(position, "fee_source", ""))
+            ),
             "source_trade_status": info.get("source_trade_status", ""),
             "source_trade_at": source_trade_at,
             "source_trade_price": info.get("source_trade_price"),
@@ -585,7 +605,18 @@ class PaperTradingSimulator:
         if reason == "resolved":
             return exit_price
         cat = (pos.category or "other")
-        fee_frac = taker_fee_fraction(cat, exit_price)
+        fee_rate = getattr(pos, "fee_rate", None)
+        fee_schedule = None
+        if fee_rate is not None:
+            fee_schedule = {
+                "rate": fee_rate,
+                "exponent": getattr(pos, "fee_exponent", 1.0),
+                "taker_only": True,
+            }
+        fee_frac = taker_fee_fraction(
+            cat, exit_price, fee_schedule=fee_schedule,
+            fees_enabled=getattr(pos, "fees_enabled", None),
+        )
         if fee_frac <= 0:
             return exit_price
         # l'uscita come taker paga il feelo OPPURE lo incassa se vende;
@@ -808,13 +839,19 @@ class PaperTradingSimulator:
         asset = str(info.get("asset", ""))
         condition_id = str(info.get("condition_id", ""))
 
-        if fetcher is not None and condition_id and not info.get("event_slug"):
+        market = None
+        if fetcher is not None and condition_id:
             market = fetcher.get_market(condition_id)
             if market:
-                info["event_id"] = market.get("event_id", "")
-                info["event_slug"] = market.get("event_slug", "")
-                info["event_title"] = market.get("event_title", "")
+                for key in ("event_id", "event_slug", "event_title"):
+                    if market.get(key):
+                        info[key] = market[key]
                 info["category"] = market.get("category") or info.get("category", "")
+                info["fees_enabled"] = market.get("fees_enabled")
+                info["fee_schedule"] = market.get("fee_schedule")
+                info["fee_metadata_known"] = bool(
+                    market.get("fee_metadata_known", False)
+                )
 
         signal_id = self._copy_signal_id(source_wallet, info)
         result = {
@@ -914,6 +951,10 @@ class PaperTradingSimulator:
             info.get("title", ""), event_slug=info.get("event_slug", "")
         )
         info["category"] = category
+        if not info.get("fee_metadata_known", False):
+            return reject("fee_schedule_unavailable")
+        fees_enabled = info.get("fees_enabled")
+        fee_schedule = info.get("fee_schedule")
         size = result["planned_size_usdc"]
         planned_shares = size / price
         ask_fill = self._book_fill(book, "BUY", planned_shares)
@@ -928,7 +969,13 @@ class PaperTradingSimulator:
         executable_ask = float(executable_ask)
         if executable_ask <= 0 or executable_ask >= 1:
             return reject("invalid_executable_ask_vwap")
-        fee_fraction = taker_fee_fraction(category, executable_ask)
+        try:
+            fee_fraction = taker_fee_fraction(
+                category, executable_ask, fee_schedule=fee_schedule,
+                fees_enabled=fees_enabled,
+            )
+        except (TypeError, ValueError):
+            return reject("fee_schedule_invalid")
         entry_price = min(0.999, executable_ask * (1 + fee_fraction))
         shares = size / entry_price
         bid_fill = self._book_fill(book, "SELL", shares)
@@ -949,9 +996,13 @@ class PaperTradingSimulator:
             "entry_price": entry_price,
             "shares": shares,
             "fee_fraction": fee_fraction,
+            "fees_enabled": fees_enabled,
+            "fee_schedule": fee_schedule,
+            "fee_source": "market_fee_schedule",
             "costs": {
                 "fee_fraction": fee_fraction,
                 "fee_price": entry_price - executable_ask,
+                "fee_usdc": shares * (entry_price - executable_ask),
                 "slippage_price": executable_ask - price,
             },
         })
@@ -1193,8 +1244,9 @@ class PaperTradingSimulator:
         eff_price = float(evaluation["executable_ask_vwap"])
         if eff_price <= 0 or eff_price >= 1:
             return reject("invalid_executable_ask_vwap")
-        fee_frac = taker_fee_fraction(category, eff_price)
-        # Prezzo effettivo pagato includendo la fee taker (sport ~ rate*min(p,1-p))
+        fee_frac = float(evaluation.get("fee_fraction", 0.0))
+        # Prezzo effettivo pagato includendo la fee taker per-market gia
+        # calcolata sul medesimo snapshot della valutazione pre-trade.
         eff_price_with_fee = min(0.999, eff_price * (1 + fee_frac))
         shares = size / eff_price_with_fee
         mark_bid = evaluation.get("executable_bid_vwap")
@@ -1221,6 +1273,12 @@ class PaperTradingSimulator:
             event_slug=info.get("event_slug", ""),
             event_title=info.get("event_title", ""),
             category=category,
+            fees_enabled=evaluation.get("fees_enabled"),
+            fee_rate=(evaluation.get("fee_schedule") or {}).get("rate"),
+            fee_exponent=float(
+                (evaluation.get("fee_schedule") or {}).get("exponent", 1.0)
+            ),
+            fee_source=evaluation.get("fee_source", "market_fee_schedule"),
             current_price=mark_bid,
         )
 
@@ -1242,6 +1300,7 @@ class PaperTradingSimulator:
             costs={
                 "fee_fraction": fee_frac,
                 "fee_price": eff_price_with_fee - eff_price,
+                "fee_usdc": shares * (eff_price_with_fee - eff_price),
                 "slippage_price": eff_price - price,
             },
             evaluation=evaluation,
@@ -1301,7 +1360,10 @@ class PaperTradingSimulator:
         self._record_close_risk(pos, pnl, reason)
         self._journal("closed", reason, strategy=pos.strategy or "copy",
                       wallet=pos.source_wallet, position=pos,
-                      costs={"exit_fee_price": exit_price - exit_eff})
+                      costs={
+                          "exit_fee_price": exit_price - exit_eff,
+                          "exit_fee_usdc": pos.shares * (exit_price - exit_eff),
+                      })
         # Phase Z: notifica wallet manager per tracking P&L per-wallet (solo copy)
         if (pos.strategy or "copy") == "copy" and self.on_copy_close and pos.source_wallet:
             try:
@@ -1709,7 +1771,10 @@ class PaperTradingSimulator:
         self._record_close_risk(pos, pnl, reason)
         self._journal("closed", reason, strategy=pos.strategy or "copy",
                       wallet=pos.source_wallet, position=pos,
-                      costs={"exit_fee_price": exit_price - exit_eff})
+                      costs={
+                          "exit_fee_price": exit_price - exit_eff,
+                          "exit_fee_usdc": pos.shares * (exit_price - exit_eff),
+                      })
         self._save_state()
         return True
 
@@ -2541,6 +2606,10 @@ class PaperTradingSimulator:
             "event_title": pos.event_title,
             "asset": pos.asset,
             "category": pos.category,
+            "fees_enabled": pos.fees_enabled,
+            "fee_rate": pos.fee_rate,
+            "fee_exponent": pos.fee_exponent,
+            "fee_source": pos.fee_source,
             "outcome": pos.outcome,
             "entry_price": pos.entry_price,
             "size_usdc": pos.size_usdc,
@@ -2575,6 +2644,10 @@ class PaperTradingSimulator:
             event_slug=data.get("event_slug", ""),
             event_title=data.get("event_title", ""),
             category=data.get("category", ""),
+            fees_enabled=data.get("fees_enabled"),
+            fee_rate=data.get("fee_rate"),
+            fee_exponent=float(data.get("fee_exponent", 1.0) or 1.0),
+            fee_source=data.get("fee_source", "legacy_category_fallback"),
             current_price=data.get("current_price", data["entry_price"]),
             exit_price=data.get("exit_price"),
             exit_time=datetime.fromisoformat(data["exit_time"]) if data.get("exit_time") else None,
