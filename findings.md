@@ -976,6 +976,25 @@ HARVEST, perché HARVEST resta disabilitata e non ha edge dimostrato.
 - La promozione può solo autorizzare un altro run paper indipendente; il campo
   `real_money_authorized` del valutatore resta sempre `False`.
 
+## Paper run 2026-08-07 - verifica prima apertura
+
+- Run `run-20260807T141814-a65fb998` correttamente in `paper_validation`.
+- Prima posizione: Rio Ferdinand wedding, ask 0.46, bid 0.45, feeSchedule
+  rate 0.05/exponent 1, entry netta 0.47242, size $5, 10.58 shares.
+- Entry fee $0.13145 corretta. Equity mostrata $299.76 include entry fee e
+  spread, ma non la fee di uscita implicita: mark liquidabile netto 0.437625
+  ed equity coerente circa $299.63.
+- Bug contabile aggiuntivo: `Portfolio.close_position` accredita
+  `pos.current_value`, mentre i call-site passano `exit_eff` soltanto a
+  `Position.close`. Il P&L chiuso usa il prezzo netto, ma il cash riceve ancora
+  il prezzo lordo memorizzato in `current_price`.
+- Fix locale: per COPY con fee metadata noto, `current_price` rappresenta ora il
+  ricavo liquidabile al bid netto della fee di uscita; `Position.close` allinea
+  il mark all'exit netto prima dell'accredito cash. Ledger portato a state v3.
+- Migrazione state v2 verificata sul caso reale: bid lordo 0.45 -> mark netto
+  0.437625 una sola volta, preservando `run_id`, posizione e cash $295.
+- Verifica completa: 45/45 unittest, `compileall` e `git diff --check` OK.
+
 ## Audit OBSERVE 24h - bundle 2026-08-07
 
 - Archivio: `logs/exports/polymarket-observe-20260807T135646Z.tar.gz`.

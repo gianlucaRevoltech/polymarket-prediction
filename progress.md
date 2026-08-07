@@ -755,3 +755,12 @@ OBSERVE di default, COPY unica candidata futura, nessun capitale reale.
 - Implementati journal v4, fee Gamma fail-closed, costi ingresso/uscita e
   persistenza ledger; 44/44 unittest, compileall e diff check superati.
 - Verdetto: GO al paper solo dopo deploy del fix e nuovo run pulito.
+
+## SESSIONE 2026-08-07 - Phase CQ mark e cash netti
+
+- La prima apertura paper ha confermato ask/fee ingresso corretti ma ha esposto
+  un mark lordo della fee di uscita e un accredito cash lordo alla chiusura.
+- Centralizzato il prezzo liquidabile: equity, drawdown e circuit breaker usano
+  bid meno fee taker; la chiusura accredita esattamente il ricavo netto.
+- Aggiunto state v3 e migrazione one-shot della posizione aperta dal ledger v2,
+  senza `new-run`; 45/45 unittest, compileall e diff check superati.

@@ -1,5 +1,19 @@
 # Task Plan: Polymarket Bot — FIX EMERGENZA PERFORMANCE (-5.63%, WR 24%)
 
+## Active Phase CQ: equity e cash netti delle fee (2026-08-07)
+
+- [x] CQ1: riprodurre la discrepanza tra mark lordo, P&L netto e cash
+- [x] CQ2: centralizzare il prezzo liquidabile netto per posizione
+- [x] CQ3: valorizzare equity/circuit breaker al bid meno fee di uscita
+- [x] CQ4: accreditare alla chiusura i proventi netti, senza doppia fee
+- [x] CQ5: migrazione della posizione paper gia aperta e test regressione
+- [ ] CQ6: commit, push e restart conservativo del run VPS
+
+Vincoli:
+- preservare `run-20260807T141814-a65fb998` e la posizione aperta;
+- sulla VPS usare solo `restart`, mai `new-run`;
+- nessun ordine reale: il run resta esclusivamente simulato.
+
 ## Active Phase CP: audit OBSERVE abbreviato 24h (2026-08-07)
 
 - [x] CP1: verificare integrita bundle, commit, run_id e durata effettiva

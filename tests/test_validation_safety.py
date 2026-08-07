@@ -292,6 +292,9 @@ class SimulatorSafetyTests(unittest.TestCase):
         pos = next(iter(sim.portfolio.positions.values()))
         # fee/share = 0.05 * 0.40 * 0.60 = 0.012
         self.assertAlmostEqual(pos.entry_price, 0.412, places=9)
+        # Mark liquidabile: bid 0.39 - fee/share 0.05*0.39*0.61.
+        self.assertAlmostEqual(pos.current_price, 0.378105, places=9)
+        self.assertTrue(pos.current_price_net_of_exit_fee)
         self.assertEqual(pos.fee_rate, 0.05)
         self.assertEqual(pos.fee_source, "market_fee_schedule")
         rows = [
@@ -308,11 +311,19 @@ class SimulatorSafetyTests(unittest.TestCase):
         self.assertTrue(restored.fees_enabled)
         self.assertEqual(restored.fee_rate, 0.05)
         self.assertEqual(restored.fee_exponent, 1.0)
+        self.assertAlmostEqual(restored.current_price, 0.378105, places=9)
+        self.assertTrue(restored.current_price_net_of_exit_fee)
 
         self.assertTrue(sim.close_by_asset("asset-1", 0.50, "exit"))
         closed = sim.portfolio.closed_positions[-1]
         # exit fee/share = 0.05 * 0.50 * 0.50 = 0.0125
         self.assertAlmostEqual(closed.exit_price, 0.4875, places=9)
+        self.assertAlmostEqual(closed.current_price, 0.4875, places=9)
+        self.assertAlmostEqual(
+            sim.portfolio.cash,
+            sim.portfolio.initial_capital + closed.pnl,
+            places=9,
+        )
         rows = [
             json.loads(line)
             for line in (self.data / "candidate_journal.jsonl").read_text().splitlines()
@@ -320,6 +331,46 @@ class SimulatorSafetyTests(unittest.TestCase):
         self.assertEqual(rows[-1]["decision"], "closed")
         self.assertEqual(rows[-1]["fee_schedule"]["rate"], 0.05)
         self.assertGreater(rows[-1]["costs"]["exit_fee_usdc"], 0)
+
+    def test_state_v2_gross_bid_is_migrated_once_without_reset(self):
+        feed = FakeFetcher()
+        feed.books["asset-1"] = book(0.45, 0.46)
+        feed.markets["cond-1"] = {
+            "category": "other",
+            "fees_enabled": True,
+            "fee_schedule": {
+                "rate": 0.05, "exponent": 1.0, "taker_only": True,
+            },
+            "fee_metadata_known": True,
+        }
+        sim = PaperTradingSimulator()
+        self.assertTrue(sim.open_position("wallet-a", candidate(), fetcher=feed))
+        run_id = sim.run_id
+        sim._save_state()
+
+        state_path = self.data / "portfolio_state.json"
+        state = json.loads(state_path.read_text())
+        state["state_version"] = 2
+        stored = next(iter(state["positions"].values()))
+        stored["current_price"] = 0.45
+        stored.pop("current_price_net_of_exit_fee", None)
+        state_path.write_text(json.dumps(state))
+
+        migrated = PaperTradingSimulator()
+        pos = next(iter(migrated.portfolio.positions.values()))
+        self.assertEqual(migrated.run_id, run_id)
+        self.assertAlmostEqual(pos.current_price, 0.437625, places=9)
+        self.assertTrue(pos.current_price_net_of_exit_fee)
+        self.assertAlmostEqual(
+            migrated.portfolio.total_value,
+            295.0 + pos.shares * 0.437625,
+            places=9,
+        )
+
+        migrated._save_state()
+        reloaded = PaperTradingSimulator()
+        pos_again = next(iter(reloaded.portfolio.positions.values()))
+        self.assertAlmostEqual(pos_again.current_price, 0.437625, places=9)
 
     def test_fee_schedule_unknown_rejects_candidate_fail_closed(self):
         EXECUTION["mode"] = "observe"

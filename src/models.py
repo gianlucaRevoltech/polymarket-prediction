@@ -111,6 +111,10 @@ class Position:
 
     # Stato
     current_price: float = 0.0
+    # True quando current_price rappresenta il ricavo vendibile al bid gia'
+    # netto della fee taker di uscita. I ledger precedenti non avevano questo
+    # campo e vengono migrati dal simulatore.
+    current_price_net_of_exit_fee: bool = False
     exit_price: Optional[float] = None
     exit_time: Optional[datetime] = None
     is_closed: bool = False
@@ -138,6 +142,10 @@ class Position:
     
     def close(self, exit_price: float, exit_time: datetime):
         """Chiudi la posizione"""
+        # exit_price e' il ricavo netto per share. Allineare anche il mark evita
+        # che Portfolio.close_position accrediti il precedente bid lordo.
+        self.current_price = exit_price
+        self.current_price_net_of_exit_fee = True
         self.exit_price = exit_price
         self.exit_time = exit_time
         self.is_closed = True

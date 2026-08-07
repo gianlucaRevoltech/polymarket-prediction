@@ -623,6 +623,11 @@ class PaperTradingSimulator:
         # model: venditore riceve price_minore_fee = price*(1-fee_frac)
         return exit_price * (1.0 - fee_frac)
 
+    def _net_liquidation_price(self, pos, best_bid: float) -> float:
+        """Ricavo per share realmente incassabile vendendo subito al best bid."""
+        best_bid = max(0.0, min(1.0, float(best_bid)))
+        return self._exit_fee_adjusted(pos, best_bid, "mark_to_bid")
+
     def _alert(self, msg: str):
         line = f"[{utc_now_iso()}] {msg}"
         print(f"[ALERT] {msg}")
@@ -1282,6 +1287,11 @@ class PaperTradingSimulator:
             current_price=mark_bid,
         )
 
+        # Equity e circuit breaker devono includere anche il costo di uscita:
+        # il mark e' il ricavo netto liquidabile, non il best bid lordo.
+        position.current_price = self._net_liquidation_price(position, mark_bid)
+        position.current_price_net_of_exit_fee = True
+
         position.strategy = "copy"
         self.portfolio.add_position(position)
         self._log_trade(source_wallet, position, num_holders)
@@ -1324,7 +1334,8 @@ class PaperTradingSimulator:
     def update_price_by_asset(self, asset: str, price: float):
         for p in self.portfolio.positions.values():
             if p.asset == asset:
-                p.current_price = price
+                p.current_price = self._net_liquidation_price(p, price)
+                p.current_price_net_of_exit_fee = True
 
     def close_by_asset(self, asset: str, exit_price: float, reason: str) -> bool:
         """Chiude la posizione associata a un asset al prezzo dato."""
@@ -1336,7 +1347,6 @@ class PaperTradingSimulator:
         # Phase CI3 (Guida 1: taker fee anche su USCITA per SL/TP/exit; no fee per resolved).
         # Il pnl mostrato è ora NETTO delle fee di ingresso + uscita.
         exit_eff = self._exit_fee_adjusted(pos, exit_price, reason)
-        pos.current_price = exit_price
         pos.close_reason = reason
         pnl = (exit_eff - pos.entry_price) * pos.shares
 
@@ -1607,7 +1617,8 @@ class PaperTradingSimulator:
                 if cur <= 0.0 or cur >= 1.0:
                     self._close_by_pid(pid, 1.0 if cur >= 0.5 else 0.0, "resolved")
                     continue
-                pos.current_price = cur
+                pos.current_price = self._net_liquidation_price(pos, cur)
+                pos.current_price_net_of_exit_fee = True
                 pnl_pct = (cur - pos.entry_price) / pos.entry_price if pos.entry_price > 0 else 0
                 # Phase CD: SL assoluto (cent) — robusto a prezzi estremi dove
                 # SL % triggera su rumore. Un near-certain market che scende 5 cent
@@ -1643,7 +1654,8 @@ class PaperTradingSimulator:
                 if cur <= 0.0 or cur >= 1.0:
                     self._close_by_pid(pid, 1.0 if cur >= 0.5 else 0.0, "resolved")
                     continue
-                pos.current_price = cur
+                pos.current_price = self._net_liquidation_price(pos, cur)
+                pos.current_price_net_of_exit_fee = True
                 pnl_pct = (cur - pos.entry_price) / pos.entry_price if pos.entry_price > 0 else 0
                 mtp = STRATEGIES.get("momentum", {}).get("take_profit_pct", 0.06)
                 msl = STRATEGIES.get("momentum", {}).get("stop_loss_pct", -0.05)
@@ -1687,7 +1699,8 @@ class PaperTradingSimulator:
                 if cur <= 0.0 or cur >= 1.0:
                     self._close_by_pid(pid, 1.0 if cur >= 0.5 else 0.0, "resolved")
                     continue
-                pos.current_price = cur
+                pos.current_price = self._net_liquidation_price(pos, cur)
+                pos.current_price_net_of_exit_fee = True
                 pnl_pct = (cur - pos.entry_price) / pos.entry_price if pos.entry_price > 0 else 0
                 wtp = STRATEGIES.get("whale", {}).get("take_profit_pct", 0.10)
                 wsl = STRATEGIES.get("whale", {}).get("stop_loss_pct", -0.06)
@@ -1715,7 +1728,8 @@ class PaperTradingSimulator:
                 if cur <= 0.0 or cur >= 1.0:
                     self._close_by_pid(pid, 1.0 if cur >= 0.5 else 0.0, "resolved")
                     continue
-                pos.current_price = cur
+                pos.current_price = self._net_liquidation_price(pos, cur)
+                pos.current_price_net_of_exit_fee = True
                 pnl_pct = (cur - pos.entry_price) / pos.entry_price if pos.entry_price > 0 else 0
                 cfg_s = STRATEGIES.get(strat, {})
                 tp = cfg_s.get("take_profit_pct", 0.08)
@@ -1755,7 +1769,6 @@ class PaperTradingSimulator:
         exit_price = max(0.0, min(1.0, exit_price))
         # Phase CI3: taker fee su USCITA per SL/TP/exit; no fee per resolved.
         exit_eff = self._exit_fee_adjusted(pos, exit_price, reason)
-        pos.current_price = exit_price
         pos.close_reason = reason
         pnl = (exit_eff - pos.entry_price) * pos.shares
         self.portfolio.close_position(pid, exit_eff, datetime.now())
@@ -2539,7 +2552,7 @@ class PaperTradingSimulator:
         try:
             saved_at = utc_now_iso()
             state = {
-                "state_version": 2,
+                "state_version": 3,
                 "run_id": self.run_id,
                 "execution_mode": self.execution_mode,
                 "initial_capital": self.portfolio.initial_capital,
@@ -2619,6 +2632,7 @@ class PaperTradingSimulator:
             "strategy": getattr(pos, "strategy", "copy"),
             "pair_id": getattr(pos, "pair_id", ""),
             "current_price": pos.current_price,
+            "current_price_net_of_exit_fee": pos.current_price_net_of_exit_fee,
             "exit_price": pos.exit_price,
             "exit_time": pos.exit_time.isoformat() if pos.exit_time else None,
             "is_closed": pos.is_closed,
@@ -2649,6 +2663,9 @@ class PaperTradingSimulator:
             fee_exponent=float(data.get("fee_exponent", 1.0) or 1.0),
             fee_source=data.get("fee_source", "legacy_category_fallback"),
             current_price=data.get("current_price", data["entry_price"]),
+            current_price_net_of_exit_fee=bool(
+                data.get("current_price_net_of_exit_fee", False)
+            ),
             exit_price=data.get("exit_price"),
             exit_time=datetime.fromisoformat(data["exit_time"]) if data.get("exit_time") else None,
             is_closed=data.get("is_closed", False),
@@ -2659,6 +2676,16 @@ class PaperTradingSimulator:
             pos.pair_id = data.get("pair_id", "")
         except Exception:
             pass
+        # State v2 salvava il best bid lordo. Se i metadati fee sono noti,
+        # convertilo una sola volta nel ricavo netto liquidabile. Questo preserva
+        # run e posizioni aperte durante il deploy della migrazione.
+        if (
+            not pos.is_closed
+            and not pos.current_price_net_of_exit_fee
+            and pos.fees_enabled is not None
+        ):
+            pos.current_price = self._net_liquidation_price(pos, pos.current_price)
+            pos.current_price_net_of_exit_fee = True
         return pos
 
     def _load_state(self):
