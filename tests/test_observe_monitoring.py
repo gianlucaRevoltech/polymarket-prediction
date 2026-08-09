@@ -43,6 +43,45 @@ def raw_position(asset):
 
 
 class ObserveMonitoringTests(unittest.TestCase):
+    def test_batch_books_use_executable_best_levels_and_chunks(self):
+        fetcher = PolymarketPositionFetcher()
+        payload = [
+            {
+                "asset_id": "asset-a",
+                "bids": [
+                    {"price": "0.40", "size": "5"},
+                    {"price": "0.45", "size": "7"},
+                ],
+                "asks": [
+                    {"price": "0.55", "size": "11"},
+                    {"price": "0.50", "size": "13"},
+                ],
+            }
+        ]
+        fetcher.session.post = mock.Mock(return_value=response(payload))
+
+        books = fetcher.get_books(["asset-a", "asset-a"])
+
+        self.assertEqual(fetcher.session.post.call_count, 1)
+        self.assertEqual(
+            fetcher.session.post.call_args.kwargs["json"],
+            [{"token_id": "asset-a"}],
+        )
+        self.assertEqual(books["asset-a"]["best_bid"], 0.45)
+        self.assertEqual(books["asset-a"]["best_ask"], 0.50)
+        self.assertEqual(books["asset-a"]["bid_levels"][0]["size"], 7.0)
+
+    def test_batch_books_fail_closed_on_partial_http_error(self):
+        fetcher = PolymarketPositionFetcher()
+        fetcher.session.post = mock.Mock(side_effect=[
+            response([]), response([], 500),
+        ])
+
+        books = fetcher.get_books([f"asset-{index}" for index in range(501)])
+
+        self.assertEqual(books, {})
+        self.assertEqual(fetcher.session.post.call_count, 2)
+
     def test_gamma_market_normalizes_authoritative_fee_schedule(self):
         market = PolymarketPositionFetcher._normalize_market({
             "conditionId": "condition-1",

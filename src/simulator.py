@@ -25,6 +25,7 @@ from config import (
     EXECUTION,
 )
 from time_utils import parse_utc, utc_iso, utc_now_iso
+from validation import evaluate_shadow_run
 
 
 class PaperTradingSimulator:
@@ -43,6 +44,8 @@ class PaperTradingSimulator:
         self.trades_log = DATA_DIR / "trades_log.json"
         self.equity_file = DATA_DIR / "equity_curve.json"
         self.candidate_journal = DATA_DIR / "candidate_journal.jsonl"
+        self.shadow_state_file = DATA_DIR / "shadow_state.json"
+        self.shadow_journal = DATA_DIR / "shadow_journal.jsonl"
 
         self.execution_mode = EXECUTION.get("mode", "observe")
         self.run_id = f"run-{datetime.now().strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:8]}"
@@ -65,6 +68,11 @@ class PaperTradingSimulator:
         self.strategy_mode: str = STRATEGY["mode"]
 
         self._load_state()
+        self.shadow_positions: Dict[str, Position] = {}
+        self.shadow_closed_positions: List[Position] = []
+        self.shadow_seen_signal_ids: Set[str] = set()
+        self.shadow_state_saved_at: Optional[str] = None
+        self._load_shadow_state()
         self.seen_candidate_signal_ids: Set[str] = set()
         self._load_seen_candidate_signals()
         self._cleanup_legacy_positions()
@@ -238,7 +246,7 @@ class PaperTradingSimulator:
             if source_dt and detected_dt else None
         )
         row = {
-            "journal_version": 4,
+            "journal_version": 5,
             "run_id": self.run_id,
             "signal_id": resolved_signal_id,
             "strategy": strategy,
@@ -305,6 +313,8 @@ class PaperTradingSimulator:
             "planned_size_usdc": evaluation.get("planned_size_usdc"),
             "decision": decision,
             "reason": reason,
+            "pretrade_eligible": bool(evaluation.get("eligible", False)),
+            "pretrade_reason": evaluation.get("reason", ""),
             "entry_price": (
                 getattr(position, "entry_price", None)
                 or evaluation.get("entry_price")
@@ -343,6 +353,290 @@ class PaperTradingSimulator:
                         self.seen_candidate_signal_ids.add(signal_id)
         except Exception as exc:
             print(f"[WARNING] candidate journal non leggibile: {exc}")
+
+    # ------------------------------------------------------------------
+    # Phase CS: cohort shadow indipendente dal portfolio paper
+    # ------------------------------------------------------------------
+    def _shadow_enabled(self) -> bool:
+        return bool(EXECUTION.get("shadow_validation_enabled", True))
+
+    def _save_shadow_state(self) -> None:
+        if not self._shadow_enabled():
+            return
+        saved_at = utc_now_iso()
+        try:
+            self._atomic_write_json(self.shadow_state_file, {
+                "shadow_version": 1,
+                "run_id": self.run_id,
+                "enabled": True,
+                "positions": {
+                    pid: self._serialize_position(pos)
+                    for pid, pos in self.shadow_positions.items()
+                },
+                "closed_positions": [
+                    self._serialize_position(pos)
+                    for pos in self.shadow_closed_positions
+                ],
+                "saved_at": saved_at,
+            })
+            self.shadow_state_saved_at = saved_at
+        except Exception as exc:
+            print(f"[ERRORE] Salvataggio shadow state: {exc}")
+
+    def _load_shadow_state(self) -> None:
+        if not self._shadow_enabled():
+            return
+        state = None
+        candidates = [self.shadow_state_file, str(self.shadow_state_file) + ".bak"]
+        for candidate in candidates:
+            path = str(candidate)
+            if not os.path.exists(path):
+                continue
+            try:
+                with open(path, encoding="utf-8") as fh:
+                    loaded = json.load(fh)
+                if loaded.get("run_id") != self.run_id:
+                    continue
+                state = loaded
+                break
+            except Exception:
+                continue
+        if state is not None:
+            self.shadow_state_saved_at = state.get("saved_at")
+            for pid, raw in state.get("positions", {}).items():
+                pos = self._deserialize_position(raw)
+                self.shadow_positions[pid] = pos
+                if pos.signal_id:
+                    self.shadow_seen_signal_ids.add(pos.signal_id)
+            for raw in state.get("closed_positions", []):
+                pos = self._deserialize_position(raw)
+                self.shadow_closed_positions.append(pos)
+                if pos.signal_id:
+                    self.shadow_seen_signal_ids.add(pos.signal_id)
+        if self.shadow_journal.exists():
+            try:
+                with open(self.shadow_journal, encoding="utf-8") as fh:
+                    for line in fh:
+                        try:
+                            row = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        if row.get("run_id") != self.run_id:
+                            continue
+                        signal_id = str(row.get("signal_id", ""))
+                        if signal_id:
+                            self.shadow_seen_signal_ids.add(signal_id)
+            except OSError:
+                pass
+
+    def _shadow_log(self, action: str, pos: Position, *, raw_price=None,
+                    reason: str = "", costs: Optional[Dict] = None) -> None:
+        row = {
+            "shadow_version": 1,
+            "run_id": self.run_id,
+            "timestamp": utc_now_iso(),
+            "action": action,
+            "signal_id": pos.signal_id,
+            "position_id": pos.position_id,
+            "wallet": pos.source_wallet,
+            "asset": pos.asset,
+            "condition_id": pos.condition_id,
+            "event_slug": pos.event_slug,
+            "event_title": pos.event_title,
+            "market": pos.market_title,
+            "outcome": pos.outcome,
+            "category": pos.category,
+            "source_trade_price": pos.source_trade_price,
+            "source_trade_size": pos.source_trade_size,
+            "entry_best_bid": pos.entry_best_bid,
+            "entry_best_ask": pos.entry_best_ask,
+            "entry_price": pos.entry_price,
+            "raw_price": raw_price,
+            "net_price": pos.exit_price if action == "closed" else pos.current_price,
+            "size_usdc": pos.size_usdc,
+            "shares": pos.shares,
+            "pnl": pos.pnl,
+            "reason": reason,
+            "costs": costs or {},
+        }
+        try:
+            DATA_DIR.mkdir(parents=True, exist_ok=True)
+            with open(self.shadow_journal, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+        except Exception as exc:
+            print(f"[ERRORE] shadow journal: {exc}")
+
+    def _open_shadow_candidate(self, source_wallet: str, info: Dict,
+                               evaluation: Dict) -> bool:
+        if not self._shadow_enabled() or not evaluation.get("eligible"):
+            return False
+        signal_id = str(evaluation.get("signal_id", ""))
+        if not signal_id or signal_id in self.shadow_seen_signal_ids:
+            return False
+        entry_price = float(evaluation["entry_price"])
+        shares = float(evaluation["shares"])
+        raw_bid = float(evaluation["executable_bid_vwap"])
+        raw_ask = float(evaluation["executable_ask_vwap"])
+        position = Position(
+            position_id=f"shadow-{signal_id}",
+            market_title=info.get("title", ""),
+            market_slug=info.get("slug", ""),
+            condition_id=info.get("condition_id", ""),
+            outcome=info.get("outcome", ""),
+            entry_price=entry_price,
+            size_usdc=float(evaluation.get("planned_size_usdc", 5.0)),
+            shares=shares,
+            entry_time=datetime.now(),
+            source_wallet=source_wallet,
+            asset=info.get("asset", ""),
+            run_id=self.run_id,
+            signal_id=signal_id,
+            event_id=info.get("event_id", ""),
+            event_slug=info.get("event_slug", ""),
+            event_title=info.get("event_title", ""),
+            category=info.get("category", ""),
+            fees_enabled=evaluation.get("fees_enabled"),
+            fee_rate=(evaluation.get("fee_schedule") or {}).get("rate"),
+            fee_exponent=float(
+                (evaluation.get("fee_schedule") or {}).get("exponent", 1.0)
+            ),
+            fee_source=evaluation.get("fee_source", "market_fee_schedule"),
+            entry_best_bid=raw_bid,
+            entry_best_ask=raw_ask,
+            source_trade_price=info.get("source_trade_price"),
+            source_trade_size=info.get("source_trade_size"),
+            last_mark_at=datetime.now(),
+        )
+        position.strategy = "copy"
+        position.current_price = self._net_liquidation_price(position, raw_bid)
+        position.current_price_net_of_exit_fee = True
+        self.shadow_positions[position.position_id] = position
+        self.shadow_seen_signal_ids.add(signal_id)
+        self._shadow_log(
+            "opened", position, raw_price=raw_ask,
+            reason="passed_pretrade_checks", costs=evaluation.get("costs"),
+        )
+        self._save_shadow_state()
+        # Anche una chiamata diretta in OBSERVE deve rendere persistente il
+        # run_id prima di un restart; il ciclo normale salva comunque il ledger.
+        if not self.state_file.exists():
+            self._save_state()
+        return True
+
+    @staticmethod
+    def _shadow_resolution_price(pos: Position, market: Optional[Dict]) -> Optional[float]:
+        if not market or not market.get("closed"):
+            return None
+        tokens = list(market.get("tokens") or [])
+        prices = list(market.get("outcome_prices") or [])
+        if pos.asset in tokens and len(tokens) == len(prices):
+            try:
+                value = float(prices[tokens.index(pos.asset)])
+            except (TypeError, ValueError):
+                return None
+            if value >= 0.95:
+                return 1.0
+            if value <= 0.05:
+                return 0.0
+        return None
+
+    def _close_shadow(self, pid: str, raw_exit_price: float, reason: str) -> bool:
+        pos = self.shadow_positions.get(pid)
+        if pos is None:
+            return False
+        raw_exit = max(0.0, min(1.0, float(raw_exit_price)))
+        exit_eff = self._exit_fee_adjusted(pos, raw_exit, reason)
+        pos.close_reason = reason
+        pos.close(exit_eff, datetime.now())
+        pos.last_mark_at = datetime.now()
+        self.shadow_closed_positions.append(pos)
+        del self.shadow_positions[pid]
+        self._shadow_log(
+            "closed", pos, raw_price=raw_exit, reason=reason,
+            costs={
+                "exit_fee_price": raw_exit - exit_eff,
+                "exit_fee_usdc": pos.shares * (raw_exit - exit_eff),
+            },
+        )
+        return True
+
+    def _manage_shadow_positions(self, aggregate: Dict[str, Dict], fetcher,
+                                 monitored_wallets: Optional[set],
+                                 failed_wallets: Optional[set]) -> None:
+        if not self._shadow_enabled() or not self.shadow_positions:
+            return
+        changed = False
+        # La risoluzione gia confermata dal feed posizioni non dipende dal CLOB:
+        # processarla prima permette di chiudere anche durante un outage /books.
+        for pid, pos in list(self.shadow_positions.items()):
+            entry = aggregate.get(pos.asset)
+            info = (entry or {}).get("info", {})
+            if info.get("redeemable", False):
+                resolution_hint = info.get("cur_price")
+                self._close_shadow(
+                    pid, 1.0 if float(resolution_hint or 0.0) >= 0.5 else 0.0,
+                    "resolved",
+                )
+                changed = True
+        if changed:
+            self._save_shadow_state()
+        if not self.shadow_positions:
+            return
+        assets = sorted({pos.asset for pos in self.shadow_positions.values() if pos.asset})
+        if hasattr(fetcher, "get_books"):
+            books = fetcher.get_books(assets)
+            # A failed batch is an unavailable market-data snapshot. Preserve
+            # marks and retry next cycle instead of fanning out once per asset.
+            if assets and not books:
+                return
+        else:
+            books = {asset: fetcher.get_book(asset) for asset in assets}
+        monitored = {str(wallet).lower() for wallet in (monitored_wallets or set())}
+        failed = {str(wallet).lower() for wallet in (failed_wallets or set())}
+        stop_loss = BUDGET.get("stop_loss_pct", -0.08)
+        take_profit = BUDGET.get("take_profit_pct", 0.20)
+
+        for pid, pos in list(self.shadow_positions.items()):
+            entry = aggregate.get(pos.asset)
+            info = (entry or {}).get("info", {})
+            book = books.get(pos.asset)
+            fill = self._book_fill(book, "SELL", pos.shares)
+            raw_bid = fill.get("vwap")
+            if raw_bid is None:
+                market = fetcher.get_market(pos.condition_id) if pos.condition_id else None
+                resolved = self._shadow_resolution_price(pos, market)
+                if resolved is not None:
+                    self._close_shadow(pid, resolved, "resolved")
+                    changed = True
+                continue
+
+            raw_bid = float(raw_bid)
+            pos.current_price = self._net_liquidation_price(pos, raw_bid)
+            pos.current_price_net_of_exit_fee = True
+            pos.last_mark_at = datetime.now()
+            changed = True
+
+            source = (pos.source_wallet or "").lower()
+            source_holds = bool(
+                entry and source and any(
+                    str(holder).lower() == source
+                    for holder in entry.get("holders", set())
+                )
+            )
+            if source and source in monitored and source not in failed and not source_holds:
+                self._close_shadow(pid, raw_bid, "exit")
+                continue
+
+            decision = self._copy_sl_tp_decision(
+                pos, raw_bid, stop_loss, take_profit
+            )
+            if decision in {"hard_sl", "stop_loss"}:
+                self._close_shadow(pid, raw_bid, "stop_loss")
+            elif decision == "take_profit":
+                self._close_shadow(pid, raw_bid, "take_profit")
+
+        if changed:
+            self._save_shadow_state()
 
     @staticmethod
     def _copy_signal_id(source_wallet: str, info: Dict) -> str:
@@ -1051,6 +1345,7 @@ class PaperTradingSimulator:
                 evaluation=evaluation,
             )
             return False
+        self._open_shadow_candidate(source_wallet, info, evaluation)
         if self.execution_mode == "observe":
             self._journal(
                 "eligible", "passed_pretrade_checks", strategy="copy",
@@ -1062,36 +1357,26 @@ class PaperTradingSimulator:
         def reject(reason: str) -> bool:
             self._journal("rejected", reason, strategy="copy",
                           signal_id=signal_id, wallet=source_wallet,
-                          info=info, book=book, evaluation=evaluation)
+                          info=info, book=book, evaluation=evaluation,
+                          costs=evaluation.get("costs"))
             return False
 
         halt = self._opening_halt_reason("copy")
         if halt:
-            self._journal("rejected", halt, strategy="copy", signal_id=signal_id,
-                          wallet=source_wallet, info=info, book=book)
-            return False
+            return reject(halt)
         if self.portfolio.open_positions_count >= int(
             EXECUTION.get("max_open_positions", BUDGET["max_open_positions"])
         ):
-            self._journal("rejected", "max_open_positions", strategy="copy",
-                          signal_id=signal_id, wallet=source_wallet,
-                          info=info, book=book)
-            return False
+            return reject("max_open_positions")
         if not book or book.get("best_ask") is None or book.get("best_bid") is None:
-            self._journal("rejected", "no_executable_two_sided_book", strategy="copy",
-                          signal_id=signal_id, wallet=source_wallet, info=info, book=book)
-            return False
+            return reject("no_executable_two_sided_book")
         price = float(book["best_ask"])
         mark_bid = float(book["best_bid"])
 
         if not asset or self.has_asset(asset):
-            self._journal("rejected", "duplicate_open_asset", strategy="copy",
-                          signal_id=signal_id, wallet=source_wallet, info=info, book=book)
-            return False
+            return reject("duplicate_open_asset")
         if condition_id and self._condition_is_open(condition_id):
-            self._journal("rejected", "duplicate_open_condition", strategy="copy",
-                          signal_id=signal_id, wallet=source_wallet, info=info, book=book)
-            return False
+            return reject("duplicate_open_condition")
         if condition_id in self.blocked_conditions:
             market = fetcher.get_market(condition_id) if fetcher is not None else None
             if market and market.get("closed"):
@@ -1100,21 +1385,15 @@ class PaperTradingSimulator:
                 reason = "condition_resolved"
             else:
                 reason = "condition_blocked_after_stop_loss"
-            self._journal("rejected", reason, strategy="copy", signal_id=signal_id,
-                          wallet=source_wallet, info=info, book=book)
-            return False
+            return reject(reason)
         if not self._cluster_check(
             "copy", condition_id, info.get("event_slug", ""),
             float(EXECUTION.get("paper_size_usdc", 5.0)),
         ):
-            self._journal("rejected", "event_exposure_limit", strategy="copy",
-                          signal_id=signal_id, wallet=source_wallet, info=info, book=book)
-            return False
+            return reject("event_exposure_limit")
 
         if price <= 0 or price >= 1:
-            self._journal("rejected", "invalid_best_ask", strategy="copy",
-                          signal_id=signal_id, wallet=source_wallet, info=info, book=book)
-            return False
+            return reject("invalid_best_ask")
 
         # Phase I: dedup anti-reopen stesso asset entro dedup_window
         now = datetime.now()
@@ -1128,9 +1407,7 @@ class PaperTradingSimulator:
 
         # Equity floor legacy resta un'ulteriore cintura di sicurezza.
         if self._risk_factor() <= 0.0:
-            self._journal("rejected", "legacy_equity_floor", strategy="copy",
-                          signal_id=signal_id, wallet=source_wallet, info=info, book=book)
-            return False
+            return reject("legacy_equity_floor")
 
         # Guardrail 1 - banda di prezzo (Phase D + J soft):
         price_min = STRATEGY.get("entry_price_min", 0.0)
@@ -1182,9 +1459,7 @@ class PaperTradingSimulator:
                 max_spread_ticks=STRATEGY.get("max_spread_ticks", 3))
             if not ok:
                 print(f"[SKIP] Liquidita insufficiente: {info['title'][:40]}")
-                self._journal("rejected", "insufficient_liquidity", strategy="copy",
-                              signal_id=signal_id, wallet=source_wallet, info=info, book=book)
-                return False
+                return reject("insufficient_liquidity")
 
         if self.portfolio.open_positions_count >= BUDGET["max_open_positions"]:
             return reject("max_open_positions")
@@ -1284,6 +1559,11 @@ class PaperTradingSimulator:
                 (evaluation.get("fee_schedule") or {}).get("exponent", 1.0)
             ),
             fee_source=evaluation.get("fee_source", "market_fee_schedule"),
+            entry_best_bid=mark_bid,
+            entry_best_ask=eff_price,
+            source_trade_price=info.get("source_trade_price"),
+            source_trade_size=info.get("source_trade_size"),
+            last_mark_at=datetime.now(),
             current_price=mark_bid,
         )
 
@@ -1336,6 +1616,7 @@ class PaperTradingSimulator:
             if p.asset == asset:
                 p.current_price = self._net_liquidation_price(p, price)
                 p.current_price_net_of_exit_fee = True
+                p.last_mark_at = datetime.now()
 
     def close_by_asset(self, asset: str, exit_price: float, reason: str) -> bool:
         """Chiude la posizione associata a un asset al prezzo dato."""
@@ -1423,6 +1704,12 @@ class PaperTradingSimulator:
 
         stop_loss = BUDGET.get("stop_loss_pct", -0.30)
         take_profit = BUDGET.get("take_profit_pct", 0.50)
+
+        # Cohort osservazionale completo: viene aggiornato prima delle posizioni
+        # paper e non modifica cash, cooldown, halt o quarantene.
+        self._manage_shadow_positions(
+            aggregate, fetcher, monitored_wallets, failed_wallets
+        )
 
         # 1) Gestisci posizioni COPY aperte (SL/TP/exit/resolved)
         for asset, pos in list(self.get_open_assets().items()):
@@ -2333,6 +2620,52 @@ class PaperTradingSimulator:
             clusters[key] = clusters.get(key, 0) + p.size_usdc
         return dict(sorted(clusters.items(), key=lambda kv: kv[1], reverse=True)[:10])
 
+    def get_shadow_summary(self) -> Dict:
+        open_positions = list(self.shadow_positions.values())
+        closed_positions = list(self.shadow_closed_positions)
+        realized = sum(pos.pnl for pos in closed_positions)
+        unrealized = sum(pos.pnl for pos in open_positions)
+        wins = sum(1 for pos in closed_positions if pos.pnl > 0)
+        domains = sorted({
+            (pos.category or "other") for pos in closed_positions
+        })
+        evaluation = evaluate_shadow_run(
+            closed_positions,
+            self.run_id,
+            intended_domains=domains,
+            bootstrap_iterations=2000,
+        )
+        metrics = evaluation.get("metrics", {})
+        ci_lower = metrics.get("bootstrap_ci95_lower_ev")
+        if ci_lower in (float("inf"), float("-inf")):
+            ci_lower = None
+        return {
+            "enabled": self._shadow_enabled(),
+            "run_id": self.run_id,
+            "state_saved_at": self.shadow_state_saved_at,
+            "open_positions": len(open_positions),
+            "closed_positions": len(closed_positions),
+            "winning_trades": wins,
+            "losing_trades": len(closed_positions) - wins,
+            "win_rate": (
+                wins / len(closed_positions) * 100 if closed_positions else 0.0
+            ),
+            "realized_pnl": realized,
+            "unrealized_pnl": unrealized,
+            "total_pnl": realized + unrealized,
+            "distinct_events": metrics.get("distinct_events", 0),
+            "elapsed_days": metrics.get("elapsed_days", 0.0),
+            "ev_per_trade": metrics.get("ev_per_trade", 0.0),
+            "bootstrap_ci95_lower_ev": ci_lower,
+            "intended_domains": domains,
+            "checks": evaluation.get("checks", {}),
+            "eligible_for_independent_paper": evaluation.get(
+                "eligible_for_independent_paper", False
+            ),
+            "real_money_authorized": False,
+            "validation_stage": "shadow",
+        }
+
     def get_portfolio_summary(self) -> Dict:
         unrealized_pnl = sum(pos.pnl for pos in self.portfolio.positions.values())
         realized_pnl = sum(pos.pnl for pos in self.portfolio.closed_positions)
@@ -2419,6 +2752,7 @@ class PaperTradingSimulator:
                     (p.event_title or p.event_slug or p.market_title)
                 for p in self.portfolio.positions.values()
             },
+            "shadow_validation": self.get_shadow_summary(),
         }
 
     def _get_best_trade(self) -> Optional[Dict]:
@@ -2623,6 +2957,13 @@ class PaperTradingSimulator:
             "fee_rate": pos.fee_rate,
             "fee_exponent": pos.fee_exponent,
             "fee_source": pos.fee_source,
+            "entry_best_bid": pos.entry_best_bid,
+            "entry_best_ask": pos.entry_best_ask,
+            "source_trade_price": pos.source_trade_price,
+            "source_trade_size": pos.source_trade_size,
+            "last_mark_at": (
+                pos.last_mark_at.isoformat() if pos.last_mark_at else None
+            ),
             "outcome": pos.outcome,
             "entry_price": pos.entry_price,
             "size_usdc": pos.size_usdc,
@@ -2662,6 +3003,14 @@ class PaperTradingSimulator:
             fee_rate=data.get("fee_rate"),
             fee_exponent=float(data.get("fee_exponent", 1.0) or 1.0),
             fee_source=data.get("fee_source", "legacy_category_fallback"),
+            entry_best_bid=data.get("entry_best_bid"),
+            entry_best_ask=data.get("entry_best_ask"),
+            source_trade_price=data.get("source_trade_price"),
+            source_trade_size=data.get("source_trade_size"),
+            last_mark_at=(
+                datetime.fromisoformat(data["last_mark_at"])
+                if data.get("last_mark_at") else None
+            ),
             current_price=data.get("current_price", data["entry_price"]),
             current_price_net_of_exit_fee=bool(
                 data.get("current_price_net_of_exit_fee", False)

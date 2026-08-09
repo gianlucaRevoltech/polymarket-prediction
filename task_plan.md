@@ -1,5 +1,79 @@
 # Task Plan: Polymarket Bot — FIX EMERGENZA PERFORMANCE (-5.63%, WR 24%)
 
+## Active Phase CS: validazione shadow e blocco real-money (2026-08-09)
+
+- [x] CS1: ripristinare contesto, inventario worktree e contratti esistenti
+- [x] CS2: progettare/persistire shadow ledger append-only per COPY eligible
+- [x] CS3: seguire mark e chiusure shadow con bid, fee e regole paper identiche
+- [x] CS4: completare journal portfolio-gated e metrica `passed_pretrade`
+- [x] CS5: rendere impossibile qualunque autorizzazione real-money automatica
+- [x] CS6: API/dashboard shadow, statistiche robuste e gate di promozione
+- [x] CS7: unittest, migrazioni, smoke test, audit diff e documentazione
+- [ ] CS8: commit/push e istruzioni rollout OBSERVE dopo verifica completa
+
+Vincoli:
+- nessuna promessa di profitto o crescita giornaliera: il criterio verificabile
+  e un EV netto positivo con intervallo di confidenza su campione indipendente;
+- nessun capitale reale in questa fase e nessuna riattivazione del run fallito;
+- non scegliere soglie retroattive sui soli quattro trade del run CR;
+- preservare file e modifiche utente non correlate presenti nel worktree.
+
+Errori incontrati:
+- primo aggiornamento di `VALIDATION_PROTOCOL.md` usava il rendering mojibake
+  mostrato dal terminale invece dei veri caratteri UTF-8; nessuna patch parziale,
+  ripetuto con Unicode corretto e applicato.
+- lo smoke combinato ha validato la sintassi JavaScript, poi `bash -n` ha fallito
+  perche il comando `bash` risolve al wrapper WSL senza `/bin/bash`; ripetere con
+  Git Bash esplicito e poi eseguire separatamente `git diff --check`.
+- `rg` con glob Unix (`README*`, `*.md`) su PowerShell ha prodotto errore 123;
+  i match nei percorsi espliciti erano validi; retry previsto con `rg --glob`.
+- tre patch su `progress.md`/template hanno incontrato ancore non identiche per
+  encoding legacy; nessuna modifica parziale ai file coinvolti, retry con ancore
+  ASCII o codepoint esatti e applicazione completata.
+- due tentativi di aggiornare `progress.md` con un'intestazione non identica
+  (anche per encoding legacy) non sono stati applicati; retry su ancora ASCII.
+- una patch multi-file per integrare i file shadow in run-state/start script
+  aveva un hunk non applicabile; ripetuta con patch separate con esito positivo.
+- primo inserimento CS fallito per mismatch dell'encoding nell'intestazione;
+  retry con ancora ASCII stabile, senza toccare il contenuto storico.
+- primo inserimento findings CS ha incontrato lo stesso mismatch; risolto con
+  ancora ASCII sulla sezione audit.
+- inventario run-state ha incluso per errore `start_all.ps1` inesistente;
+  nessun effetto sui file, proseguire con `start_all.sh` e `tools/run_state.py`.
+- prima suite CS: 49/51 pass; due failure deterministiche. Un'asserzione attendeva
+  journal v4 invece di v5; il test direct-call OBSERVE non aveva ancora un ledger
+  da cui recuperare il run_id shadow al restart. Aggiornati contratto e save run.
+- seconda suite CS: 51/51 test superati.
+
+## Active Phase CR: audit paper_validation 48h (2026-08-09)
+
+- [x] CR1: verificare integrita export, commit, run_id e stato HALTED
+- [x] CR2: riconciliare ledger, journal, trade log, equity e safety state
+- [x] CR3: ricostruire i quattro trade con wallet, latenza, book, fee e uscite
+- [x] CR4: distinguere segnale, execution cost, stop policy e anomalie feed
+- [x] CR5: valutare candidati bloccati, concentrazione e qualita wallet
+- [x] CR6: formulare verdetto e prossimo intervento senza riattivare il run
+
+Verdetto: NO-GO alla riattivazione del run e al denaro reale. Il run e sano ma
+fallisce 8/9 criteri di promozione. Prima del prossimo campione servono journal
+completo sui portfolio gate, metrica dashboard `passed_pretrade` e tracking
+shadow di tutti i candidati validi per misurare EV netto senza il bias del cap 2.
+
+Vincoli:
+- analisi read-only dell'export `polymarket-paper-20260809T142445Z.tar.gz`;
+- nessuna riattivazione manuale della quarantena e nessun capitale reale;
+- quattro trade non bastano per provare edge, ma il guardrail 3-loss termina il run.
+
+Errori incontrati:
+- Primo parser journal ha usato il default Windows cp1252 ed e fallito su UTF-8;
+  retry previsto con `encoding="utf-8"`, senza modificare i dati sorgente.
+- Primo calcolo hurdle sui candidati portfolio-gated assumeva `entry_price`
+  sempre valorizzato; alcune righe rejected lo lasciano null. Retry usando
+  `costs.entry_price`/ask+fee derivata e scarto esplicito dei record incompleti.
+- La lacuna non e recuperabile retroattivamente: i record bloccati hanno perso
+  evaluation/costi al momento della scrittura. Le conclusioni quantitative sui
+  costi si limitano quindi ai quattro trade effettivamente aperti.
+
 ## Active Phase CQ: equity e cash netti delle fee (2026-08-07)
 
 - [x] CQ1: riprodurre la discrepanza tra mark lordo, P&L netto e cash

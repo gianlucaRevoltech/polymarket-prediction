@@ -55,6 +55,11 @@ def get_candidate_summary(run_id: str):
         row.get("signal_id") for row in candidate_rows if row.get("signal_id")
     }
     decisions = Counter(row.get("decision") for row in candidate_rows)
+    passed_pretrade = sum(
+        1 for row in candidate_rows
+        if row.get("pretrade_eligible") is True
+        or row.get("decision") in {"eligible", "opened"}
+    )
     reasons = Counter(
         row.get("reason") for row in candidate_rows if row.get("reason")
     )
@@ -64,8 +69,9 @@ def get_candidate_summary(run_id: str):
         "eligible": decisions.get("eligible", 0),
         "rejected": decisions.get("rejected", 0),
         "opened": decisions.get("opened", 0),
+        "passed_pretrade": passed_pretrade,
         "eligibility_rate": (
-            decisions.get("eligible", 0) / len(candidate_rows)
+            passed_pretrade / len(candidate_rows)
             if candidate_rows else 0.0
         ),
         "top_reasons": dict(reasons.most_common(8)),
@@ -74,6 +80,25 @@ def get_candidate_summary(run_id: str):
         ),
         "last_candidate": candidate_rows[-1] if candidate_rows else None,
     }
+
+
+def _shadow_rows(run_id: str):
+    path = DATA_DIR / "shadow_journal.jsonl"
+    if not path.exists():
+        return []
+    rows = []
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if row.get("run_id") == run_id:
+                    rows.append(row)
+    except OSError:
+        return []
+    return rows
 
 
 def get_runtime_status():
@@ -204,6 +229,7 @@ def get_portfolio_data():
             "state_age_seconds": age_seconds(summary.get("state_saved_at")),
             "bot_health": get_bot_health(summary.get("state_saved_at")),
             "candidate_summary": get_candidate_summary(summary.get("run_id", "")),
+            "shadow_validation": summary.get("shadow_validation", {}),
         }
     except Exception as e:
         return {
@@ -341,6 +367,17 @@ def api_candidates():
         if row.get("decision") in {"eligible", "rejected", "opened"}
     ]
     return jsonify(list(reversed(candidates[-limit:])))
+
+
+@app.route("/api/shadow")
+def api_shadow():
+    try:
+        requested = int(request.args.get("limit", 50))
+    except (TypeError, ValueError):
+        requested = 50
+    limit = min(max(requested, 1), 200)
+    sim = PaperTradingSimulator(BUDGET["initial_capital"])
+    return jsonify(list(reversed(_shadow_rows(sim.run_id)[-limit:])))
 
 
 @app.route("/api/portfolio")

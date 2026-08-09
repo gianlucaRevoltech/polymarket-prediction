@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from models import Position
-from validation import evaluate_copy_run
+from validation import evaluate_copy_run, evaluate_shadow_run
 
 
 class PromotionCriteriaTests(unittest.TestCase):
@@ -51,6 +51,45 @@ class PromotionCriteriaTests(unittest.TestCase):
         result = evaluate_copy_run([], "empty", bootstrap_iterations=100)
         self.assertFalse(result["eligible_for_paper_promotion"])
         self.assertFalse(result["checks"]["closed_trades_at_least_100"])
+
+    def test_bootstrap_respects_event_correlation(self):
+        run_id = "clustered-run"
+        now = datetime.now()
+        trades = []
+        index = 0
+        # Il mean per trade e' positivo, ma dipende da soli 40 eventi con esiti
+        # fortemente correlati al loro interno: il CI cluster deve includere zero.
+        for event in range(40):
+            count = 3 if event < 20 else 2
+            exit_price = 0.51 if event < 20 else 0.49
+            for _ in range(count):
+                trades.append(Position(
+                    position_id=str(index), market_title="Clustered",
+                    market_slug=f"market-{index}", condition_id=f"cond-{event}",
+                    outcome="Yes", entry_price=0.50, size_usdc=5.0,
+                    shares=10.0, entry_time=now - timedelta(days=15),
+                    source_wallet=f"wallet-{index}", asset=f"asset-{index}",
+                    run_id=run_id, signal_id=f"signal-{index}",
+                    event_slug=f"event-{event}", category="macro",
+                    strategy="copy", current_price=exit_price,
+                    exit_price=exit_price, exit_time=now - timedelta(days=1),
+                    is_closed=True,
+                ))
+                index += 1
+        result = evaluate_copy_run(
+            trades, run_id, intended_domains=["macro"], now=now,
+            bootstrap_iterations=3000,
+        )
+        self.assertGreater(result["metrics"]["ev_per_trade"], 0)
+        self.assertLessEqual(result["metrics"]["bootstrap_ci95_lower_ev"], 0)
+        self.assertEqual(result["metrics"]["bootstrap_unit"], "event_cluster")
+
+    def test_shadow_can_only_promote_to_independent_paper(self):
+        result = evaluate_shadow_run([], "shadow-run", bootstrap_iterations=100)
+        self.assertFalse(result["eligible_for_independent_paper"])
+        self.assertFalse(result["real_money_authorized"])
+        self.assertEqual(result["validation_stage"], "shadow")
+        self.assertNotIn("eligible_for_paper_promotion", result)
 
 
 if __name__ == "__main__":

@@ -24,6 +24,31 @@ class DashboardApiTests(unittest.TestCase):
                 sim = PaperTradingSimulator()
                 sim.portfolio.cash = 297.0869
                 sim._save_state()
+                (data / "candidate_journal.jsonl").write_text(
+                    json.dumps({
+                        "journal_version": 5,
+                        "run_id": sim.run_id,
+                        "signal_id": "opened-signal",
+                        "decision": "opened",
+                        "reason": "paper_validation",
+                        "pretrade_eligible": True,
+                    }) + "\n",
+                    encoding="utf-8",
+                )
+                (data / "shadow_journal.jsonl").write_text(
+                    json.dumps({
+                        "shadow_version": 1,
+                        "run_id": sim.run_id,
+                        "signal_id": "shadow-current",
+                        "action": "opened",
+                    }) + "\n" + json.dumps({
+                        "shadow_version": 1,
+                        "run_id": "other-run",
+                        "signal_id": "shadow-old",
+                        "action": "opened",
+                    }) + "\n",
+                    encoding="utf-8",
+                )
                 (data / "monitored_wallets.json").write_text(json.dumps({
                     "run_id": sim.run_id,
                     "wallets": [{
@@ -46,6 +71,15 @@ class DashboardApiTests(unittest.TestCase):
                 )
                 self.assertEqual(payload["summary"]["max_open_positions"], 2)
                 self.assertEqual(payload["summary"]["peak_equity"], 300.0)
+                self.assertEqual(payload["candidate_summary"]["passed_pretrade"], 1)
+                self.assertFalse(
+                    payload["shadow_validation"]["real_money_authorized"]
+                )
+                shadow_response = client.get("/api/shadow?limit=50")
+                self.assertIn("no-store", shadow_response.headers["Cache-Control"])
+                shadow_rows = shadow_response.get_json()
+                self.assertEqual(len(shadow_rows), 1)
+                self.assertEqual(shadow_rows[0]["signal_id"], "shadow-current")
 
 
 if __name__ == "__main__":

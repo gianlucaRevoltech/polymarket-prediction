@@ -103,6 +103,14 @@ class Position:
     fee_exponent: float = 1.0
     fee_source: str = "legacy_category_fallback"
 
+    # Quote e segnale osservati all'ingresso. Separano il movimento raw del
+    # mercato dall'entry economica comprensiva di fee.
+    entry_best_bid: Optional[float] = None
+    entry_best_ask: Optional[float] = None
+    source_trade_price: Optional[float] = None
+    source_trade_size: Optional[float] = None
+    last_mark_at: Optional[datetime] = None
+
     # Strategia di origine (Phase M multi-strategy): copy | arb_binary | harvest | arb_cross
     strategy: str = "copy"
     # Per arbitraggio binario: id del "bundle" (es. condition_id) che aggancia le

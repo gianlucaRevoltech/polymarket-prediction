@@ -6,7 +6,7 @@ Ogni candidato viene comunque valutato con book eseguibile, spread, profondità,
 scadenza, drift e fee. `eligible` significa soltanto che i controlli pre-trade
 sono stati superati; non è un trade e non implica profitto.
 
-Dal journal v4 un candidato COPY è valutabile solo se `/activity` conferma un
+Dal journal v5 un candidato COPY è valutabile solo se `/activity` conferma un
 BUY sorgente con `transactionHash`, prezzo valido e timestamp non più vecchio di
 60 secondi. Il drift usa quel prezzo, non il prezzo medio storico del wallet.
 Ask, bid, profondità e VWAP sono derivati dallo stesso snapshot CLOB e il journal
@@ -28,6 +28,24 @@ Il lookup BUY considera fino a 500 attività recenti con filtri server-side.
 I wallet sono congelati per l'intero run. Lo scan e le sostituzioni si eseguono
 solo tra run con `new-run scan`, così il campione non cambia adattivamente.
 
+## Validazione shadow
+
+In `observe`, ogni segnale che supera i controlli pre-trade apre una posizione
+nel ledger `shadow_state.json`, senza usare cash virtuale e senza modificare
+portfolio paper, cooldown, esposizione, circuit breaker o quarantene. Questo
+permette di misurare tutti i segnali validi, inclusi quelli che un portafoglio
+limitato a due slot avrebbe scartato.
+
+L'ingresso shadow usa ask VWAP e fee per-market; mark e uscita usano bid VWAP e
+fee. Le chiusure seguono vendita del wallet, stop/target o risoluzione esplicita.
+I book vengono richiesti in batch con `POST /books`; un errore conserva i mark
+precedenti e non viene interpretato come uscita o risoluzione. Il CI95 usa un
+bootstrap a cluster evento, così segnali correlati non gonfiano la confidenza.
+
+Il gate shadow può autorizzare soltanto un nuovo run `paper_validation`
+indipendente. Anche con tutti i gate verdi, `real_money_authorized` resta sempre
+`false`; il repository non contiene un percorso di invio ordini reali.
+
 La modalità `paper_validation` richiede
 `POLYMARKET_EXECUTION_MODE=paper_validation`. Usa size fissa $5, massimo due
 posizioni, una per evento, wallet congelati per il run, Kelly/compounding e
@@ -43,8 +61,9 @@ run, supera tutti i criteri:
 - nessun evento o wallet oltre il 20% del P&L positivo;
 - almeno 30 trade per ogni dominio che si intende abilitare.
 
-`src/validation.py` calcola il verdetto. Il verdetto non autorizza denaro reale:
-qualsiasi passaggio reale resta fuori scope e richiede una decisione separata.
+`src/validation.py` calcola il verdetto. Lo stesso protocollo deve essere
+superato prima dallo shadow e poi da un run paper indipendente. Nessun verdetto
+autorizza denaro reale: qualsiasi passaggio reale resta fuori scope.
 
 Operazioni VPS:
 
@@ -53,6 +72,16 @@ Operazioni VPS:
 ./start_all.sh new-run        # archivia ledger/config, poi crea un nuovo run
 ./start_all.sh new-run scan   # nuovo run + nuova selezione wallet (raccomandato)
 ./start_all.sh reset --force  # archivia prima di cancellare; non riavvia
+```
+
+Rollout della validazione shadow (crea deliberatamente un nuovo campione):
+
+```bash
+git pull --ff-only
+export POLYMARKET_EXECUTION_MODE=observe
+unset LATENCY_ARB_ENABLED
+./start_all.sh new-run scan
+./start_all.sh status
 ```
 
 Rollout del hardening pre-paper mantenendo lo stesso cohort già auditato:
@@ -78,9 +107,10 @@ unset LATENCY_ARB_ENABLED
 L'export va mantenuto nell'ambiente usato per i successivi restart del run paper;
 in sua assenza il default torna intenzionalmente a `observe`.
 
-Il dashboard espone il riepilogo candidati in `/api/status` e le righe recenti
-in `/api/candidates?limit=50`. Tutti i timestamp nuovi sono UTC con offset; lo
-stale viene calcolato sul server e scatta dopo 60 secondi senza ledger.
+Il dashboard espone il riepilogo candidati e shadow in `/api/status`, le righe
+recenti in `/api/candidates?limit=50` e il lifecycle shadow in
+`/api/shadow?limit=50`. Tutti i timestamp nuovi sono UTC con offset; lo stale
+viene calcolato sul server e scatta dopo 60 secondi senza ledger.
 
 Una quarantena per tre perdite consecutive si rimuove solo esplicitamente:
 

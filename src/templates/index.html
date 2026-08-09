@@ -595,6 +595,20 @@
             </div>
         </div>
 
+        <div class="section">
+            <div class="section-title">
+                <span>SV</span>
+                <span>Shadow Validation (nessun capitale)</span>
+                <span class="count" id="shadowCount">0 chiusi</span>
+            </div>
+            <div id="shadowSummary"></div>
+            <div id="shadowContainer">
+                <div class="empty-state">
+                    <div>Nessun lifecycle shadow nel run corrente</div>
+                </div>
+            </div>
+        </div>
+
         <!-- Wallet Monitorati -->
         <div class="section">
             <div class="section-title">
@@ -891,6 +905,10 @@
             updateRiskDashboard(summary);
             updateClusterExposure(summary);
             updateCandidateJournal(data.candidate_summary || {}, data.recent_candidates || []);
+            updateShadowValidation(
+                data.shadow_validation || summary.shadow_validation || {},
+                data.recent_shadow || []
+            );
 
             const statusEl = document.getElementById('botStatus');
             const status = data.bot_status || 'unknown';
@@ -1100,7 +1118,7 @@
 
         function updateCandidateJournal(summary, rows) {
             const total = Number(summary.total || 0);
-            const eligible = Number(summary.eligible || 0);
+            const eligible = Number(summary.passed_pretrade || 0);
             const rejected = Number(summary.rejected || 0);
             const rate = Number(summary.eligibility_rate || 0) * 100;
             document.getElementById('candidateCount').textContent = total + ' candidati';
@@ -1113,8 +1131,8 @@
                         <div class="label">Unici</div><div class="val">${Number(summary.unique || 0)}</div>
                     </div>
                     <div class="strat-card" style="border-left-color:#34d399">
-                        <div class="label">Eligible</div><div class="val">${eligible}</div>
-                        <div class="label">${rate.toFixed(1)}% dei candidati</div>
+                        <div class="label">Passed pre-trade</div><div class="val">${eligible}</div>
+                        <div class="label">${rate.toFixed(1)}% (non indica profitto)</div>
                     </div>
                     <div class="strat-card" style="border-left-color:#f87171">
                         <div class="label">Rejected</div><div class="val">${rejected}</div>
@@ -1157,6 +1175,66 @@
                     <td>${latency}</td>
                     <td class="${decisionClass}">${escapeHtml(row.decision || '')}<br>
                         <span class="label">${escapeHtml(row.reason || '')}</span></td>
+                </tr>`;
+            });
+            html += '</tbody></table></div>';
+            container.innerHTML = html;
+        }
+
+        function updateShadowValidation(summary, rows) {
+            const closed = Number(summary.closed_positions || 0);
+            const open = Number(summary.open_positions || 0);
+            const pnl = Number(summary.total_pnl || 0);
+            const ev = Number(summary.ev_per_trade || 0);
+            const ciRaw = summary.bootstrap_ci95_lower_ev;
+            const ci = ciRaw == null ? '-' : formatMoney(Number(ciRaw));
+            const checks = summary.checks || {};
+            const passed = Object.values(checks).filter(Boolean).length;
+            const totalChecks = Object.keys(checks).length;
+            const ready = Boolean(summary.eligible_for_independent_paper);
+            document.getElementById('shadowCount').textContent = closed + ' chiusi';
+            document.getElementById('shadowSummary').innerHTML =
+                `<div class="strat-summary">
+                    <div class="strat-card" style="border-left-color:#60a5fa">
+                        <div class="label">Cohort</div><div class="val">${open} ap / ${closed} cl</div>
+                        <div class="label">${Number(summary.distinct_events || 0)} eventi</div>
+                    </div>
+                    <div class="strat-card" style="border-left-color:${pnl >= 0 ? '#34d399' : '#f87171'}">
+                        <div class="label">P&L shadow netto</div><div class="val ${getColorClass(pnl)}">${formatMoney(pnl)}</div>
+                        <div class="label">EV ${formatMoney(ev)} / trade</div>
+                    </div>
+                    <div class="strat-card" style="border-left-color:#fbbf24">
+                        <div class="label">CI95 inferiore EV</div><div class="val">${ci}</div>
+                        <div class="label">Gate ${passed}/${totalChecks}</div>
+                    </div>
+                    <div class="strat-card" style="border-left-color:${ready ? '#34d399' : '#ef4444'}">
+                        <div class="label">Prossimo stadio</div><div class="val">${ready ? 'PAPER INDIPENDENTE' : 'NON PRONTO'}</div>
+                        <div class="label">Denaro reale: SEMPRE BLOCCATO</div>
+                    </div>
+                </div>`;
+
+            const container = document.getElementById('shadowContainer');
+            if (!Array.isArray(rows) || rows.length === 0) {
+                container.innerHTML = '<div class="empty-state"><div>Nessun lifecycle shadow nel run corrente</div></div>';
+                return;
+            }
+            let html = '<div class="table-wrap"><table><thead><tr>' +
+                '<th>Tempo</th><th>Mercato</th><th>Wallet</th><th>Azione</th>' +
+                '<th>Entry</th><th>Prezzo netto</th><th>P&L</th><th>Motivo</th>' +
+                '</tr></thead><tbody>';
+            rows.forEach(row => {
+                const timestamp = row.timestamp ? new Date(row.timestamp).toLocaleString('it-IT') : '-';
+                const wallet = row.wallet ? row.wallet.slice(0, 8) + '...' + row.wallet.slice(-5) : '-';
+                const pnlValue = Number(row.pnl || 0);
+                html += `<tr>
+                    <td class="trade-time">${timestamp}</td>
+                    <td>${escapeHtml((row.market || '').slice(0, 55))}</td>
+                    <td title="${escapeHtml(row.wallet || '')}">${escapeHtml(wallet)}</td>
+                    <td>${escapeHtml(row.action || '')}</td>
+                    <td>${row.entry_price == null ? '-' : Number(row.entry_price).toFixed(3)}</td>
+                    <td>${row.net_price == null ? '-' : Number(row.net_price).toFixed(3)}</td>
+                    <td class="${getColorClass(pnlValue)}">${formatMoney(pnlValue)}</td>
+                    <td>${escapeHtml(row.reason || '')}</td>
                 </tr>`;
             });
             html += '</tbody></table></div>';
@@ -1223,13 +1301,16 @@
             try {
                 const indicator = document.getElementById('refreshIndicator');
                 indicator.classList.add('active');
-                const [response, candidateResponse] = await Promise.all([
+                const [response, candidateResponse, shadowResponse] = await Promise.all([
                     fetch(API_URL, {cache: 'no-store'}),
-                    fetch('/api/candidates?limit=50', {cache: 'no-store'})
+                    fetch('/api/candidates?limit=50', {cache: 'no-store'}),
+                    fetch('/api/shadow?limit=50', {cache: 'no-store'})
                 ]);
                 const data = await response.json();
                 data.recent_candidates = candidateResponse.ok
                     ? await candidateResponse.json() : [];
+                data.recent_shadow = shadowResponse.ok
+                    ? await shadowResponse.json() : [];
                 updateDashboard(data);
                 setTimeout(() => indicator.classList.remove('active'), 500);
             } catch (error) {

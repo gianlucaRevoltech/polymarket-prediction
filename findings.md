@@ -1,5 +1,147 @@
 # Findings & Decisions — Polymarket Copy Bot
 
+## Phase CS - vincoli ripristinati
+
+- Il piano storico contiene ancora note obsolete come "COPY edge reale"; sono
+  superseded dagli audit CR/CP e non devono guidare nuove aperture.
+- Le decisioni vigenti sono: latency-arb, HARVEST e strategie alternative
+  restano disabilitate; COPY non passa al reale senza campione indipendente.
+- Il run paper fallito non va riattivato. Lo sviluppo CS deve produrre evidenza
+  shadow completa senza mutare cash, portfolio, cooldown o safety state.
+- Le vecchie fasi aggressive puntavano esplicitamente a raddoppiare in 10-14
+  giorni e hanno prodotto drawdown/perdite; sizing, wallet rotation e target di
+  rendimento di quelle fasi sono evidenza negativa, non requisiti da recuperare.
+- Il codice ha gia avuto simulazioni ottimistiche e claim invalidati da fee,
+  fill e selezione in-sample. Il nuovo shadow ledger deve riusare solo ask/bid,
+  profondita e fee per-market gia validati, senza midpoint o payout inventati.
+- Anche le stime storiche di EV/WR atteso e le strategie definite
+  "risk-free-ish" sono state successivamente invalidate dai run e non sono
+  assunzioni ammissibili. Ogni metrica CS deve essere derivata dal nuovo run.
+- Il simulatore ha gia un punto unico `evaluate_copy_candidate` e mark/exit fee
+  aware riusabili. Lo shadow state puo quindi essere aggiunto senza duplicare i
+  filtri pre-trade e senza entrare nel Portfolio reale/paper.
+- `new-run` archivia una lista esplicita di file: ogni nuovo ledger/journal
+  shadow dovra essere aggiunto a archive/reset per evitare contaminazione run.
+- Design scelto: ogni `signal_id` che supera i controlli pre-trade apre una
+  posizione shadow da $5, indipendente da cash, cap, evento e quarantena paper.
+  Segnali correlati restano registrati ma le statistiche conserveranno eventi
+  distinti e concentrazione, evitando di contarli come prove indipendenti.
+- Le posizioni shadow useranno lo stesso entry ask VWAP+fee e lo stesso exit bid
+  netto fee del paper. Saranno chiuse su vendita wallet, SL/TP o risoluzione,
+  senza chiamare `_record_close_risk` e senza mutare portfolio/cooldown/safety.
+- Persistenza prevista: `shadow_state.json` atomico e `shadow_journal.jsonl`
+  append-only, entrambi legati al `run_id` e inclusi in new-run/reset/export.
+- `main.run_mirror_loop` ha gia aggregate, delta, successful/failed wallet e un
+  unico `reconcile` per ciclo: la gestione shadow puo vivere in `reconcile`
+  senza un secondo snapshot wallet o modifiche al polling.
+- Esistono due percorsi di archive/reset (`start_all.sh` e `tools/run_state.py`):
+  entrambi devono includere i file shadow e i test devono coprirli.
+- Documentazione ufficiale corrente: `POST /books` restituisce order book per
+  piu token in un'unica richiesta (fino a 500 token); rate limit `/books` 500
+  richieste/10s. Il fetcher locale ha solo `GET /book`: aggiungere `get_books`
+  permette mark shadow eseguibili senza moltiplicare le round-trip HTTP.
+- Il payload batch usa `asset_id`, bids/asks completi e la stessa struttura del
+  book singolo; il parser va centralizzato per evitare divergenze best bid/ask.
+- Ricerca statica del percorso di esecuzione: nel repository non risultano
+  chiavi private, creazione/invio ordini o modalita live. I soli mode accettati
+  restano `observe` e `paper_validation`; gli evaluator e la dashboard espongono
+  sempre `real_money_authorized: false`.
+- Un fallimento completo del batch CLOB deve preservare gli ultimi mark e
+  attendere il ciclo seguente; il fallback per-position creerebbe fan-out e
+  potrebbe confondere un outage con una risoluzione.
+- Audit del diff: le risoluzioni gia segnalate `redeemable` dall'aggregate
+  devono essere processate prima dell'early-return su outage CLOB; altrimenti
+  un mercato risolto potrebbe restare shadow-open fino al ritorno del book.
+- Il bootstrap per singolo trade puo essere troppo ottimistico quando piu
+  segnali appartengono allo stesso evento. Prima del rollout va valutato un
+  bootstrap a cluster evento, preservando l'EV per trade ma campionando eventi.
+
+## Audit paper 48h - input iniziale 2026-08-09
+
+- Dashboard: run `run-20260807T141814-a65fb998`, PAPER_VALIDATION, HALTED per
+  `copy: 3 consecutive losses`, equity/cash $299.11, zero posizioni aperte.
+- Risultato grezzo: 4 chiuse, 1W/3L, P&L netto -$0.89; sequenza delle prime tre
+  chiusure negativa, mentre il successivo win era gia aperto prima dell'halt.
+- Journal dashboard: 265 decisioni utili = 4 opened + 261 rejected; `eligible=0`
+  non significa zero segnali validi, perche le aperture sono contate a parte.
+- Dopo la quarantena almeno 27 candidati sono stati rifiutati dal safety gate;
+  il run non puo piu raccogliere aperture senza riattivazione manuale.
+- Export da auditare: `exports/polymarket-paper-20260809T142445Z.tar.gz`.
+- Archivio leggibile, 508.167 byte, struttura completa: ledger + backup,
+  journal, trade/equity/safety/wallet/runtime, config e log bot/dashboard.
+- Timestamp interni arrivano fino al 09/08 16:24; safety/trade log si fermano
+  correttamente all'ultima chiusura del 08/08 22:37.
+- Integrita: SHA-256 `C8066A85776254CEBE5A2AEFF579F6E8A2C5AB80921DE297AB4E313D8A2373A3`;
+  commit VPS `e006529`, branch main allineato, bot/dashboard attivi e arb fermo.
+- Ledger v3 riconciliato: cash/equity $299.105170, 4 chiuse, P&L matematico
+  -$0.894830, zero aperte. Journal 269/269 JSON validi, tutti v4 e stesso run.
+- Journal decisioni: 4 opened, 4 closed e 261 rejected; 265 signal_id distinti.
+  Le quattro ripetizioni sono le coppie lifecycle open/close, non doppi segnali.
+- Salute: ciclo 7.382, runtime fresco, zero traceback/errore/HTTP 400/429;
+  soltanto due timeout feed gestiti.
+- Sequenza: Rio -$0.789, Minnesota -$0.506, Houston -$0.599, Gemini +$0.999.
+  I primi tre stop hanno attivato la quarantena; Gemini era gia aperto e ha
+  continuato a essere gestito fino al take-profit, come previsto.
+- Decomposizione totale: i quattro prezzi raw ask->exit producono appena
+  +$0.045; fee ingresso $0.465 + fee uscita $0.475 trasformano il risultato in
+  -$0.895. Dal prezzo sorgente, il movimento lordo vale +$0.500 ma $0.455 di
+  svantaggio source->nostro ask e $0.940 di fee consumano tutto l'edge.
+- Costo round-trip fee medio $0.235 per trade da $5 (4.70% della size), prima
+  dello spread/ritardo rispetto al wallet. Il campione non prova edge negativo,
+  ma dimostra che l'edge raw osservato e insufficiente a coprire i costi taker.
+- EV netto osservato -$0.224/trade. Con soli quattro trade il Wilson CI95 del
+  win rate e circa 4.6%-69.9% e il bootstrap esatto della media circa
+  [-$0.718, +$0.599]: il segno dell'edge resta statisticamente indeterminato e
+  il limite inferiore richiesto per la promozione e nettamente sotto zero.
+- Il valutatore di promozione del repository, eseguito sul ledger esportato,
+  restituisce `eligible_for_paper_promotion=false` e `real_money_authorized=false`.
+  Falliscono 8 gate su 9: 4/100 trade, 4/30 eventi, 2.00/14 giorni, P&L e CI
+  negativi, concentrazione positiva 100% su un evento/wallet e domini 2+2/30.
+  Passa soltanto il drawdown <=3% (misurato dal valutatore 0.63%).
+- Root cause meccanica sport: Minnesota source/bid 0.61, ask 0.62, entry con fee
+  0.63178, stop raw 0.58; Houston 0.52/0.53/0.542455, stop raw 0.49. Il bid si
+  muove soltanto -3 cent, ma la policy confronta il bid con l'entry fee-inclusive
+  e vede circa -5.2 cent, attivando lo SL assoluto configurato a -5 cent.
+- Wallet paper: `0xc8ab...` 1W/1L, +$0.210; `0x9703...` 0W/2L, -$1.105.
+  Houston nasce da un BUY sorgente di soli $1.08, poi copiato con size $5.
+- Equity continua: 7.419 punti, gap max 33.3s, zero gap >60s; massimo $300.28,
+  minimo intraday $297.86, finale $299.11. Nessun daily/run loss breaker.
+- Prima dell'halt: 97 candidati, 4 opened, 21 passati ai controlli ma bloccati
+  da max positions. Dopo: 168 candidati, di cui 27 passati ai controlli ma
+  bloccati dalla quarantena; la pipeline continua correttamente a osservare.
+- Correzione importante: i 21+27 portfolio-gated sono valutati completamente
+  in memoria, ma `_journal` viene chiamato senza `evaluation`; il record perde
+  VWAP, entry, fill e costi. Non sono quindi auditabili come eligible dal file.
+  Va corretto il journal prima del prossimo run.
+- I candidati arrivati al portfolio gate/apertura sono 52 su 35 eventi e 42
+  condition: 39 sport, 10 other, 3 politics. Tutti provengono da soli due
+  wallet (`0x9703...` 38, `0xc8ab...` 14); 21 sono bloccati dal limite di due
+  posizioni e 27 dalla quarantena. Fee schedule: 47 rate 0.05, 5 rate 0.04.
+- La size del trade sorgente e presente in tutti i 52, ma varia molto: 37/52
+  sono almeno $5 e 28/52 almeno $10. Il trade Houston aperto nasce da $1.08:
+  un eventuale filtro sul notional sorgente va validato prospetticamente e non
+  scelto ora per eliminare retroattivamente una perdita.
+- Il manifest congelato eredita metriche storiche in-sample molto forti
+  (`0x9703...` WR 100% su 19 decise), ma nel paper quel wallet fa 0W/2L e
+  -$1.105. E un'ulteriore conferma che il profiler storico non prova edge COPY.
+- Pagina ufficiale Polymarket Houston-San Diego: risultato finale Astros 6,
+  Padres 3. L'outcome copiato Padres era perdente a risoluzione; lo stop ha
+  limitato una perdita che altrimenti sarebbe arrivata vicino alla size intera.
+- Pagina ufficiale Polymarket Minnesota-Milwaukee: risultato finale Twins 8,
+  Brewers 6. Anche l'outcome copiato Brewers era perdente a risoluzione; lo
+  stop ha limitato una perdita che altrimenti sarebbe arrivata alla size intera.
+- Tenere fino a settlement i due sport perdenti avrebbe prodotto circa -$10
+  invece di -$1.105: gli stop hanno risparmiato circa $8.90. Il difetto del
+  riferimento fee-inclusive va corretto semanticamente, ma non giustifica
+  allargare o rimuovere gli stop sulla base di questo campione.
+- La dashboard calcola `eligibility_rate` usando solo la decisione `eligible`;
+  in paper i candidati validi diventano `opened`, quindi mostra 0 eligible pur
+  avendo quattro aperture. Serve un conteggio separato `passed_pretrade` =
+  eligible + opened, senza presentarlo come profitto potenziale.
+- La pagina Rio non ha restituito dati utilizzabili e la ricerca Gemini trovava
+  un mercato correlato ma non la stessa condition/scadenza. Non attribuire a
+  questi due trade un esito finale non verificato: valgono le uscite registrate.
+
 ## Follow-up OBSERVE 2026-08-06 — copertura feed
 
 - Run v3 sano: 0 traceback, 28 candidati, 2 eligible, entrambi con sorgente

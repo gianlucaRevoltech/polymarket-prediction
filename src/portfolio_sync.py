@@ -225,6 +225,47 @@ class PolymarketPositionFetcher:
     # ----------------------------------------------------------------
     # Phase D: filtro liquidita / scadenza
     # ----------------------------------------------------------------
+    @staticmethod
+    def _normalize_book(data: Dict) -> Dict:
+        """Normalizza un book CLOB singolo o proveniente da ``POST /books``."""
+        bids = data.get("bids") or []
+        asks = data.get("asks") or []
+        bid_levels = sorted(
+            [
+                {"price": float(level["price"]), "size": float(level["size"])}
+                for level in bids
+                if float(level.get("size", 0) or 0) > 0
+            ],
+            key=lambda level: level["price"], reverse=True,
+        )
+        ask_levels = sorted(
+            [
+                {"price": float(level["price"]), "size": float(level["size"])}
+                for level in asks
+                if float(level.get("size", 0) or 0) > 0
+            ],
+            key=lambda level: level["price"],
+        )
+        best_bid = bid_levels[0]["price"] if bid_levels else None
+        best_ask = ask_levels[0]["price"] if ask_levels else None
+        return {
+            "observed_at": utc_now_iso(),
+            "best_bid": best_bid,
+            "best_ask": best_ask,
+            "bid_size": bid_levels[0]["size"] if bid_levels else 0.0,
+            "ask_size": ask_levels[0]["size"] if ask_levels else 0.0,
+            "mid": (
+                (best_bid + best_ask) / 2
+                if best_bid is not None and best_ask is not None else None
+            ),
+            "spread": (
+                best_ask - best_bid
+                if best_bid is not None and best_ask is not None else None
+            ),
+            "bid_levels": bid_levels,
+            "ask_levels": ask_levels,
+        }
+
     def get_book(self, token_id: str) -> Optional[Dict]:
         """
         Order book del token via CLOB. Returns best bid/ask con size, o None.
@@ -235,43 +276,36 @@ class PolymarketPositionFetcher:
             r = self.session.get(url, params={"token_id": token_id}, timeout=10)
             if not r.ok:
                 return None
-            data = r.json()
-            # FIX: il CLOB /book di Polymarket restituisce bids in ASC (best = MAX
-            # price) e asks in DESC (best = MIN price). Prendere bids[0]/asks[0]
-            # era ERRATO (selezionava il peggior prezzo -> spread ~0.98 finto).
-            bids = data.get("bids") or []
-            asks = data.get("asks") or []
-            best_bid = None; best_ask = None
-            bid_size = 0.0; ask_size = 0.0
-            for b in bids:
-                pr = float(b["price"])
-                if best_bid is None or pr > best_bid:
-                    best_bid = pr; bid_size = float(b["size"])
-            for a in asks:
-                pr = float(a["price"])
-                if best_ask is None or pr < best_ask:
-                    best_ask = pr; ask_size = float(a["size"])
-            bid_levels = sorted(
-                [{"price": float(x["price"]), "size": float(x["size"])} for x in bids],
-                key=lambda x: x["price"], reverse=True,
-            )
-            ask_levels = sorted(
-                [{"price": float(x["price"]), "size": float(x["size"])} for x in asks],
-                key=lambda x: x["price"],
-            )
-            return {
-                "observed_at": utc_now_iso(),
-                "best_bid": best_bid,
-                "best_ask": best_ask,
-                "bid_size": bid_size,
-                "ask_size": ask_size,
-                "mid": ((best_bid + best_ask) / 2) if (best_bid is not None and best_ask is not None) else None,
-                "spread": ((best_ask - best_bid) if (best_bid is not None and best_ask is not None) else None),
-                "bid_levels": bid_levels,
-                "ask_levels": ask_levels,
-            }
+            return self._normalize_book(r.json())
         except Exception:
             return None
+
+    def get_books(self, token_ids: List[str]) -> Dict[str, Dict]:
+        """Book CLOB batch, indicizzati per asset id; fallimento = mapping vuoto."""
+        unique = list(dict.fromkeys(str(token) for token in token_ids if token))
+        if not unique:
+            return {}
+        result: Dict[str, Dict] = {}
+        try:
+            for start in range(0, len(unique), 500):
+                batch = unique[start:start + 500]
+                response = self.session.post(
+                    f"{self.clob}/books",
+                    json=[{"token_id": token} for token in batch],
+                    timeout=15,
+                )
+                if not response.ok:
+                    return {}
+                payload = response.json()
+                if not isinstance(payload, list):
+                    return {}
+                for raw in payload:
+                    asset = str(raw.get("asset_id") or raw.get("assetId") or "")
+                    if asset:
+                        result[asset] = self._normalize_book(raw)
+        except Exception:
+            return {}
+        return result
 
     @staticmethod
     def passes_liquidity(book: Optional[Dict], side_size_min: float,
@@ -376,6 +410,7 @@ class PolymarketPositionFetcher:
     def _normalize_market(cls, m: Dict) -> Dict:
         outcomes = cls._parse_json_list(m.get("outcomes"))
         tokens = cls._parse_json_list(m.get("clobTokenIds"))
+        outcome_prices = cls._parse_json_list(m.get("outcomePrices"))
         events = m.get("events") or []
         event_slug = events[0].get("slug", "") if events else ""
         event_ticker = events[0].get("ticker", "") if events else ""
@@ -413,6 +448,7 @@ class PolymarketPositionFetcher:
             "tags": tags,
             "outcomes": outcomes,        # ["Yes","No"]
             "tokens": tokens,             # [asset_yes, asset_no]
+            "outcome_prices": outcome_prices,
             "end_date": m.get("endDate", ""),
             "fee_type": m.get("feeType", ""),
             "fees_enabled": fees_enabled,

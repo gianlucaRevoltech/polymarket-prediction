@@ -2,6 +2,11 @@
 
 Sistema di copy trading intelligente che replica automaticamente le strategie dei wallet più profittevoli su Polymarket, con budget virtuale di $300.
 
+> **Stato del progetto:** esclusivamente osservazione e paper trading. Il codice
+> non invia ordini reali e non garantisce profitti. La modalità predefinita è
+> `observe`; la promozione richiede evidenza prospettica netta dei costi secondo
+> [VALIDATION_PROTOCOL.md](VALIDATION_PROTOCOL.md).
+
 ## 🚀 Quick Start
 
 ### Windows

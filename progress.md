@@ -765,3 +765,84 @@ OBSERVE di default, COPY unica candidata futura, nessun capitale reale.
 - Aggiunto state v3 e migrazione one-shot della posizione aperta dal ledger v2,
   inclusa ricostruzione cash se gia chiusa, senza `new-run`; 46/46 unittest,
   compileall e diff check superati.
+
+## SESSIONE 2026-08-09 - Phase CR audit paper 48h
+
+- Ricevuto export VPS `exports/polymarket-paper-20260809T142445Z.tar.gz`.
+- Snapshot dashboard: HALTED, COPY 1W/3L su 4 chiuse, P&L netto -$0.89,
+  equity $299.11, zero posizioni aperte e 27 candidati bloccati dalla quarantena.
+- Avviato audit read-only di integrita, ledger, journal, costi, wallet e stop.
+- Ripristinato il contesto completo dei planning file; il criterio vigente
+  impone fine run dopo quarantena 3-loss e vieta qualunque passaggio reale.
+- Audit corrente separato dai vecchi run aggressivi/latency-arb: conteranno
+  esclusivamente i record del run paper iniziato il 2026-08-07.
+- Archivio tar valido e completo (508.167 byte); nessun file richiesto manca.
+- CR1/CR2 preliminari: commit/run/servizi corretti, ledger e journal integri,
+  P&L riconciliato al centesimo e safety halt persistente.
+- CR3/CR4: ricostruita l'economia dei quattro trade; fee taker $0.94 totali e
+  bug di riferimento SL sport (entry fee-inclusive vs bid raw) identificato.
+- Scoperto journal incompleto sui portfolio gate; verifica ufficiale conferma
+  Houston/Padres come segnale direzionalmente perdente, non falso stop.
+- Verifica ufficiale conferma anche Minnesota/Brewers come segnale perdente;
+  nessun esito finale univoco attribuito ai trade Rio e Gemini.
+- Analizzati i 52 candidati arrivati al portfolio gate: solo due wallet li
+  generano, 39 sono sport e 15 hanno source notional inferiore a $5.
+- Confrontate metriche scan e risultati paper: il wallet storico 100% WR che ha
+  prodotto due aperture chiude il campione paper 0W/2L.
+- Quantificata l'incertezza: EV -$0.224/trade ma CI bootstrap molto ampio e
+  comprendente zero; il run fallisce comunque tutti i gate minimi di campione.
+- Confermato che i due stop sport hanno evitato circa $8.90 di ulteriore perdita
+  a settlement; non va quindi allargato lo stop in modo retrospettivo.
+- Isolato anche il problema di nomenclatura dashboard: in paper gli `opened`
+  non sono inclusi nel conteggio/tasso `eligible`.
+- Eseguito il valutatore prospettico ufficiale del repo sul ledger: NO-GO, otto
+  criteri su nove falliti; passa soltanto il limite di drawdown.
+- Chiuso audit CR: nessun altro log richiesto. Decisione operativa: preservare
+  l'archivio e lasciare COPY in quarantena; niente nuovo run identico.
+- Prossimo intervento proposto: rendere completi i record portfolio-gated,
+  correggere la semantica dashboard e aggiungere un shadow ledger per seguire
+  tutti i candidati validi al netto dei costi prima di un nuovo paper indipendente.
+
+## SESSIONE 2026-08-09 - Phase CS validazione shadow
+
+- L'utente richiede massima affidabilita prima di posizioni reali. Chiarito che
+  profitti e crescita quotidiana non sono garantibili; il sistema verra invece
+  vincolato a evidenza prospettica netta e a un secondo paper indipendente.
+- Avviato ripristino completo del contesto e piano CS; nessuna riattivazione VPS
+  o modifica del run fallito durante lo sviluppo locale.
+- Letti integralmente task plan e progress storico; iniziata lettura completa
+  findings. Le note aggressive/claim storici sono marcati come superseded.
+- Letti integralmente anche findings e inventario repository. Branch `main`
+  allineato a `origin/main` su `e006529`; solo planning file modificati da noi.
+- Preservati gli untracked utente: `exports/`, snapshot OBSERVE, `progressi.txt`
+  e `resp.json`. Nessun `AGENTS.md` aggiuntivo nel repository.
+- Inventariati i punti di estensione in simulator/main/dashboard/run_state.
+- Un comando `rg` e terminato code 1 perche includeva `start_all.ps1`, file non
+  presente; gli altri match erano validi. Proseguo sullo script Linux e sul
+  wrapper Python effettivamente esistenti.
+- Verificata sulla documentazione Polymarket l'API CLOB batch `/books`; verra
+  usata per aggiornare tutte le posizioni shadow con prezzi attraversabili.
+- Implementati parser book condiviso e `get_books` batch fail-closed con test.
+- Aggiunti config shadow, campi quote raw nella Position, persistenza/journal
+  shadow e lifecycle indipendente da portfolio/safety.
+- Collegamento al reconcile e riepilogo/dashboard ancora in corso.
+- Prima suite CS: 51 test eseguiti, 49 pass. Correzioni applicate a versione
+  journal attesa e persistenza run_id per shadow aperto prima del primo ledger.
+- Seconda suite CS: 51/51 test superati.
+- Dashboard/API shadow e journal v5 completati; il gate puo autorizzare soltanto
+  un nuovo run paper indipendente e mantiene `real_money_authorized=false`.
+- Il mark shadow ora tratta un fallimento completo del batch CLOB come feed
+  indisponibile: conserva lo stato e non genera fan-out Gamma per ogni asset.
+- Ripulite le due nuove stringhe UI introdotte su file legacy con encoding misto.
+- Individuati i test mancanti prima del rilascio: outage batch senza fan-out,
+  risoluzione shadow esplicita, archivio/reset shadow e API dashboard shadow.
+- Aggiunti i quattro contratti e deduplica restart; suite mirata 31/31 PASS.
+- Le risoluzioni `redeemable` vengono ora elaborate anche durante outage CLOB.
+- Il CI95 usa bootstrap a cluster evento, evitando falsa confidenza da segnali
+  multipli e correlati sullo stesso mercato/evento; aggiunto test avversariale.
+- `compileall` completato e suite completa 55/55 PASS.
+- Sintassi del blocco JavaScript dashboard validata con Node (`new Function`).
+- Protocollo e README aggiornati: shadow -> paper indipendente, mai real money;
+  rollout OBSERVE esplicito e API/lifecycle documentati.
+- Verifica finale pre-commit: 55/55 unittest, compileall, sintassi JS, `bash -n`
+  tramite Git Bash e `git diff --check` tutti superati.

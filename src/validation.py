@@ -22,6 +22,31 @@ def _bootstrap_lower_95(values: List[float], iterations: int = 10000,
     return means[max(0, int(iterations * 0.025) - 1)]
 
 
+def _event_cluster_bootstrap_lower_95(trades: List, iterations: int = 10000,
+                                      seed: int = 42) -> float:
+    """CI dell'EV/trade campionando eventi, non segnali correlati singoli."""
+    if not trades:
+        return float("-inf")
+    clusters = defaultdict(list)
+    for index, position in enumerate(trades):
+        key = (
+            getattr(position, "event_slug", "")
+            or getattr(position, "condition_id", "")
+            or getattr(position, "signal_id", "")
+            or f"trade-{index}"
+        )
+        clusters[key].append(float(position.pnl))
+    groups = list(clusters.values())
+    rng = random.Random(seed)
+    means = []
+    for _ in range(iterations):
+        sampled = [groups[rng.randrange(len(groups))] for _ in groups]
+        count = sum(len(group) for group in sampled)
+        means.append(sum(sum(group) for group in sampled) / count)
+    means.sort()
+    return means[max(0, int(iterations * 0.025) - 1)]
+
+
 def evaluate_copy_run(closed_positions: Iterable, run_id: str,
                       intended_domains: Optional[List[str]] = None,
                       now: Optional[datetime] = None,
@@ -75,7 +100,9 @@ def evaluate_copy_run(closed_positions: Iterable, run_id: str,
     )
     domains = intended_domains or []
     domain_ok = all(by_domain[d] >= 30 for d in domains)
-    ci_lower = _bootstrap_lower_95(pnls, bootstrap_iterations)
+    ci_lower = _event_cluster_bootstrap_lower_95(
+        trades, bootstrap_iterations
+    )
 
     checks = {
         "closed_trades_at_least_100": len(trades) >= 100,
@@ -102,9 +129,29 @@ def evaluate_copy_run(closed_positions: Iterable, run_id: str,
             "net_pnl": sum(pnls),
             "ev_per_trade": (sum(pnls) / len(pnls)) if pnls else 0.0,
             "bootstrap_ci95_lower_ev": ci_lower,
+            "bootstrap_unit": "event_cluster",
             "max_drawdown": max_dd,
             "event_positive_pnl_concentration": event_concentration,
             "wallet_positive_pnl_concentration": wallet_concentration,
             "trades_by_domain": dict(by_domain),
         },
     }
+
+
+def evaluate_shadow_run(closed_positions: Iterable, run_id: str,
+                        intended_domains: Optional[List[str]] = None,
+                        now: Optional[datetime] = None,
+                        bootstrap_iterations: int = 10000) -> Dict:
+    """Valuta lo shadow cohort; puo promuovere solo a un paper indipendente."""
+    result = evaluate_copy_run(
+        closed_positions,
+        run_id,
+        intended_domains=intended_domains,
+        now=now,
+        bootstrap_iterations=bootstrap_iterations,
+    )
+    passed = bool(result.pop("eligible_for_paper_promotion", False))
+    result["eligible_for_independent_paper"] = passed
+    result["real_money_authorized"] = False
+    result["validation_stage"] = "shadow"
+    return result

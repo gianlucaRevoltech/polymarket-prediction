@@ -34,6 +34,9 @@ EXECUTION = {
     "max_consecutive_losses": 3,
     "freeze_wallets_for_run": True,
     "latency_arb_enabled": False,
+    # Tutti i candidati COPY che superano i controlli pre-trade vengono seguiti
+    # in un ledger indipendente. Non usa cash e non puo autorizzare ordini reali.
+    "shadow_validation_enabled": True,
 }
 if EXECUTION["mode"] not in {"observe", "paper_validation"}:
     EXECUTION["mode"] = "observe"
