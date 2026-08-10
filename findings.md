@@ -1,5 +1,139 @@
 # Findings & Decisions — Polymarket Copy Bot
 
+## Revisione finale del diff
+
+- Le modifiche sono coerenti con il contenimento richiesto: il run corrente non cambia wallet in modo adattivo, mentre i run successivi escludono quelli in quarantena persistente.
+- Lo shadow v2 introduce vincoli comparabili al paper (`$300`, size `$5`, massimo 2 posizioni, una per evento) e breaker basati sull'equity mark-to-market.
+- API e dashboard espongono ora anche conteggio e top reason dei candidati shadow rifiutati; il journal completo resta la fonte append-only.
+- Suite finale: 67 test superati; nessun errore di compilazione Python o di sintassi JavaScript/Bash.
+- Il drawdown usato per la promozione conserva il peggiore tra quello ricostruito dai trade chiusi e quello MTM persistito.
+- I segnali rifiutati dai vincoli portfolio non vengono riaperti in ritardo quando si libera uno slot: la decisione prospettica è unica e persiste dopo restart.
+- La classificazione dominio usa i metadati mercato arricchiti dal fetcher prima dei gate; il manifest v1 con domini vuoti fallisce chiuso per il nuovo run.
+
+## Phase CU - contratti da preservare
+
+- Compatibilita obbligatoria con ledger state v3, candidate journal v5,
+  `entry_best_ask` gia persistito e fee schedule per-market fail-closed.
+- Il run corrente non va mutato: i nuovi campi devono avere migrazioni legacy e
+  diventare autorevoli solo dal prossimo `new-run scan`.
+- Latency-arb, HARVEST e tutte le strategie non-COPY restano disabilitate; il
+  lavoro CU non deve riaprire accidentalmente percorsi di esecuzione.
+- I file utente non tracciati e tutti gli export sono evidenza: nessuna pulizia,
+  riscrittura o inclusione automatica nei commit.
+- Punti di estensione principali: `main.py` crea il manifest wallet;
+  `simulator.py` gestisce lifecycle/safety/shadow; `validation.py` calcola gate;
+  `run_state.py` e `start_all.sh` archiviano lo stato; dashboard/API leggono il
+  riepilogo del simulatore.
+- Lo shadow attuale e deliberatamente unconstrained: apre ogni eligible senza
+  cash/cap/evento. CU lo sostituira con un portfolio shadow separato ma soggetto
+  agli stessi limiti del paper, mantenendo journal append-only e dedup restart.
+- `monitored_wallets.json` contiene gia metadata completi copiati dallo scan ed
+  e il luogo naturale per congelare domini per wallet e domini del run.
+- `Position.entry_best_ask` separa gia raw ask da `entry_price` economico: il
+  fix stop non richiede schema Position nuovo, solo fallback conservativo per
+  ledger legacy privi del campo.
+- La safety paper e separata e non va riusata direttamente dallo shadow: lo
+  shadow necessita contatori/cash/equity propri per non alterare il portfolio.
+- `shadow_state` v1 salva solo posizioni/chiuse: per un replay constrained v2
+  servono cash iniziale/corrente, peak, max drawdown, start equity, halt,
+  loss streak, blocked conditions e una curva equity MTM persistente.
+- `_open_shadow_candidate` oggi marca il signal come visto solo quando apre. Nel
+  nuovo contratto ogni eligible deve produrre una decisione shadow (`opened` o
+  `rejected` con portfolio gate) e il signal deve restare deduplicato anche se
+  rifiutato, per evitare aperture tardive dopo liberazione di uno slot.
+- `evaluate_copy_run` calcola drawdown dalla sola sequenza P&L realizzata; per lo
+  shadow constrained deve accettare il max drawdown MTM persistito dal ledger,
+  mantenendo il valore legacy solo come fallback.
+- Lo scanner salva oggi una sola `category` per wallet e scarta le ulteriori
+  specializzazioni durante il dedup round-robin. Va persistito `categories`
+  completo; il manifest deve trasformarlo in `allowed_domains` immutabile.
+- La quarantena cross-run non puo vivere nei file cancellati da `new-run`:
+  usare un registro prospettico separato, copiarlo negli archivi come evidenza
+  ma preservarlo durante clear/new-run. Il run corrente non cambia cohort.
+- Soglia iniziale non adattiva: tre perdite shadow consecutive dello stesso
+  wallet lo rendono non selezionabile dai run successivi; il record conserva
+  run, timestamp e motivazione, senza rimuoverlo dal manifest corrente.
+- Dashboard shadow oggi mostra soltanto cohort/P&L/EV/CI/gate: aggiungere cash,
+  equity, deployed, max 2, drawdown MTM, halt e intended domains, mantenendo
+  `real_money_authorized=false`.
+- Il test legacy `shadow_tracks_every_pretrade_pass` codifica esplicitamente
+  tre shadow open oltre il cap paper: va sostituito con il nuovo contratto
+  2 open + terzo `rejected/max_open_positions`, senza alterare il paper ledger.
+- Migrazione shadow v1: ricostruire cash da initial - size di tutte le aperture
+  + proventi netti delle chiuse, ma impostare un halt permanente del run legacy;
+  le posizioni ancora aperte continuano a essere gestite fino alla chiusura.
+- Ogni mark shadow deve aggiornare peak/max drawdown e circuit breaker prima del
+  salvataggio; open/close registrano inoltre punti della curva equity separata.
+- La UI passa oggi a `updateRiskDashboard` soltanto il summary paper; la
+  quarantena cross-run e nel payload top-level. Va passata esplicitamente alla
+  funzione per rendere visibile conteggio/errore del registro.
+
+## Audit shadow 24h - integrita iniziale (2026-08-10)
+
+- Bundle `exports/polymarket-shadow-20260810T123016Z.tar.gz`, 291.877 byte,
+  SHA-256 `8780A12903F14EA2C9521C6294840E26A6768B1D08E3D49643FCE311741905A6`.
+- Archivio tar valido e completo: commit/git status, config, snapshot API,
+  ledger/journal candidate+shadow, manifest wallet, runtime/equity e tre log.
+- Estratto in directory temporanea esterna al repository per audit read-only.
+- Run coerente `run-20260809T150817-a2d0f4b3`, commit `f5660fa`, OBSERVE,
+  cash $300, zero paper open/closed; runtime ciclo 3403, idle, stato fresco.
+- Continuita perfetta: 3.403 punti equity, gap massimo 27,58s, zero gap >60s;
+  zero traceback, FEED, HTTP 400/429 o errori nei log.
+- Journal candidati: 106/106 JSON v5 validi e unici, 38 passed-pretrade e 68
+  rejected. Shadow: 38 open lifecycle, 32 close e 6 ancora aperte; copertura
+  1:1, zero segnali mancanti/extra/duplicati.
+- Risultato shadow chiuso: 3W/29L (WR 9,375%), realized -$16,0056,
+  EV -$0,5002/trade; sei open a -$1,332, totale mark-to-market -$17,3376.
+- Decomposizione 32 chiusi: raw ask->exit -$8,4830 e fee entrata+uscita
+  $7,5226; riconciliazione al floating point. Il segnale perde anche pre-fee.
+- Close reason: exit 0W/13L -$5,238; stop 0W/16L -$15,291; take-profit
+  3W/0L +$4,524. Durata mediana 30,4 minuti.
+- Concentrazione estrema: 37/38 eligible e tutti i 32 chiusi provengono da
+  `0x970367...` (AnonymousUsername); 37 sport e un solo geopolitics.
+- Correlazione non spiega il segno: prendendo solo il primo trade dei 16 eventi
+  chiusi si ottiene 0W/16L e -$10,454; bootstrap event-cluster CI95 EV
+  completamente negativo `[-$0,728, -$0,279]`.
+- Anche la controfattuale con max 2 e una posizione/evento resta negativa:
+  5 chiuse, 1W/4L, -$1,896. Con quarantena a tre loss si sarebbe fermata a
+  0W/3L e -$2,203, quindi i guardrail paper avrebbero limitato il danno.
+- Nessun filtro descrittivo sul notional sorgente salva il cohort: source >=$5
+  produce 2W/24L e -$15,243; source >=$100 produce 2W/11L e -$5,014.
+- Lo shadow unconstrained ha raggiunto 12 posizioni simultanee ($60 virtuali):
+  il suo drawdown non e direttamente confrontabile con il paper max 2, ma EV,
+  WR e CI a cluster restano nettamente negativi anche dopo decorrelazione.
+- Otto dei 16 stop sport sono avvenuti con discesa raw ask->bid inferiore a
+  5 cent (tipicamente 4 cent). Il codice va verificato: potrebbe confrontare il
+  bid raw con `entry_price` fee-inclusive invece che con `entry_best_ask` raw.
+- Conferma nel codice: `_copy_sl_tp_decision` calcola per sport
+  `delta = raw_bid - pos.entry_price`; `entry_price` include fee, mentre il
+  contratto/documentazione dichiara uno stop su movimento assoluto di mercato.
+  Il campo corretto `entry_best_ask` e gia persistito ma non viene usato.
+- I test non coprono questa interazione fee+stop: le fixture senza fee fanno
+  coincidere raw ask ed entry economica, nascondendo la regressione.
+- Il wallet dominante `0x970367...` era gia 0W/2L (-$1,105) nel paper precedente
+  ed e stato riselezionato dal nuovo scan per metriche storiche in-sample. Manca
+  un registro prospettico cross-run che impedisca di riproporre wallet gia
+  falliti; non va pero rimosso adattivamente dal run shadow corrente.
+- Il gate domini e adattivo: `get_shadow_summary` deriva `intended_domains` dalle
+  categorie chiuse, invece di congelarle a inizio run. Qui il manifest seleziona
+  specialisti politics/geopolitics, ma 37/38 segnali validi sono sport e il gate
+  mostra comunque `intended_domains=['sport']` con controllo dominio true.
+- Durata effettiva al bundle: 21,37 ore (non 24); journal candidati copre 19,25
+  ore. Il dato e comunque sufficiente a trovare regressioni tecniche, non a
+  soddisfare il gate temporale di 14 giorni.
+- I 38 passed-pretrade sono completi 38/38: source BUY/tx/timestamp, evento,
+  asset, bid/ask, VWAP, livelli, scadenza e fee schedule; zero book crossed,
+  zero fill incompleto e latenza 1,54-29,49s (mediana 16,40s).
+- Costi immediati elevati ma coerenti: entry economica meno bid mediano 2,25c,
+  p95 4,22c; fee ingresso $4,434 sui 38 segnali ($0,117 medio).
+- Due soli wallet producono tutti i candidati: `0x970367...` genera 58 record e
+  37 eligible; `0xb1ca...` genera 48 record e uno eligible. Gli altri sei wallet
+  congelati non producono alcun delta journalizzato nel periodo.
+- Ripetizioni/correlazione: 38 segnali su 32 asset, 28 condition e 20 eventi;
+  alcuni eventi includono moneyline, first-inning e anche lati opposti nel tempo.
+- I log confermano un solo avvio, baseline corretta, ciclo continuo e nessun
+  errore dashboard/backend. Lo stato tecnico del collector e affidabile.
+
 ## Phase CS - vincoli ripristinati
 
 - Il piano storico contiene ancora note obsolete come "COPY edge reale"; sono
@@ -1196,3 +1330,8 @@ HARVEST, perché HARVEST resta disabilitata e non ha edge dimostrato.
   reject fail-closed se assenti, fee ingresso/uscita persistite sulla Position,
   formula ufficiale generalizzata con exponent. Suite finale: 44/44 test pass,
   compileall e `git diff --check` puliti.
+# Audit shadow 2026-08-10 — riscontri documentazione ufficiale
+
+- L'endpoint ufficiale batch `POST /books` restituisce i book con livelli `bids` e `asks` per gli asset richiesti: il journal sta quindi acquisendo la sorgente corretta per prezzi eseguibili, non un midpoint teorico.
+- La documentazione ufficiale definisce le fee come dipendenti dal mercato, lato taker, con formula proporzionale a `C × feeRate × p × (1-p)`. Il replay deve pertanto continuare a usare il `fee_schedule` persistito per ciascun mercato; non va sostituito con una percentuale globale per categoria.
+- I valori economici dell'export sono riconciliati con i parametri fee salvati nel journal. La perdita non è soltanto una conseguenza delle fee: sui 32 trade chiusi il movimento lordo ask→bid è già negativo per circa $8,48, a cui si sommano circa $7,52 di fee.

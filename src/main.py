@@ -28,6 +28,7 @@ from config import (
     DATA_DIR, EXECUTION,
 )
 from time_utils import age_seconds, utc_now_iso
+from wallet_registry import quarantined_wallets
 
 
 class PolymarketPaperTradingBot:
@@ -122,8 +123,14 @@ class PolymarketPaperTradingBot:
         try:
             with open(results_file, "r") as f:
                 data = json.load(f)
-            wallets = data.get("wallets", [])[: STRATEGY["top_wallets"]]
-            return [w["address"] for w in wallets if w.get("address")]
+            wallets = data.get("wallets", [])
+            excluded = quarantined_wallets(DATA_DIR)
+            eligible = [
+                w["address"] for w in wallets
+                if w.get("address")
+                and str(w["address"]).lower() not in excluded
+            ]
+            return eligible[: STRATEGY["top_wallets"]]
         except Exception:
             return []
 
@@ -144,14 +151,26 @@ class PolymarketPaperTradingBot:
         except Exception:
             by_addr = {}
         wallets = []
+        intended_domains = set()
         for address in self.monitored_addresses:
             metadata = dict(by_addr.get(address.lower(), {}))
             metadata["address"] = address
+            allowed_domains = metadata.get("categories") or (
+                [metadata.get("category")] if metadata.get("category") else []
+            )
+            allowed_domains = sorted({
+                str(domain).strip().lower()
+                for domain in allowed_domains if str(domain).strip()
+            })
+            metadata["allowed_domains"] = allowed_domains
+            intended_domains.update(allowed_domains)
             wallets.append(metadata)
         payload = {
             "run_id": self.simulator.run_id,
             "execution_mode": self.simulator.execution_mode,
             "frozen": True,
+            "domain_policy_version": 1,
+            "intended_domains": sorted(intended_domains),
             "updated_at": utc_now_iso(),
             "wallets": wallets,
         }

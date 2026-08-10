@@ -90,6 +90,16 @@ class PromotionCriteriaTests(unittest.TestCase):
         self.assertFalse(result["real_money_authorized"])
         self.assertEqual(result["validation_stage"], "shadow")
         self.assertNotIn("eligible_for_paper_promotion", result)
+        self.assertFalse(result["checks"]["intended_domains_frozen"])
+
+    def test_shadow_uses_mark_to_market_drawdown_override(self):
+        result = evaluate_shadow_run(
+            [], "shadow-run", intended_domains=["macro"],
+            max_drawdown_override=0.04, bootstrap_iterations=100,
+        )
+        self.assertAlmostEqual(result["metrics"]["max_drawdown"], 0.04)
+        self.assertFalse(result["checks"]["max_drawdown_at_most_3pct"])
+        self.assertTrue(result["checks"]["intended_domains_frozen"])
 
 
 if __name__ == "__main__":

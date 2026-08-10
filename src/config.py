@@ -34,9 +34,16 @@ EXECUTION = {
     "max_consecutive_losses": 3,
     "freeze_wallets_for_run": True,
     "latency_arb_enabled": False,
-    # Tutti i candidati COPY che superano i controlli pre-trade vengono seguiti
-    # in un ledger indipendente. Non usa cash e non puo autorizzare ordini reali.
+    # I candidati COPY che superano i controlli pre-trade vengono seguiti in un
+    # portfolio shadow vincolato. Non puo autorizzare ordini reali.
     "shadow_validation_enabled": True,
+    "shadow_initial_capital": 300.0,
+    "shadow_max_open_positions": 2,
+    "shadow_event_cap_pct": 0.03,
+    "shadow_daily_loss_usdc": 3.0,
+    "shadow_run_loss_usdc": 6.0,
+    "shadow_max_consecutive_losses": 3,
+    "wallet_quarantine_consecutive_losses": 3,
 }
 if EXECUTION["mode"] not in {"observe", "paper_validation"}:
     EXECUTION["mode"] = "observe"

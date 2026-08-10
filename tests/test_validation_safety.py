@@ -156,7 +156,16 @@ class SimulatorSafetyTests(unittest.TestCase):
             )
 
         self.assertEqual(sim.portfolio.open_positions_count, 2)
-        self.assertEqual(len(sim.shadow_positions), 3)
+        self.assertEqual(len(sim.shadow_positions), 2)
+        shadow_rows = [
+            json.loads(line)
+            for line in (self.data / "shadow_journal.jsonl").read_text().splitlines()
+        ]
+        self.assertEqual(shadow_rows[-1]["action"], "rejected")
+        summary = sim.get_shadow_summary()
+        self.assertEqual(summary["rejected_candidates"], 1)
+        self.assertEqual(summary["rejection_reasons"]["max_open_positions"], 1)
+        self.assertEqual(shadow_rows[-1]["reason"], "max_open_positions")
         rows = [
             json.loads(line)
             for line in (self.data / "candidate_journal.jsonl").read_text().splitlines()
@@ -167,6 +176,122 @@ class SimulatorSafetyTests(unittest.TestCase):
         self.assertEqual(blocked["entry_price"], 0.50)
         self.assertEqual(blocked["planned_size_usdc"], 5.0)
         self.assertEqual(blocked["executable_ask_vwap"], 0.50)
+
+    def test_sport_stop_uses_raw_ask_not_fee_loaded_entry(self):
+        sim = PaperTradingSimulator()
+        pos = simulator_module.Position(
+            position_id="sport", market_title="Sport", market_slug="sport",
+            condition_id="cond", outcome="Yes", entry_price=0.515,
+            size_usdc=5.0, shares=5.0 / 0.515,
+            entry_time=datetime.now(), source_wallet="wallet-a",
+            asset="asset", category="sport", entry_best_ask=0.50,
+        )
+        self.assertEqual(
+            sim._copy_sl_tp_decision(pos, 0.455, -0.08, 0.20), "hold"
+        )
+        self.assertEqual(
+            sim._copy_sl_tp_decision(pos, 0.449, -0.08, 0.20), "stop_loss"
+        )
+        pos.entry_best_ask = None
+        self.assertEqual(
+            sim._copy_sl_tp_decision(pos, 0.455, -0.08, 0.20), "stop_loss"
+        )
+
+    def test_frozen_wallet_domains_reject_out_of_specialty_signal(self):
+        EXECUTION["mode"] = "observe"
+        sim = PaperTradingSimulator()
+        (self.data / "monitored_wallets.json").write_text(json.dumps({
+            "run_id": sim.run_id,
+            "frozen": True,
+            "domain_policy_version": 1,
+            "intended_domains": ["macro"],
+            "wallets": [{
+                "address": "wallet-a", "allowed_domains": ["macro"],
+            }],
+        }), encoding="utf-8")
+        feed = FakeFetcher()
+        feed.books["asset-sport"] = book()
+        info = candidate(asset="asset-sport", condition="cond-sport")
+        info["category"] = "sport"
+        self.assertFalse(sim.open_position("wallet-a", info, fetcher=feed))
+        row = json.loads(
+            (self.data / "candidate_journal.jsonl").read_text().splitlines()[-1]
+        )
+        self.assertEqual(row["reason"], "wallet_domain_mismatch")
+        self.assertEqual(len(sim.shadow_positions), 0)
+
+    def test_shadow_one_position_per_event_and_reject_is_deduped(self):
+        EXECUTION["mode"] = "observe"
+        sim = PaperTradingSimulator()
+        feed = FakeFetcher()
+        feed.books["asset-1"] = book()
+        feed.books["asset-2"] = book()
+        self.assertFalse(sim.open_position(
+            "wallet-a", candidate(asset="asset-1", condition="cond-1", event="same"),
+            fetcher=feed,
+        ))
+        second = candidate(asset="asset-2", condition="cond-2", event="same")
+        self.assertFalse(sim.open_position("wallet-a", second, fetcher=feed))
+        self.assertEqual(len(sim.shadow_positions), 1)
+        rows = [
+            json.loads(line)
+            for line in (self.data / "shadow_journal.jsonl").read_text().splitlines()
+        ]
+        self.assertEqual(rows[-1]["reason"], "event_position_cap")
+        restarted = PaperTradingSimulator()
+        self.assertFalse(restarted.open_position("wallet-a", second, fetcher=feed))
+        rows_after = [
+            json.loads(line)
+            for line in (self.data / "shadow_journal.jsonl").read_text().splitlines()
+        ]
+        self.assertEqual(len(rows_after), len(rows))
+
+    def test_shadow_mtm_halt_and_drawdown_persist(self):
+        EXECUTION["mode"] = "observe"
+        sim = PaperTradingSimulator()
+        feed = FakeFetcher()
+        for index in range(2):
+            asset = f"asset-risk-{index}"
+            feed.books[asset] = book()
+            self.assertFalse(sim.open_position(
+                "wallet-a",
+                candidate(asset=asset, condition=f"cond-risk-{index}",
+                          event=f"event-risk-{index}"),
+                fetcher=feed,
+            ))
+        for pos in sim.shadow_positions.values():
+            pos.current_price = 0.19
+            pos.current_price_net_of_exit_fee = True
+        self.assertTrue(sim._update_shadow_risk().startswith("run_loss"))
+        self.assertGreater(sim.shadow_max_drawdown, 0.02)
+        sim._save_shadow_state()
+        restarted = PaperTradingSimulator()
+        self.assertTrue(restarted.shadow_halt_reason.startswith("run_loss"))
+        self.assertGreater(restarted.shadow_max_drawdown, 0.02)
+
+    def test_shadow_three_wallet_losses_create_cross_run_quarantine(self):
+        EXECUTION["mode"] = "observe"
+        sim = PaperTradingSimulator()
+        feed = FakeFetcher()
+        for index in range(3):
+            asset = f"asset-loss-{index}"
+            feed.books[asset] = book()
+            self.assertFalse(sim.open_position(
+                "wallet-a",
+                candidate(asset=asset, condition=f"cond-loss-{index}",
+                          event=f"event-loss-{index}"),
+                fetcher=feed,
+            ))
+            pid = next(iter(sim.shadow_positions))
+            self.assertTrue(sim._close_shadow(pid, 0.45, "stop_loss"))
+        registry = json.loads(
+            (self.data / "wallet_validation_registry.json").read_text()
+        )
+        record = registry["wallets"]["wallet-a"]
+        self.assertEqual(record["status"], "quarantined")
+        self.assertEqual(record["trigger_run_id"], sim.run_id)
+        self.assertEqual(sim.shadow_loss_streak, 3)
+        self.assertIn("3 consecutive", sim.shadow_halt_reason)
 
     def test_shadow_stop_is_net_of_exit_fee_and_survives_restart(self):
         EXECUTION["mode"] = "observe"
@@ -282,6 +407,43 @@ class SimulatorSafetyTests(unittest.TestCase):
             for line in (self.data / "shadow_journal.jsonl").read_text().splitlines()
         ]
         self.assertEqual(sum(row["action"] == "opened" for row in lifecycle), 1)
+
+    def test_legacy_shadow_v1_is_preserved_but_cannot_accept_new_entries(self):
+        EXECUTION["mode"] = "observe"
+        feed = FakeFetcher()
+        feed.books["asset-1"] = book()
+        sim = PaperTradingSimulator()
+        self.assertFalse(sim.open_position("wallet-a", candidate(), fetcher=feed))
+        state_path = self.data / "shadow_state.json"
+        state = json.loads(state_path.read_text())
+        state["shadow_version"] = 1
+        for key in (
+            "initial_capital", "cash", "run_start_equity",
+            "daily_start_equity", "daily_start_date", "peak_equity",
+            "max_drawdown", "halt_reason", "loss_streak",
+            "wallet_loss_streaks", "blocked_conditions",
+            "legacy_unconstrained", "intended_domains",
+        ):
+            state.pop(key, None)
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+
+        restarted = PaperTradingSimulator()
+        self.assertTrue(restarted.shadow_legacy_unconstrained)
+        self.assertEqual(len(restarted.shadow_positions), 1)
+        self.assertAlmostEqual(restarted.shadow_cash, 295.0)
+        feed.books["asset-2"] = book()
+        self.assertFalse(restarted.open_position(
+            "wallet-a",
+            candidate(asset="asset-2", condition="cond-2", event="event-2"),
+            fetcher=feed,
+        ))
+        rows = [
+            json.loads(line)
+            for line in (self.data / "shadow_journal.jsonl").read_text().splitlines()
+        ]
+        self.assertEqual(
+            rows[-1]["reason"], "legacy_unconstrained_shadow_requires_new_run"
+        )
 
     def test_observe_records_specific_pretrade_rejection_reasons(self):
         EXECUTION["mode"] = "observe"

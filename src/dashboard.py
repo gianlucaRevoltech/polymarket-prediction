@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from simulator import PaperTradingSimulator
 from config import BUDGET, STRATEGY, DATA_DIR
 from time_utils import age_seconds, utc_now_iso
+from wallet_registry import load_registry
 
 app = Flask(__name__, template_folder=str(Path(__file__).parent / "templates"))
 
@@ -230,6 +231,7 @@ def get_portfolio_data():
             "bot_health": get_bot_health(summary.get("state_saved_at")),
             "candidate_summary": get_candidate_summary(summary.get("run_id", "")),
             "shadow_validation": summary.get("shadow_validation", {}),
+            "wallet_validation_registry": get_wallet_validation_registry(),
         }
     except Exception as e:
         return {
@@ -279,10 +281,28 @@ def get_monitored_wallets():
                 "trades": w.get("trades", w.get("decided", w.get("num_trades", 0))),
                 "win_rate": w.get("win_rate", 0),
                 "status": w.get("status", "active"),
+                "allowed_domains": w.get("allowed_domains", w.get("categories", [])),
             })
         return wallets
     except Exception:
         return []
+
+
+def get_wallet_validation_registry():
+    registry = load_registry(DATA_DIR)
+    wallets = registry.get("wallets", {}) if isinstance(registry, dict) else {}
+    quarantined = [
+        {"address": address, **record}
+        for address, record in wallets.items()
+        if isinstance(record, dict) and record.get("status") == "quarantined"
+    ]
+    return {
+        "registry_version": registry.get("registry_version", 1),
+        "updated_at": registry.get("updated_at"),
+        "load_error": registry.get("load_error", ""),
+        "quarantined_count": len(quarantined),
+        "quarantined_wallets": quarantined,
+    }
 
 
 def get_bot_status():

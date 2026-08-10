@@ -50,7 +50,8 @@ def _event_cluster_bootstrap_lower_95(trades: List, iterations: int = 10000,
 def evaluate_copy_run(closed_positions: Iterable, run_id: str,
                       intended_domains: Optional[List[str]] = None,
                       now: Optional[datetime] = None,
-                      bootstrap_iterations: int = 10000) -> Dict:
+                      bootstrap_iterations: int = 10000,
+                      max_drawdown_override: Optional[float] = None) -> Dict:
     """Valuta esclusivamente trade COPY chiusi e appartenenti al run indicato."""
     trades = [
         p for p in closed_positions
@@ -79,6 +80,8 @@ def evaluate_copy_run(closed_positions: Iterable, run_id: str,
         peak = max(peak, equity)
         if peak > 0:
             max_dd = max(max_dd, (peak - equity) / peak)
+    if max_drawdown_override is not None:
+        max_dd = max(max_dd, max(0.0, float(max_drawdown_override)))
 
     positive_total = sum(pnl for pnl in pnls if pnl > 0)
     by_event = defaultdict(float)
@@ -141,7 +144,8 @@ def evaluate_copy_run(closed_positions: Iterable, run_id: str,
 def evaluate_shadow_run(closed_positions: Iterable, run_id: str,
                         intended_domains: Optional[List[str]] = None,
                         now: Optional[datetime] = None,
-                        bootstrap_iterations: int = 10000) -> Dict:
+                        bootstrap_iterations: int = 10000,
+                        max_drawdown_override: Optional[float] = None) -> Dict:
     """Valuta lo shadow cohort; puo promuovere solo a un paper indipendente."""
     result = evaluate_copy_run(
         closed_positions,
@@ -149,8 +153,12 @@ def evaluate_shadow_run(closed_positions: Iterable, run_id: str,
         intended_domains=intended_domains,
         now=now,
         bootstrap_iterations=bootstrap_iterations,
+        max_drawdown_override=max_drawdown_override,
     )
     passed = bool(result.pop("eligible_for_paper_promotion", False))
+    domains_frozen = bool(intended_domains)
+    result["checks"]["intended_domains_frozen"] = domains_frozen
+    passed = passed and domains_frozen
     result["eligible_for_independent_paper"] = passed
     result["real_money_authorized"] = False
     result["validation_stage"] = "shadow"

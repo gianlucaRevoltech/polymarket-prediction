@@ -1,5 +1,62 @@
 # Task Plan: Polymarket Bot — FIX EMERGENZA PERFORMANCE (-5.63%, WR 24%)
 
+## Active Phase CU: hardening post-audit shadow (2026-08-10)
+
+- [x] CU1: inventariare contratti scanner/run/simulator/dashboard e test esistenti
+- [x] CU2: correggere stop sport sulla basis raw ask con migrazione compatibile
+- [x] CU3: congelare domini per run e applicare eligibility wallet-domain
+- [x] CU4: persistere quarantena cross-run dei wallet falliti e integrarla nello scan
+- [x] CU5: rendere lo shadow portfolio-constrained con equity MTM e circuit breaker
+- [x] CU6: esporre metriche e motivi in API/dashboard e aggiornare protocollo operativo
+- [x] CU7: test unitari, migrazioni, suite completa, smoke test e audit del diff
+- [x] CU8: commit/push e consegna rollout VPS sicuro in OBSERVE
+
+Vincoli:
+- nessun capitale reale e nessuna promozione automatica a paper;
+- preservare export e modifiche utente non correlate;
+- il run shadow corrente resta evidenza diagnostica e non viene riscritto;
+- la quarantena usa solo run prospettici conclusi, senza tuning retroattivo.
+
+Errori incontrati:
+- primo inserimento CU fallito per mismatch encoding dell'intestazione storica;
+  retry applicato usando l'ancora ASCII stabile della fase CT.
+- primo inserimento findings CU fallito per la stessa intestazione legacy;
+  retry applicato sull'ancora ASCII della sezione audit shadow.
+- prima suite mirata CU: 34/35 pass; unico failure atteso nel test che richiedeva
+  tre shadow open unconstrained. Aggiornare il contratto a max 2 + reject.
+- seconda suite mirata CU: 65/66 pass; il test attendeva drawdown >3%, ma il
+  run breaker -$6 su $300 scatta correttamente a circa 2,07%. Corretta la soglia
+  del test senza allentare il circuit breaker.
+- una patch combinata su protocollo e piano non si e applicata perche usava il
+  rendering mojibake invece dei caratteri UTF-8 reali; rilettura esplicita UTF-8
+  e retry mirato, senza modifica parziale.
+
+## Active Phase CT: audit shadow 24h (2026-08-10)
+
+- [x] CT1: verificare integrita archivio, commit, run_id e durata
+- [x] CT2: verificare salute processi, feed, ledger e timestamp
+- [x] CT3: ricostruire candidati e motivi di scarto
+- [x] CT4: ricostruire lifecycle shadow, P&L, costi e concentrazioni
+- [x] CT5: verificare anomalie di codice/dati e affidabilita dashboard
+- [x] CT6: formulare verdetto operativo senza modificare il run
+
+Verdetto: raccolta tecnicamente sana, ma NO-GO per paper e denaro reale. Il
+campione shadow perde anche prima delle fee e presenta un bug confermato nella
+basis dello stop sport, domini di validazione adattivi/non congelati e
+riselezione cross-run del wallet gia fallito. Archiviare questo run come
+diagnostica; correggere questi contratti e avviare un nuovo campione indipendente.
+
+Vincoli:
+- audit read-only del bundle `polymarket-shadow-20260810T123016Z.tar.gz`;
+- nessun restart/new-run e nessuna promozione a paper o capitale reale;
+- 24 ore misurano salute/qualita dati, non dimostrano redditivita.
+
+Errori incontrati:
+- lettura combinata dei tre planning file superata dal limite di output e
+  troncata; riprendere con chunk espliciti fino a EOF prima dell'audit.
+- primo inserimento CT fallito per ancora encoding sulla prima intestazione;
+  secondo tentativo multi-file fallito sull'intestazione progress legacy.
+
 ## Active Phase CS: validazione shadow e blocco real-money (2026-08-09)
 
 - [x] CS1: ripristinare contesto, inventario worktree e contratti esistenti
@@ -506,6 +563,7 @@ Vedi `ARBITRAGE_LATENCY_PLAN.md` per Step 2/3 (scaling + diversificazione oracle
 ## Errors Encountered
 | Error | Attempt | Resolution |
 |-------|---------|------------|
+| Output della revisione diff combinata troncato | 1 | Continuare con diff per file, `git diff --check` e suite completa |
 | WR 24%, -$16.89 dopo config aggressivo | 1 | Phase CC-CG: kill perdenti, fix SL, fix entry band, sizing conservativo |
 | SL % triggera su rumore a prezzi estremi | 1 | SL assoluto (cent) + entry band filter |
 | 9 strategie non validate | 1 | Ridurre a 3 (copy+harvest+arb), validare 30 trade |

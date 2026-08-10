@@ -77,6 +77,10 @@ polymarket-prediction/
 ├── data/                    # Dati runtime (creato automaticamente)
 │   ├── scan_results.json    # Risultati scansione wallet
 │   ├── portfolio_state.json # Stato portfolio
+│   ├── shadow_state.json    # Portfolio shadow constrained del run
+│   ├── shadow_journal.jsonl # Lifecycle e scarti shadow append-only
+│   ├── shadow_equity_curve.json # Equity shadow mark-to-market
+│   ├── wallet_validation_registry.json # Quarantena wallet cross-run
 │   └── trades_log.json      # Log trade eseguiti
 ├── logs/                    # Log file (creato automaticamente)
 ├── docs/
@@ -225,14 +229,13 @@ sudo netstat -tulpn | grep 5000
 
 ### Bot non trova wallet
 ```bash
-# Resetta dati
-rm data/scan_results.json
-
-# Aumenta limite in config.py
-SCANNER = {
-    "max_age_days": 180,  # Cerca wallet più vecchi
-}
+# Archivia il run e crea un nuovo cohort con scan fresco.
+# Non cancellare manualmente ledger o registro di validazione.
+./start_all.sh new-run scan
 ```
+
+I wallet con tre perdite shadow consecutive vengono esclusi dai run successivi.
+Il cohort e i domini specialistici restano congelati durante ogni run.
 
 ### Errori API Polymarket
 ```bash

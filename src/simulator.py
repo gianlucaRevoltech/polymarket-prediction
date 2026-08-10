@@ -15,7 +15,7 @@ import hashlib
 import os
 import tempfile
 import shutil
-from collections import deque
+from collections import Counter, deque
 from datetime import datetime, date
 from typing import Dict, Optional, List, Set, Tuple
 from models import Trade, Position, Portfolio
@@ -26,6 +26,7 @@ from config import (
 )
 from time_utils import parse_utc, utc_iso, utc_now_iso
 from validation import evaluate_shadow_run
+from wallet_registry import quarantine_wallet
 
 
 class PaperTradingSimulator:
@@ -46,6 +47,7 @@ class PaperTradingSimulator:
         self.candidate_journal = DATA_DIR / "candidate_journal.jsonl"
         self.shadow_state_file = DATA_DIR / "shadow_state.json"
         self.shadow_journal = DATA_DIR / "shadow_journal.jsonl"
+        self.shadow_equity_file = DATA_DIR / "shadow_equity_curve.json"
 
         self.execution_mode = EXECUTION.get("mode", "observe")
         self.run_id = f"run-{datetime.now().strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:8]}"
@@ -68,10 +70,28 @@ class PaperTradingSimulator:
         self.strategy_mode: str = STRATEGY["mode"]
 
         self._load_state()
+        self.run_intended_domains: List[str] = []
+        self.wallet_allowed_domains: Dict[str, Set[str]] = {}
+        self.run_domains_frozen: bool = False
+        self._load_run_domain_policy()
         self.shadow_positions: Dict[str, Position] = {}
         self.shadow_closed_positions: List[Position] = []
         self.shadow_seen_signal_ids: Set[str] = set()
         self.shadow_state_saved_at: Optional[str] = None
+        self.shadow_initial_capital = float(
+            EXECUTION.get("shadow_initial_capital", initial_capital)
+        )
+        self.shadow_cash = self.shadow_initial_capital
+        self.shadow_run_start_equity = self.shadow_initial_capital
+        self.shadow_daily_start_equity = self.shadow_initial_capital
+        self.shadow_daily_start_date = date.today().isoformat()
+        self.shadow_peak_equity = self.shadow_initial_capital
+        self.shadow_max_drawdown = 0.0
+        self.shadow_halt_reason = ""
+        self.shadow_loss_streak = 0
+        self.shadow_wallet_loss_streaks: Dict[str, int] = {}
+        self.shadow_blocked_conditions: Dict[str, Dict] = {}
+        self.shadow_legacy_unconstrained = False
         self._load_shadow_state()
         self.seen_candidate_signal_ids: Set[str] = set()
         self._load_seen_candidate_signals()
@@ -354,11 +374,116 @@ class PaperTradingSimulator:
         except Exception as exc:
             print(f"[WARNING] candidate journal non leggibile: {exc}")
 
+    def _load_run_domain_policy(self) -> None:
+        """Carica i domini immutabili del manifest wallet del run corrente."""
+        path = DATA_DIR / "monitored_wallets.json"
+        if not path.exists():
+            return
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if data.get("run_id") != self.run_id or not data.get("frozen"):
+                return
+            intended = {
+                str(domain).strip().lower()
+                for domain in data.get("intended_domains", [])
+                if str(domain).strip()
+            }
+            wallet_domains: Dict[str, Set[str]] = {}
+            for raw in data.get("wallets", []):
+                if not isinstance(raw, dict) or not raw.get("address"):
+                    continue
+                allowed = raw.get("allowed_domains") or raw.get("categories") or (
+                    [raw.get("category")] if raw.get("category") else []
+                )
+                wallet_domains[str(raw["address"]).lower()] = {
+                    str(domain).strip().lower()
+                    for domain in allowed if str(domain).strip()
+                }
+            self.run_intended_domains = sorted(intended)
+            self.wallet_allowed_domains = wallet_domains
+            self.run_domains_frozen = bool(
+                int(data.get("domain_policy_version", 0) or 0) >= 1
+                and wallet_domains
+            )
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            print(f"[WARNING] domain policy non leggibile: {exc}")
+
+    def _candidate_domain_rejection(self, source_wallet: str,
+                                    category: str) -> str:
+        if not self.run_domains_frozen:
+            self._load_run_domain_policy()
+        if not self.run_domains_frozen:
+            return ""
+        wallet = str(source_wallet or "").lower()
+        allowed = self.wallet_allowed_domains.get(wallet)
+        if allowed is None:
+            return "wallet_not_in_frozen_manifest"
+        if not allowed:
+            return "wallet_domains_unavailable"
+        if str(category or "other").lower() not in allowed:
+            return "wallet_domain_mismatch"
+        return ""
+
     # ------------------------------------------------------------------
     # Phase CS: cohort shadow indipendente dal portfolio paper
     # ------------------------------------------------------------------
     def _shadow_enabled(self) -> bool:
         return bool(EXECUTION.get("shadow_validation_enabled", True))
+
+    def _shadow_total_value(self) -> float:
+        return self.shadow_cash + sum(
+            pos.current_value for pos in self.shadow_positions.values()
+        )
+
+    def _record_shadow_equity(self) -> None:
+        point = {
+            "timestamp": utc_now_iso(),
+            "run_id": self.run_id,
+            "equity": round(self._shadow_total_value(), 6),
+            "cash": round(self.shadow_cash, 6),
+            "open_positions": len(self.shadow_positions),
+            "closed_positions": len(self.shadow_closed_positions),
+            "halt_reason": self.shadow_halt_reason,
+        }
+        try:
+            curve = []
+            if self.shadow_equity_file.exists():
+                curve = json.loads(
+                    self.shadow_equity_file.read_text(encoding="utf-8")
+                )
+                if not isinstance(curve, list):
+                    curve = []
+            curve.append(point)
+            self._atomic_write_json(self.shadow_equity_file, curve[-10000:])
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            print(f"[ERRORE] shadow equity curve: {exc}")
+
+    def _update_shadow_risk(self, *, record_curve: bool = False) -> str:
+        equity = self._shadow_total_value()
+        self.shadow_peak_equity = max(self.shadow_peak_equity, equity)
+        if self.shadow_peak_equity > 0:
+            self.shadow_max_drawdown = max(
+                self.shadow_max_drawdown,
+                (self.shadow_peak_equity - equity) / self.shadow_peak_equity,
+            )
+        today = date.today().isoformat()
+        if today != self.shadow_daily_start_date and not self.shadow_halt_reason:
+            self.shadow_daily_start_date = today
+            self.shadow_daily_start_equity = equity
+        if not self.shadow_halt_reason:
+            run_loss = equity - self.shadow_run_start_equity
+            daily_loss = equity - self.shadow_daily_start_equity
+            if run_loss <= -abs(float(
+                EXECUTION.get("shadow_run_loss_usdc", 6.0)
+            )):
+                self.shadow_halt_reason = f"run_loss {run_loss:.2f} USD"
+            elif daily_loss <= -abs(float(
+                EXECUTION.get("shadow_daily_loss_usdc", 3.0)
+            )):
+                self.shadow_halt_reason = f"daily_loss {daily_loss:.2f} USD"
+        if record_curve:
+            self._record_shadow_equity()
+        return self.shadow_halt_reason
 
     def _save_shadow_state(self) -> None:
         if not self._shadow_enabled():
@@ -366,9 +491,22 @@ class PaperTradingSimulator:
         saved_at = utc_now_iso()
         try:
             self._atomic_write_json(self.shadow_state_file, {
-                "shadow_version": 1,
+                "shadow_version": 2,
                 "run_id": self.run_id,
                 "enabled": True,
+                "initial_capital": self.shadow_initial_capital,
+                "cash": self.shadow_cash,
+                "run_start_equity": self.shadow_run_start_equity,
+                "daily_start_equity": self.shadow_daily_start_equity,
+                "daily_start_date": self.shadow_daily_start_date,
+                "peak_equity": self.shadow_peak_equity,
+                "max_drawdown": self.shadow_max_drawdown,
+                "halt_reason": self.shadow_halt_reason,
+                "loss_streak": self.shadow_loss_streak,
+                "wallet_loss_streaks": self.shadow_wallet_loss_streaks,
+                "blocked_conditions": self.shadow_blocked_conditions,
+                "legacy_unconstrained": self.shadow_legacy_unconstrained,
+                "intended_domains": self.run_intended_domains,
                 "positions": {
                     pid: self._serialize_position(pos)
                     for pid, pos in self.shadow_positions.items()
@@ -387,6 +525,7 @@ class PaperTradingSimulator:
         if not self._shadow_enabled():
             return
         state = None
+        loaded_shadow_version = 0
         candidates = [self.shadow_state_file, str(self.shadow_state_file) + ".bak"]
         for candidate in candidates:
             path = str(candidate)
@@ -403,6 +542,52 @@ class PaperTradingSimulator:
                 continue
         if state is not None:
             self.shadow_state_saved_at = state.get("saved_at")
+            shadow_version = int(state.get("shadow_version", 1) or 1)
+            loaded_shadow_version = shadow_version
+            if shadow_version >= 2:
+                self.shadow_initial_capital = float(
+                    state.get("initial_capital", self.shadow_initial_capital)
+                )
+                self.shadow_cash = float(
+                    state.get("cash", self.shadow_initial_capital)
+                )
+                self.shadow_run_start_equity = float(
+                    state.get("run_start_equity", self.shadow_initial_capital)
+                )
+                self.shadow_daily_start_equity = float(
+                    state.get("daily_start_equity", self.shadow_initial_capital)
+                )
+                self.shadow_daily_start_date = str(
+                    state.get("daily_start_date", date.today().isoformat())
+                )
+                self.shadow_peak_equity = float(
+                    state.get("peak_equity", self.shadow_initial_capital)
+                )
+                self.shadow_max_drawdown = float(
+                    state.get("max_drawdown", 0.0)
+                )
+                self.shadow_halt_reason = str(state.get("halt_reason", ""))
+                self.shadow_loss_streak = int(state.get("loss_streak", 0) or 0)
+                self.shadow_wallet_loss_streaks = {
+                    str(wallet).lower(): int(streak)
+                    for wallet, streak in state.get(
+                        "wallet_loss_streaks", {}
+                    ).items()
+                }
+                self.shadow_blocked_conditions = dict(
+                    state.get("blocked_conditions", {})
+                )
+                self.shadow_legacy_unconstrained = bool(
+                    state.get("legacy_unconstrained", False)
+                )
+            else:
+                # Il cohort v1 non aveva cash/cap e puo contenere oltre due
+                # posizioni. Viene preservato e gestito, ma non riceve nuovi
+                # ingressi: soltanto un new-run crea un campione v2 valido.
+                self.shadow_legacy_unconstrained = True
+                self.shadow_halt_reason = (
+                    "legacy_unconstrained_shadow_requires_new_run"
+                )
             for pid, raw in state.get("positions", {}).items():
                 pos = self._deserialize_position(raw)
                 self.shadow_positions[pid] = pos
@@ -428,11 +613,28 @@ class PaperTradingSimulator:
                             self.shadow_seen_signal_ids.add(signal_id)
             except OSError:
                 pass
+        if state is not None and loaded_shadow_version < 2:
+            all_positions = (
+                list(self.shadow_positions.values())
+                + self.shadow_closed_positions
+            )
+            self.shadow_cash = self.shadow_initial_capital - sum(
+                pos.size_usdc for pos in all_positions
+            ) + sum(
+                pos.shares * float(pos.exit_price or 0.0)
+                for pos in self.shadow_closed_positions
+            )
+        self.shadow_peak_equity = max(
+            self.shadow_initial_capital,
+            self.shadow_peak_equity,
+            self._shadow_total_value(),
+        )
+        self._update_shadow_risk()
 
     def _shadow_log(self, action: str, pos: Position, *, raw_price=None,
                     reason: str = "", costs: Optional[Dict] = None) -> None:
         row = {
-            "shadow_version": 1,
+            "shadow_version": 2,
             "run_id": self.run_id,
             "timestamp": utc_now_iso(),
             "action": action,
@@ -458,6 +660,9 @@ class PaperTradingSimulator:
             "pnl": pos.pnl,
             "reason": reason,
             "costs": costs or {},
+            "shadow_cash": self.shadow_cash,
+            "shadow_equity": self._shadow_total_value(),
+            "shadow_halt_reason": self.shadow_halt_reason,
         }
         try:
             DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -466,12 +671,91 @@ class PaperTradingSimulator:
         except Exception as exc:
             print(f"[ERRORE] shadow journal: {exc}")
 
+    def _shadow_log_candidate(self, action: str, source_wallet: str,
+                              info: Dict, evaluation: Dict,
+                              reason: str) -> None:
+        row = {
+            "shadow_version": 2,
+            "run_id": self.run_id,
+            "timestamp": utc_now_iso(),
+            "action": action,
+            "signal_id": str(evaluation.get("signal_id", "")),
+            "wallet": source_wallet,
+            "asset": info.get("asset", ""),
+            "condition_id": info.get("condition_id", ""),
+            "event_slug": info.get("event_slug", ""),
+            "event_title": info.get("event_title", ""),
+            "market": info.get("title", ""),
+            "outcome": info.get("outcome", ""),
+            "category": info.get("category", ""),
+            "entry_best_bid": evaluation.get("executable_bid_vwap"),
+            "entry_best_ask": evaluation.get("executable_ask_vwap"),
+            "entry_price": evaluation.get("entry_price"),
+            "size_usdc": evaluation.get("planned_size_usdc"),
+            "reason": reason,
+            "shadow_cash": self.shadow_cash,
+            "shadow_equity": self._shadow_total_value(),
+            "shadow_halt_reason": self.shadow_halt_reason,
+        }
+        try:
+            DATA_DIR.mkdir(parents=True, exist_ok=True)
+            with open(self.shadow_journal, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+        except Exception as exc:
+            print(f"[ERRORE] shadow candidate journal: {exc}")
+
+    def _shadow_opening_rejection(self, source_wallet: str, info: Dict) -> str:
+        if self.shadow_legacy_unconstrained:
+            return "legacy_unconstrained_shadow_requires_new_run"
+        halt = self._update_shadow_risk()
+        if halt:
+            return halt
+        max_positions = int(EXECUTION.get("shadow_max_open_positions", 2))
+        if len(self.shadow_positions) >= max_positions:
+            return "max_open_positions"
+        asset = str(info.get("asset", ""))
+        condition_id = str(info.get("condition_id", ""))
+        event_slug = str(info.get("event_slug", ""))
+        if not event_slug:
+            return "missing_event_slug"
+        if any(pos.asset == asset for pos in self.shadow_positions.values()):
+            return "duplicate_open_asset"
+        if condition_id and any(
+            pos.condition_id == condition_id
+            for pos in self.shadow_positions.values()
+        ):
+            return "duplicate_open_condition"
+        if condition_id in self.shadow_blocked_conditions:
+            return "condition_blocked_after_stop_loss"
+        if any(
+            (pos.event_slug or pos.condition_id) == event_slug
+            for pos in self.shadow_positions.values()
+        ):
+            return "event_position_cap"
+        size = float(EXECUTION.get("paper_size_usdc", 5.0))
+        event_cap = self.shadow_initial_capital * float(
+            EXECUTION.get("shadow_event_cap_pct", 0.03)
+        )
+        if size > event_cap + 1e-9:
+            return "event_exposure_cap"
+        if self.shadow_cash + 1e-9 < size:
+            return "insufficient_shadow_cash"
+        return ""
+
     def _open_shadow_candidate(self, source_wallet: str, info: Dict,
                                evaluation: Dict) -> bool:
         if not self._shadow_enabled() or not evaluation.get("eligible"):
             return False
         signal_id = str(evaluation.get("signal_id", ""))
         if not signal_id or signal_id in self.shadow_seen_signal_ids:
+            return False
+        rejection = self._shadow_opening_rejection(source_wallet, info)
+        if rejection:
+            self.shadow_seen_signal_ids.add(signal_id)
+            self._shadow_log_candidate(
+                "rejected", source_wallet, info, evaluation, rejection
+            )
+            self._save_shadow_state()
             return False
         entry_price = float(evaluation["entry_price"])
         shares = float(evaluation["shares"])
@@ -510,12 +794,14 @@ class PaperTradingSimulator:
         position.strategy = "copy"
         position.current_price = self._net_liquidation_price(position, raw_bid)
         position.current_price_net_of_exit_fee = True
+        self.shadow_cash -= position.size_usdc
         self.shadow_positions[position.position_id] = position
         self.shadow_seen_signal_ids.add(signal_id)
         self._shadow_log(
             "opened", position, raw_price=raw_ask,
             reason="passed_pretrade_checks", costs=evaluation.get("costs"),
         )
+        self._update_shadow_risk(record_curve=True)
         self._save_shadow_state()
         # Anche una chiamata diretta in OBSERVE deve rendere persistente il
         # run_id prima di un restart; il ciclo normale salva comunque il ledger.
@@ -540,6 +826,51 @@ class PaperTradingSimulator:
                 return 0.0
         return None
 
+    def _record_shadow_close_risk(self, pos: Position, reason: str) -> None:
+        if reason == "stop_loss" and pos.condition_id:
+            self.shadow_blocked_conditions[pos.condition_id] = {
+                "blocked_at": utc_now_iso(),
+                "event_slug": pos.event_slug,
+                "market": pos.market_title,
+                "reason": "stop_loss_until_resolution",
+            }
+        elif reason == "resolved" and pos.condition_id:
+            self.shadow_blocked_conditions.pop(pos.condition_id, None)
+
+        wallet = str(pos.source_wallet or "").lower()
+        if pos.pnl < 0:
+            self.shadow_loss_streak += 1
+            if wallet:
+                self.shadow_wallet_loss_streaks[wallet] = (
+                    self.shadow_wallet_loss_streaks.get(wallet, 0) + 1
+                )
+            max_losses = int(
+                EXECUTION.get("shadow_max_consecutive_losses", 3)
+            )
+            if self.shadow_loss_streak >= max_losses:
+                self.shadow_halt_reason = (
+                    f"copy: {max_losses} consecutive shadow losses"
+                )
+            wallet_max = int(
+                EXECUTION.get("wallet_quarantine_consecutive_losses", 3)
+            )
+            wallet_streak = self.shadow_wallet_loss_streaks.get(wallet, 0)
+            if wallet and wallet_streak >= wallet_max:
+                try:
+                    quarantine_wallet(
+                        DATA_DIR,
+                        wallet,
+                        run_id=self.run_id,
+                        reason="shadow_consecutive_losses",
+                        loss_streak=wallet_streak,
+                    )
+                except OSError as exc:
+                    print(f"[ERRORE] wallet quarantine registry: {exc}")
+        else:
+            self.shadow_loss_streak = 0
+            if wallet:
+                self.shadow_wallet_loss_streaks[wallet] = 0
+
     def _close_shadow(self, pid: str, raw_exit_price: float, reason: str) -> bool:
         pos = self.shadow_positions.get(pid)
         if pos is None:
@@ -549,8 +880,11 @@ class PaperTradingSimulator:
         pos.close_reason = reason
         pos.close(exit_eff, datetime.now())
         pos.last_mark_at = datetime.now()
+        self.shadow_cash += pos.shares * exit_eff
         self.shadow_closed_positions.append(pos)
         del self.shadow_positions[pid]
+        self._record_shadow_close_risk(pos, reason)
+        self._update_shadow_risk(record_curve=True)
         self._shadow_log(
             "closed", pos, raw_price=raw_exit, reason=reason,
             costs={
@@ -579,6 +913,7 @@ class PaperTradingSimulator:
                 )
                 changed = True
         if changed:
+            self._update_shadow_risk(record_curve=True)
             self._save_shadow_state()
         if not self.shadow_positions:
             return
@@ -636,6 +971,7 @@ class PaperTradingSimulator:
                 self._close_shadow(pid, raw_bid, "take_profit")
 
         if changed:
+            self._update_shadow_risk(record_curve=True)
             self._save_shadow_state()
 
     @staticmethod
@@ -792,7 +1128,15 @@ class PaperTradingSimulator:
             cfg = STRATEGIES.get("copy", {})
             sl_abs = cfg.get("sport_stop_loss_abs", -0.05)
             hard_abs = cfg.get("sport_hard_stop_loss_abs", -0.10)
-            delta = cur - pos.entry_price
+            # Lo stop assoluto misura il movimento del mercato ask->bid. La
+            # entry economica include la fee e anticiperebbe artificialmente lo
+            # stop. I ledger legacy senza raw ask mantengono il fallback
+            # conservativo all'entry economica.
+            raw_entry = (
+                float(pos.entry_best_ask)
+                if pos.entry_best_ask is not None else float(pos.entry_price)
+            )
+            delta = cur - raw_entry
             pnl_pct = (cur - pos.entry_price) / pos.entry_price
             if delta <= hard_abs:
                 return "hard_sl"
@@ -1250,6 +1594,11 @@ class PaperTradingSimulator:
             info.get("title", ""), event_slug=info.get("event_slug", "")
         )
         info["category"] = category
+        domain_rejection = self._candidate_domain_rejection(
+            source_wallet, category
+        )
+        if domain_rejection:
+            return reject(domain_rejection)
         if not info.get("fee_metadata_known", False):
             return reject("fee_schedule_unavailable")
         fees_enabled = info.get("fees_enabled")
@@ -2626,23 +2975,64 @@ class PaperTradingSimulator:
         realized = sum(pos.pnl for pos in closed_positions)
         unrealized = sum(pos.pnl for pos in open_positions)
         wins = sum(1 for pos in closed_positions if pos.pnl > 0)
-        domains = sorted({
-            (pos.category or "other") for pos in closed_positions
-        })
+        if not self.run_domains_frozen:
+            self._load_run_domain_policy()
+        domains = list(self.run_intended_domains)
         evaluation = evaluate_shadow_run(
             closed_positions,
             self.run_id,
             intended_domains=domains,
             bootstrap_iterations=2000,
+            max_drawdown_override=self.shadow_max_drawdown,
         )
         metrics = evaluation.get("metrics", {})
         ci_lower = metrics.get("bootstrap_ci95_lower_ev")
         if ci_lower in (float("inf"), float("-inf")):
             ci_lower = None
+        shadow_actions: Counter = Counter()
+        shadow_rejection_reasons: Counter = Counter()
+        if self.shadow_journal.exists():
+            try:
+                with open(self.shadow_journal, encoding="utf-8") as fh:
+                    for line in fh:
+                        try:
+                            row = json.loads(line)
+                        except (json.JSONDecodeError, TypeError):
+                            continue
+                        if row.get("run_id") != self.run_id:
+                            continue
+                        action = str(row.get("action", "unknown"))
+                        shadow_actions[action] += 1
+                        if action == "rejected":
+                            shadow_rejection_reasons[
+                                str(row.get("reason") or "unknown")
+                            ] += 1
+            except OSError:
+                pass
         return {
             "enabled": self._shadow_enabled(),
             "run_id": self.run_id,
             "state_saved_at": self.shadow_state_saved_at,
+            "state_version": 2,
+            "initial_capital": self.shadow_initial_capital,
+            "cash": self.shadow_cash,
+            "equity": self._shadow_total_value(),
+            "deployed_usdc": sum(pos.size_usdc for pos in open_positions),
+            "max_open_positions": int(
+                EXECUTION.get("shadow_max_open_positions", 2)
+            ),
+            "peak_equity": self.shadow_peak_equity,
+            "max_drawdown": self.shadow_max_drawdown,
+            "halt_reason": self.shadow_halt_reason,
+            "loss_streak": self.shadow_loss_streak,
+            "blocked_conditions": sorted(self.shadow_blocked_conditions),
+            "journal_actions": dict(shadow_actions),
+            "rejected_candidates": shadow_actions.get("rejected", 0),
+            "rejection_reasons": dict(
+                shadow_rejection_reasons.most_common(10)
+            ),
+            "legacy_unconstrained": self.shadow_legacy_unconstrained,
+            "domain_policy_frozen": self.run_domains_frozen,
             "open_positions": len(open_positions),
             "closed_positions": len(closed_positions),
             "winning_trades": wins,

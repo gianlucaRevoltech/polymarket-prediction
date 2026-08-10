@@ -157,7 +157,9 @@ archive_run() {
     equity_curve.json peak_equity.json recent_opens.json daily_halt.json \
     safety_state.json candidate_journal.jsonl monitored_wallets.json \
     wallet_quality.json runtime_status.json shadow_state.json \
-    shadow_state.json.bak shadow_journal.jsonl; do
+    shadow_state.json.bak shadow_journal.jsonl shadow_equity_curve.json \
+    shadow_equity_curve.json.bak \
+    wallet_validation_registry.json scan_results.json; do
     if [ -f "$DATA_DIR/$file" ]; then
       cp -a "$DATA_DIR/$file" "$archive_dir/$file"
     fi
@@ -201,6 +203,7 @@ clear_trading_state() {
   rm -f "$DATA_DIR/safety_state.json" "$DATA_DIR/candidate_journal.jsonl"
   rm -f "$DATA_DIR/shadow_state.json" "$DATA_DIR/shadow_state.json.bak"
   rm -f "$DATA_DIR/shadow_journal.jsonl"
+  rm -f "$DATA_DIR/shadow_equity_curve.json" "$DATA_DIR/shadow_equity_curve.json.bak"
   rm -f "$DATA_DIR/monitored_wallets.json"
   rm -f "$DATA_DIR/wallet_quality.json" "$DATA_DIR/runtime_status.json"
   # Phase W: price history (momentum tracker) — no stale trend data dopo reset

@@ -51,12 +51,24 @@ class DashboardApiTests(unittest.TestCase):
                 )
                 (data / "monitored_wallets.json").write_text(json.dumps({
                     "run_id": sim.run_id,
+                    "frozen": True,
+                    "domain_policy_version": 1,
+                    "intended_domains": ["macro"],
                     "wallets": [{
                         "address": "0xactual",
                         "name": "Actual Wallet",
                         "win_rate": 0.55,
+                        "allowed_domains": ["macro"],
                     }],
                 }), encoding="utf-8")
+                (data / "wallet_validation_registry.json").write_text(
+                    json.dumps({
+                        "registry_version": 1,
+                        "wallets": {
+                            "0xbad": {"status": "quarantined"},
+                        },
+                    }), encoding="utf-8",
+                )
 
                 client = dashboard.app.test_client()
                 response = client.get("/api/status")
@@ -74,6 +86,15 @@ class DashboardApiTests(unittest.TestCase):
                 self.assertEqual(payload["candidate_summary"]["passed_pretrade"], 1)
                 self.assertFalse(
                     payload["shadow_validation"]["real_money_authorized"]
+                )
+                self.assertTrue(
+                    payload["shadow_validation"]["domain_policy_frozen"]
+                )
+                self.assertEqual(
+                    payload["shadow_validation"]["max_open_positions"], 2
+                )
+                self.assertEqual(
+                    payload["wallet_validation_registry"]["quarantined_count"], 1
                 )
                 shadow_response = client.get("/api/shadow?limit=50")
                 self.assertIn("no-store", shadow_response.headers["Cache-Control"])

@@ -349,6 +349,61 @@ class ObserveMonitoringTests(unittest.TestCase):
                 bot._maybe_auto_rescan()
                 bot._run_wallet_scan.assert_not_called()
 
+    def test_wallet_manifest_freezes_allowed_and_intended_domains(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp)
+            (data / "scan_results.json").write_text(json.dumps({
+                "wallets": [
+                    {"address": "0xa", "category": "macro",
+                     "categories": ["macro", "politics"]},
+                    {"address": "0xb", "category": "geopolitics",
+                     "categories": ["geopolitics"]},
+                ],
+            }), encoding="utf-8")
+            bot = main_module.PolymarketPaperTradingBot.__new__(
+                main_module.PolymarketPaperTradingBot
+            )
+            bot.simulator = SimpleNamespace(
+                run_id="run-current", execution_mode="observe"
+            )
+            bot.monitored_addresses = ["0xa", "0xb"]
+            with mock.patch.object(main_module, "DATA_DIR", data):
+                bot._persist_monitored_wallets()
+            manifest = json.loads(
+                (data / "monitored_wallets.json").read_text()
+            )
+            self.assertEqual(manifest["domain_policy_version"], 1)
+            self.assertEqual(
+                manifest["intended_domains"],
+                ["geopolitics", "macro", "politics"],
+            )
+            self.assertEqual(
+                manifest["wallets"][0]["allowed_domains"],
+                ["macro", "politics"],
+            )
+
+    def test_new_run_seed_excludes_cross_run_quarantined_wallet(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp)
+            (data / "scan_results.json").write_text(json.dumps({
+                "wallets": [
+                    {"address": "0xbad"},
+                    {"address": "0xgood"},
+                ],
+            }), encoding="utf-8")
+            (data / "wallet_validation_registry.json").write_text(json.dumps({
+                "registry_version": 1,
+                "wallets": {"0xbad": {"status": "quarantined"}},
+            }), encoding="utf-8")
+            bot = main_module.PolymarketPaperTradingBot.__new__(
+                main_module.PolymarketPaperTradingBot
+            )
+            bot.simulator = SimpleNamespace(
+                run_id="run-new", execution_mode="observe"
+            )
+            with mock.patch.object(main_module, "DATA_DIR", data):
+                self.assertEqual(bot.load_monitored_from_file(), ["0xgood"])
+
     def test_bot_health_becomes_stale_after_sixty_seconds(self):
         old = (datetime.now(timezone.utc) - timedelta(seconds=61)).isoformat()
         with mock.patch.object(dashboard, "get_bot_status", return_value="running"):

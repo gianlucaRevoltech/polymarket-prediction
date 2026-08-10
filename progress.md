@@ -1,5 +1,42 @@
 # Progress Log — Polymarket Copy Bot
 
+## 2026-08-10 - Revisione diff hardening shadow
+
+- Il diff corrente resta circoscritto a simulatore, selezione wallet, persistenza run, dashboard, documentazione e test.
+- Verificato che il manifest del run corrente resta congelato; la quarantena cross-run viene applicata soltanto alla selezione del run successivo.
+- Verificati nel diff shadow v2, drawdown MTM persistente e policy dei domini congelata.
+- La lettura combinata del diff ha superato il limite di output: la revisione finale prosegue per file e con controlli automatici.
+- Aggiunti nel riepilogo shadow il conteggio degli ingressi rifiutati e i principali motivi, ora visibili anche in dashboard.
+- Verificato che l'archiviazione `new-run` include stato, journal, curva equity e registro wallet; non esiste un exporter runtime separato da aggiornare.
+- Verifica integrale superata: `compileall`, 67 test `unittest`, sintassi JavaScript, sintassi Bash e `git diff --check` tutti OK.
+- Gli export e gli altri file diagnostici non tracciati dell'utente restano esclusi dalla modifica.
+- Revisione dei file core completata; corretta anche la documentazione inline obsoleta sul cash shadow e reso conservativo l'override del drawdown (`max` tra serie chiusa e MTM persistito).
+- Revisione manuale del lifecycle shadow completata: migrazione v1 conserva e gestisce le posizioni ma blocca nuovi ingressi; ogni rifiuto viene deduplicato; le chiusure aggiornano cash, streak, blocchi condizione e breaker persistenti.
+- Ultimo rerun dopo la revisione: 67/67 test OK, compilazione Python, JavaScript inline, Bash e whitespace diff tutti OK.
+- Commit di hardening creato; resta soltanto la pubblicazione su `origin/main` e la consegna dei comandi VPS.
+
+## SESSIONE 2026-08-10 - Phase CT audit shadow 24h
+
+- Ricevuto bundle VPS `exports/polymarket-shadow-20260810T123016Z.tar.gz`.
+- Avviato audit read-only; nessuna modifica al run VPS durante la diagnosi.
+- Ripristinato integralmente `task_plan.md`; lettura di `progress.md` e
+  `findings.md` prosegue a chunk per evitare truncation.
+- Ripristinato integralmente anche `progress.md`; restano i chunk completi di
+  `findings.md` prima di aprire il bundle.
+- Letti i primi 800/1198 record-line di `findings.md`; confermati i vincoli
+  vigenti: solo run corrente, costi eseguibili e nessuna inferenza real-money.
+- Ripristinato integralmente anche `findings.md`; contesto storico completo.
+- Verificata integrita del bundle e inventario: tutti gli artefatti richiesti
+  sono presenti; SHA-256 registrato in findings.
+- Riconciliati ledger/API/journal: salute operativa ottima ma risultato shadow
+  fortemente negativo; dettagli economici e concentrazione salvati in findings.
+- Eseguite sensitivity descrittive per evento, max2, safety e notional sorgente;
+  nessuna ribalta il segno. Avviato audit semantica stop sport.
+- Confermato difetto stop fee-inclusive e due lacune metodologiche: reselezione
+  cross-run del wallet fallito e domini di validazione derivati a posteriori.
+- Auditata completezza candidate e continuita log: feed/journal sono affidabili;
+  la durata effettiva del bundle e 21,37h, non 24h.
+
 ## SESSIONE 2026-08-06 — Phase CO copertura feed
 
 ### Evidenza VPS
@@ -846,3 +883,29 @@ OBSERVE di default, COPY unica candidata futura, nessun capitale reale.
   rollout OBSERVE esplicito e API/lifecycle documentati.
 - Verifica finale pre-commit: 55/55 unittest, compileall, sintassi JS, `bash -n`
   tramite Git Bash e `git diff --check` tutti superati.
+# Audit shadow 2026-08-10 — completato
+
+## Hardening post-audit shadow 2026-08-10 — avvio
+
+- Ripristinato il contesto storico e aggiunta la fase CU al piano.
+- Scope confermato: correggere contratti di stop, domini, quarantena cross-run,
+  shadow vincolato, API/dashboard e test; nessun ordine reale e nessuna
+  mutazione degli export diagnostici.
+- Worktree iniziale contiene soltanto planning file già aggiornati e file utente
+  non tracciati (`exports/`, bundle osservazione e file diagnostici): preservarli.
+- Ripristinati i primi 700 record-line del progress storico: i nuovi cambiamenti
+  devono restare compatibili con journal v5, state v3, fee dinamiche e run
+  archiviati; latency-arb e strategie diverse da COPY restano fuori scope.
+- Ripristinati integralmente `progress.md` e `findings.md`; le vecchie stime di
+  edge/doubling sono esplicitamente superate dagli audit prospettici recenti.
+- CU1 inventario completato: definiti schema shadow v2, manifest domini,
+  registro cross-run preservato e contratti di migrazione/test.
+
+
+- Verificato archivio `polymarket-shadow-20260810T123016Z.tar.gz`: SHA-256 `8780A12903F14EA2C9521C6294840E26A6768B1D08E3D49643FCE311741905A6`, commit VPS `f5660fa2786c878e51ee5ffec0c9a9a18ddd7aa7`, run `run-20260809T150817-a2d0f4b3`.
+- Durata effettiva 21,37 ore; 3.403 cicli/curve points, gap massimo 27,58 secondi, nessun traceback, errore feed, HTTP 400/429 o ledger stale.
+- Ricostruiti 106 candidati unici: 38 eligible e 68 rejected; tutti i record eligible hanno sorgente, book, VWAP, fee, evento e timestamp completi.
+- Ricostruito shadow: 38 aperture, 32 chiusure, 6 aperte; 3W/29L, P&L realizzato -$16,005620, unrealized -$1,331962, totale -$17,337582.
+- Il movimento lordo ask→bid dei chiusi è già -$8,483044; fee complessive -$7,522576. EV/trade netto -$0,500176; bootstrap CI95 per evento circa [-$0,7281, -$0,2793].
+- Confermati tre difetti metodologici: stop sport misurato dall'entry economica inclusiva di fee invece che dal raw ask; domini intended ricavati post-hoc dai trade; assenza di quarantena cross-run per wallet già falliti.
+- Verdetto operativo: NO-GO. Nessuna modifica al bot o allo stato VPS effettuata durante questo audit.

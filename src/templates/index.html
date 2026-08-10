@@ -902,7 +902,7 @@
             }
 
             // Dashboard v2: risk + cluster
-            updateRiskDashboard(summary);
+            updateRiskDashboard(summary, data.wallet_validation_registry || {});
             updateClusterExposure(summary);
             updateCandidateJournal(data.candidate_summary || {}, data.recent_candidates || []);
             updateShadowValidation(
@@ -1192,6 +1192,18 @@
             const passed = Object.values(checks).filter(Boolean).length;
             const totalChecks = Object.keys(checks).length;
             const ready = Boolean(summary.eligible_for_independent_paper);
+            const equity = Number(summary.equity ?? summary.initial_capital ?? 0);
+            const cash = Number(summary.cash ?? summary.initial_capital ?? 0);
+            const drawdown = Number(summary.max_drawdown || 0) * 100;
+            const maxOpen = Number(summary.max_open_positions || 2);
+            const halt = summary.halt_reason || '';
+            const domains = Array.isArray(summary.intended_domains)
+                ? summary.intended_domains.join(', ') : '-';
+            const rejected = Number(summary.rejected_candidates || 0);
+            const rejectionReasons = summary.rejection_reasons || {};
+            const topRejection = Object.entries(rejectionReasons)[0];
+            const topRejectionText = topRejection
+                ? `${topRejection[0]} (${topRejection[1]})` : 'nessuno';
             document.getElementById('shadowCount').textContent = closed + ' chiusi';
             document.getElementById('shadowSummary').innerHTML =
                 `<div class="strat-summary">
@@ -1210,6 +1222,22 @@
                     <div class="strat-card" style="border-left-color:${ready ? '#34d399' : '#ef4444'}">
                         <div class="label">Prossimo stadio</div><div class="val">${ready ? 'PAPER INDIPENDENTE' : 'NON PRONTO'}</div>
                         <div class="label">Denaro reale: SEMPRE BLOCCATO</div>
+                    </div>
+                    <div class="strat-card" style="border-left-color:#a78bfa">
+                        <div class="label">Portfolio shadow constrained</div><div class="val">${formatMoney(equity)}</div>
+                        <div class="label">Cash ${formatMoney(cash)} · posizioni ${open}/${maxOpen}</div>
+                    </div>
+                    <div class="strat-card" style="border-left-color:${halt ? '#ef4444' : '#34d399'}">
+                        <div class="label">Drawdown MTM</div><div class="val">${drawdown.toFixed(2)}%</div>
+                        <div class="label">${escapeHtml(halt || 'Circuit breaker libero')}</div>
+                    </div>
+                    <div class="strat-card" style="border-left-color:#38bdf8">
+                        <div class="label">Domini congelati</div><div class="val">${summary.domain_policy_frozen ? 'SÌ' : 'NO'}</div>
+                        <div class="label">${escapeHtml(domains)}</div>
+                    </div>
+                    <div class="strat-card" style="border-left-color:#fb923c">
+                        <div class="label">Ingressi shadow rifiutati</div><div class="val">${rejected}</div>
+                        <div class="label">Top: ${escapeHtml(topRejectionText)}</div>
                     </div>
                 </div>`;
 
@@ -1247,7 +1275,7 @@
         }
 
         // Dashboard v2: Risk & System Info
-        function updateRiskDashboard(summary) {
+        function updateRiskDashboard(summary, walletRegistry) {
             const container = document.getElementById('riskContainer');
             if (!summary) { container.innerHTML = '<div class="empty-state"><div>Dati non disponibili</div></div>'; return; }
             const tier = summary.sizing_tier || {};
@@ -1262,6 +1290,8 @@
             const strategies = summary.active_strategies || [];
             const mode = (summary.execution_mode || 'observe').toUpperCase();
             const halt = summary.halt_reason || '';
+            const quarantinedWallets = Number(walletRegistry.quarantined_count || 0);
+            const registryError = walletRegistry.load_error || '';
             let html = '<div class="strat-summary">';
             html += `<div class="strat-card" style="border-left-color:#ef4444"><div class="label">Execution Mode</div><div class="val">${escapeHtml(mode)}</div><div class="label" style="margin-top:4px">${escapeHtml(halt || 'nessun halt')}</div></div>`;
             html += `<div class="strat-card" style="border-left-color:#60a5fa"><div class="label">Paper Size</div><div class="val">$5</div><div class="label" style="margin-top:4px">Run: ${escapeHtml((summary.run_id||'').slice(0,24))}</div></div>`;
@@ -1270,6 +1300,7 @@
             html += `<div class="strat-card" style="border-left-color:${rf<=0?'#f87171':rf<1?'#fbbf24':'#34d399'}"><div class="label">Risk Factor</div><div class="val ${rfClass}">${rfLabel}</div><div class="label" style="margin-top:4px">Trailing: ${summary.trailing_stop_enabled?'ON':'OFF'} | Kelly: ${summary.kelly_enabled?'ON':'OFF'}</div></div>`;
             html += `<div class="strat-card" style="border-left-color:#c084fc"><div class="label">Strategie Scansionate</div><div class="val">${strategies.length}</div><div class="label" style="margin-top:4px">${strategies.join(', ')}</div></div>`;
             html += `<div class="strat-card" style="border-left-color:#f472b6"><div class="label">Posizioni</div><div class="val">${summary.open_positions||0}/${summary.max_open_positions||0}</div><div class="label" style="margin-top:4px">Chiuse: ${summary.closed_positions||0} | WR: ${(summary.win_rate||0).toFixed(0)}%</div></div>`;
+            html += `<div class="strat-card" style="border-left-color:${registryError?'#ef4444':'#fb7185'}"><div class="label">Wallet Quarantena Cross-run</div><div class="val">${quarantinedWallets}</div><div class="label" style="margin-top:4px">${escapeHtml(registryError || 'esclusi dai prossimi run')}</div></div>`;
             html += '</div>';
             container.innerHTML = html;
         }

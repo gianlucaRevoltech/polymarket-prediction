@@ -29,6 +29,12 @@ class RunStateTests(unittest.TestCase):
             (data / "wallet_quality.json").write_text('{"wallet": {"pnl": -1}}')
             (data / "shadow_state.json").write_text('{"shadow_version": 1}')
             (data / "shadow_journal.jsonl").write_text('{"action": "opened"}\n')
+            (data / "shadow_equity_curve.json").write_text("[]")
+            (data / "wallet_validation_registry.json").write_text(json.dumps({
+                "registry_version": 1,
+                "wallets": {"0xbad": {"status": "quarantined"}},
+            }))
+            (data / "scan_results.json").write_text('{"wallets": []}')
 
             with mock.patch.object(run_state, "ROOT", root), \
                  mock.patch.object(run_state, "DATA", data), \
@@ -39,11 +45,21 @@ class RunStateTests(unittest.TestCase):
                 self.assertTrue((archived / "wallet_quality.json").exists())
                 self.assertTrue((archived / "shadow_state.json").exists())
                 self.assertTrue((archived / "shadow_journal.jsonl").exists())
+                self.assertTrue((archived / "shadow_equity_curve.json").exists())
+                self.assertTrue(
+                    (archived / "wallet_validation_registry.json").exists()
+                )
+                self.assertTrue((archived / "scan_results.json").exists())
                 run_state.clear(force=True)
                 self.assertFalse((data / "portfolio_state.json").exists())
                 self.assertFalse((data / "wallet_quality.json").exists())
                 self.assertFalse((data / "shadow_state.json").exists())
                 self.assertFalse((data / "shadow_journal.jsonl").exists())
+                self.assertFalse((data / "shadow_equity_curve.json").exists())
+                self.assertTrue(
+                    (data / "wallet_validation_registry.json").exists()
+                )
+                self.assertTrue((data / "scan_results.json").exists())
                 self.assertTrue((archived / "portfolio_state.json").exists())
                 self.assertTrue((archived / "shadow_state.json").exists())
 

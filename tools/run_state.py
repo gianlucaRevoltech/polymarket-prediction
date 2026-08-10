@@ -22,9 +22,16 @@ LEDGER_FILES = (
     "shadow_state.json",
     "shadow_state.json.bak",
     "shadow_journal.jsonl",
+    "shadow_equity_curve.json",
+    "shadow_equity_curve.json.bak",
     "monitored_wallets.json",
     "wallet_quality.json",
     "runtime_status.json",
+)
+
+PRESERVED_EVIDENCE_FILES = (
+    "wallet_validation_registry.json",
+    "scan_results.json",
 )
 
 CLEAR_FILES = LEDGER_FILES + (
@@ -62,7 +69,7 @@ def archive() -> Path:
             f"{run_id}-{datetime.now(timezone.utc):%Y%m%dT%H%M%S}"
         )
     target.mkdir(parents=True, exist_ok=False)
-    for name in LEDGER_FILES:
+    for name in LEDGER_FILES + PRESERVED_EVIDENCE_FILES:
         source = DATA / name
         if source.is_file():
             shutil.copy2(source, target / name)

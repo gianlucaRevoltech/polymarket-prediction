@@ -23,6 +23,7 @@ from backtester import Backtester
 from categories import categorize_market
 from config import POLYMARKET_API, SCANNER, CATEGORIES, DATA_DIR
 from time_utils import utc_now_iso
+from wallet_registry import quarantined_wallets
 
 
 class PolymarketScanner:
@@ -463,6 +464,7 @@ class PolymarketScanner:
 
         per_cat = cfg["specialists_per_category"]
         results_by_cat: Dict[str, List[Dict]] = {}
+        excluded_wallets = quarantined_wallets(DATA_DIR)
 
         for cat in cfg["active"]:
             cat_markets = by_cat.get(cat, [])
@@ -478,8 +480,24 @@ class PolymarketScanner:
                 min_realized_roi=cfg["min_realized_roi"],
                 min_decided=cfg["min_decided"],
                 min_win_rate=cfg.get("min_win_rate", 0.55))
+            if excluded_wallets:
+                qualified = [
+                    wallet for wallet in qualified
+                    if str(wallet.get("address", "")).lower() not in excluded_wallets
+                ]
             results_by_cat[cat] = qualified[:per_cat]
             print(f"  -> {len(results_by_cat[cat])} specialisti '{cat}'")
+
+        if excluded_wallets:
+            print(
+                f"  [VALIDATION] {len(excluded_wallets)} wallet in quarantena "
+                "cross-run esclusi dallo scan"
+            )
+
+        qualified_domains: Dict[str, set] = defaultdict(set)
+        for cat, wallets in results_by_cat.items():
+            for wallet in wallets:
+                qualified_domains[str(wallet.get("address", "")).lower()].add(cat)
 
         # Interleaving bilanciato tra categorie (round-robin) fino a top_n,
         # deduplicando per indirizzo (un wallet puo' essere specialista in piu
@@ -497,6 +515,9 @@ class PolymarketScanner:
                     if w["address"] in seen_addr:
                         continue
                     w["category"] = cat
+                    w["categories"] = sorted(
+                        qualified_domains.get(str(w["address"]).lower(), {cat})
+                    )
                     seen_addr.add(w["address"])
                     interleaved.append(w)
                     if len(interleaved) >= top_n:
@@ -743,6 +764,9 @@ class PolymarketScanner:
                 "win_rate": e.get("win_rate", w.win_rate),
                 "decided_positions": e.get("decided", w.num_trades),
                 "category": e.get("category", ""),
+                "categories": list(e.get("categories") or (
+                    [e.get("category")] if e.get("category") else []
+                )),
             })
 
         data = {
