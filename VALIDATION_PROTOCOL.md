@@ -6,7 +6,7 @@ Ogni candidato viene comunque valutato con book eseguibile, spread, profondità,
 scadenza, drift e fee. `eligible` significa soltanto che i controlli pre-trade
 sono stati superati; non è un trade e non implica profitto.
 
-Dal journal v5 un candidato COPY è valutabile solo se `/activity` conferma un
+Dal journal v6 un candidato COPY è valutabile solo se `/activity` conferma un
 BUY sorgente con `transactionHash`, prezzo valido e timestamp non più vecchio di
 60 secondi. Il drift usa quel prezzo, non il prezzo medio storico del wallet.
 Ask, bid, profondità e VWAP sono derivati dallo stesso snapshot CLOB e il journal
@@ -14,7 +14,16 @@ salva i livelli consumati, la scadenza e lo stato del lookup sorgente. I costi
 usano inoltre `feesEnabled` e `feeSchedule` Gamma del singolo mercato; metadati
 fee mancanti o invalidi rendono il candidato non eleggibile, senza fallback a
 costo zero. Il ledger conserva rate/exponent per applicare la stessa curva fee
-anche all'uscita.
+anche all'uscita. Il journal v6 salva inoltre `num_holders`, la lista ordinata
+degli holder osservati, il notional del BUY sorgente e il costo certo di
+liquidazione immediata.
+
+Il BUY sorgente deve avere notional almeno pari alla size paper da $5: il bot
+non assume più rischio del wallet copiato. Dopo ask VWAP e fee d'ingresso viene
+calcolato anche il bid VWAP netto della fee d'uscita; se lo spread round-trip
+immediato supera il 2,5% della size il candidato viene respinto come
+`immediate_roundtrip_cost_too_high`. Questo limita la frizione certa ma non
+dimostra alcun edge.
 
 Gli errori `/positions` non vengono interpretati come wallet vuoti: baseline e
 posizioni restano invariate. Solo uno snapshot riuscito che dimostra l'assenza
@@ -24,6 +33,11 @@ Lo snapshot pagina fino a 500 posizioni per richiesta e non usa mai pagine
 parziali. Dopo tre errori transitori consecutivi, i wallet restanti vengono
 rinviati al ciclo successivo come stato sconosciuto per evitare outage seriali.
 Il lookup BUY considera fino a 500 attività recenti con filtri server-side.
+Le richieste Data API condividono un pacing di 100 ms e, dopo 429/5xx/timeout,
+un cooldown esponenziale fino a 30 secondi. Contatori, status HTTP, cicli
+parziali e backoff residuo sono esposti in `bot_health.feed_health`. Il limite
+ufficiale `/positions` è 150 richieste ogni 10 secondi:
+https://docs.polymarket.com/api-reference/rate-limits
 
 I wallet, i loro domini specialistici e l'insieme dei domini da validare sono
 congelati nel manifest per l'intero run. Un segnale fuori dai domini qualificati
@@ -52,10 +66,17 @@ I book vengono richiesti in batch con `POST /books`; un errore conserva i mark
 precedenti e non viene interpretato come uscita o risoluzione. Il CI95 usa un
 bootstrap a cluster evento, così segnali correlati non gonfiano la confidenza.
 Peak, equity, cash e drawdown shadow sono mark-to-market e persistono nel ledger
-v2. Le nuove aperture si fermano a -$3 giornalieri, -$6 sul run o dopo tre
+v3. Le nuove aperture si fermano a -$3 giornalieri, -$6 sul run o dopo tre
 perdite consecutive; le posizioni già aperte continuano a essere gestite.
 Un ledger shadow v1 viene preservato e chiuso normalmente ma non accetta nuovi
-ingressi: serve `new-run scan` per iniziare un campione v2 confrontabile.
+ingressi: serve `new-run scan` per iniziare un campione v3 confrontabile.
+
+Ogni wallet può contribuire al massimo 20 aperture shadow e 20 aperture paper
+nello stesso run.
+Con la soglia minima di 100 trade, la promozione richiede quindi almeno cinque
+fonti produttive; il valutatore verifica anche che nessun wallet rappresenti
+più del 20% di tutte le chiusure. Questo impedisce che un unico wallet costituisca
+il campione promozionale, anche se il suo P&L fosse positivo.
 
 Il gate shadow può autorizzare soltanto un nuovo run `paper_validation`
 indipendente. Anche con tutti i gate verdi, `real_money_authorized` resta sempre
@@ -74,6 +95,7 @@ run, supera tutti i criteri:
 - limite inferiore bootstrap CI95 dell'EV/trade maggiore di zero;
 - drawdown massimo non superiore al 3%;
 - nessun evento o wallet oltre il 20% del P&L positivo;
+- almeno 5 wallet sorgente distinti e nessun wallet oltre il 20% dei trade;
 - almeno 30 trade per ogni dominio che si intende abilitare.
 
 `src/validation.py` calcola il verdetto. Lo stesso protocollo deve essere

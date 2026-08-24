@@ -266,11 +266,12 @@ class PaperTradingSimulator:
             if source_dt and detected_dt else None
         )
         row = {
-            "journal_version": 5,
+            "journal_version": 6,
             "run_id": self.run_id,
             "signal_id": resolved_signal_id,
             "strategy": strategy,
-            "wallet": wallet or info.get("source_wallet", ""),
+            "wallet": wallet or info.get("source_wallet", "") or
+                      getattr(position, "source_wallet", ""),
             "transaction_hash": info.get("transaction_hash", ""),
             "event_id": info.get("event_id", "") or getattr(opp, "event_id", "") or
                         getattr(position, "event_id", ""),
@@ -311,8 +312,18 @@ class PaperTradingSimulator:
             ),
             "source_trade_status": info.get("source_trade_status", ""),
             "source_trade_at": source_trade_at,
-            "source_trade_price": info.get("source_trade_price"),
-            "source_trade_size": info.get("source_trade_size"),
+            "source_trade_price": info.get(
+                "source_trade_price", getattr(position, "source_trade_price", None)
+            ),
+            "source_trade_size": info.get(
+                "source_trade_size", getattr(position, "source_trade_size", None)
+            ),
+            "num_holders": int(evaluation.get(
+                "num_holders", getattr(position, "num_holders", 1)
+            ) or 1),
+            "holder_wallets": list(evaluation.get(
+                "holder_wallets", getattr(position, "holder_wallets", [])
+            )),
             "detected_at": now,
             "detection_latency_seconds": latency_seconds,
             "end_date": info.get("end_date", ""),
@@ -331,6 +342,13 @@ class PaperTradingSimulator:
             "bid_available_shares": evaluation.get("bid_available_shares"),
             "bid_levels_used": evaluation.get("bid_levels_used", []),
             "planned_size_usdc": evaluation.get("planned_size_usdc"),
+            "immediate_net_bid": evaluation.get("immediate_net_bid"),
+            "immediate_roundtrip_loss_usdc": evaluation.get(
+                "immediate_roundtrip_loss_usdc"
+            ),
+            "immediate_roundtrip_loss_pct": evaluation.get(
+                "immediate_roundtrip_loss_pct"
+            ),
             "decision": decision,
             "reason": reason,
             "pretrade_eligible": bool(evaluation.get("eligible", False)),
@@ -340,7 +358,7 @@ class PaperTradingSimulator:
                 or evaluation.get("entry_price")
             ),
             "exit_price": getattr(position, "exit_price", None),
-            "costs": costs or {},
+            "costs": costs or evaluation.get("costs") or {},
         }
         try:
             DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -491,7 +509,7 @@ class PaperTradingSimulator:
         saved_at = utc_now_iso()
         try:
             self._atomic_write_json(self.shadow_state_file, {
-                "shadow_version": 2,
+                "shadow_version": 3,
                 "run_id": self.run_id,
                 "enabled": True,
                 "initial_capital": self.shadow_initial_capital,
@@ -634,7 +652,7 @@ class PaperTradingSimulator:
     def _shadow_log(self, action: str, pos: Position, *, raw_price=None,
                     reason: str = "", costs: Optional[Dict] = None) -> None:
         row = {
-            "shadow_version": 2,
+            "shadow_version": 3,
             "run_id": self.run_id,
             "timestamp": utc_now_iso(),
             "action": action,
@@ -650,6 +668,8 @@ class PaperTradingSimulator:
             "category": pos.category,
             "source_trade_price": pos.source_trade_price,
             "source_trade_size": pos.source_trade_size,
+            "num_holders": pos.num_holders,
+            "holder_wallets": list(pos.holder_wallets),
             "entry_best_bid": pos.entry_best_bid,
             "entry_best_ask": pos.entry_best_ask,
             "entry_price": pos.entry_price,
@@ -675,7 +695,7 @@ class PaperTradingSimulator:
                               info: Dict, evaluation: Dict,
                               reason: str) -> None:
         row = {
-            "shadow_version": 2,
+            "shadow_version": 3,
             "run_id": self.run_id,
             "timestamp": utc_now_iso(),
             "action": action,
@@ -688,10 +708,21 @@ class PaperTradingSimulator:
             "market": info.get("title", ""),
             "outcome": info.get("outcome", ""),
             "category": info.get("category", ""),
+            "source_trade_size": info.get("source_trade_size"),
+            "num_holders": int(evaluation.get("num_holders", 1) or 1),
+            "holder_wallets": list(evaluation.get("holder_wallets", [])),
             "entry_best_bid": evaluation.get("executable_bid_vwap"),
             "entry_best_ask": evaluation.get("executable_ask_vwap"),
             "entry_price": evaluation.get("entry_price"),
+            "immediate_net_bid": evaluation.get("immediate_net_bid"),
+            "immediate_roundtrip_loss_usdc": evaluation.get(
+                "immediate_roundtrip_loss_usdc"
+            ),
+            "immediate_roundtrip_loss_pct": evaluation.get(
+                "immediate_roundtrip_loss_pct"
+            ),
             "size_usdc": evaluation.get("planned_size_usdc"),
+            "costs": evaluation.get("costs", {}),
             "reason": reason,
             "shadow_cash": self.shadow_cash,
             "shadow_equity": self._shadow_total_value(),
@@ -740,6 +771,18 @@ class PaperTradingSimulator:
             return "event_exposure_cap"
         if self.shadow_cash + 1e-9 < size:
             return "insufficient_shadow_cash"
+        wallet = str(source_wallet or "").lower()
+        wallet_sample_count = sum(
+            1 for pos in (
+                list(self.shadow_positions.values())
+                + self.shadow_closed_positions
+            )
+            if str(pos.source_wallet or "").lower() == wallet
+        )
+        if wallet_sample_count >= int(
+            EXECUTION.get("shadow_max_trades_per_wallet", 20)
+        ):
+            return "wallet_sample_cap"
         return ""
 
     def _open_shadow_candidate(self, source_wallet: str, info: Dict,
@@ -789,6 +832,8 @@ class PaperTradingSimulator:
             entry_best_ask=raw_ask,
             source_trade_price=info.get("source_trade_price"),
             source_trade_size=info.get("source_trade_size"),
+            num_holders=int(evaluation.get("num_holders", 1) or 1),
+            holder_wallets=list(evaluation.get("holder_wallets", [])),
             last_mark_at=datetime.now(),
         )
         position.strategy = "copy"
@@ -1505,6 +1550,12 @@ class PaperTradingSimulator:
             "info": info,
             "book": None,
             "planned_size_usdc": float(EXECUTION.get("paper_size_usdc", 5.0)),
+            "num_holders": max(1, int(num_holders or 1)),
+            "holder_wallets": sorted({
+                str(wallet).lower()
+                for wallet in info.get("holder_wallets", [])
+                if str(wallet).strip()
+            }),
         }
         if result["duplicate"]:
             result["reason"] = "duplicate_signal"
@@ -1544,6 +1595,12 @@ class PaperTradingSimulator:
         max_source_age = float(STRATEGY.get("max_source_trade_age_sec", 60.0))
         if source_age is not None and source_age > max_source_age:
             return reject("source_trade_stale")
+        source_size = float(info.get("source_trade_size", 0.0) or 0.0)
+        min_source_size = result["planned_size_usdc"] * float(
+            STRATEGY.get("min_source_trade_notional_ratio", 1.0)
+        )
+        if source_size + 1e-9 < min_source_size:
+            return reject("source_trade_notional_below_paper_size")
 
         book = fetcher.get_book(asset) if fetcher is not None else None
         result["book"] = book
@@ -1635,24 +1692,53 @@ class PaperTradingSimulator:
         executable_bid = bid_fill["vwap"]
         if executable_bid is None:
             return reject("insufficient_bid_depth_for_full_exit")
-
+        executable_bid = float(executable_bid)
+        try:
+            exit_fee_fraction = taker_fee_fraction(
+                category, executable_bid, fee_schedule=fee_schedule,
+                fees_enabled=fees_enabled,
+            )
+        except (TypeError, ValueError):
+            return reject("fee_schedule_invalid")
+        immediate_net_bid = executable_bid * (1.0 - exit_fee_fraction)
+        immediate_loss_usdc = max(
+            0.0, (entry_price - immediate_net_bid) * shares
+        )
+        immediate_loss_pct = immediate_loss_usdc / size if size > 0 else 1.0
         result.update({
-            "eligible": True,
-            "reason": "passed_pretrade_checks",
             "executable_ask_vwap": executable_ask,
-            "executable_bid_vwap": float(executable_bid),
+            "executable_bid_vwap": executable_bid,
             "entry_price": entry_price,
             "shares": shares,
             "fee_fraction": fee_fraction,
+            "exit_fee_fraction": exit_fee_fraction,
+            "immediate_net_bid": immediate_net_bid,
+            "immediate_roundtrip_loss_usdc": immediate_loss_usdc,
+            "immediate_roundtrip_loss_pct": immediate_loss_pct,
             "fees_enabled": fees_enabled,
             "fee_schedule": fee_schedule,
             "fee_source": "market_fee_schedule",
             "costs": {
                 "fee_fraction": fee_fraction,
+                "exit_fee_fraction": exit_fee_fraction,
                 "fee_price": entry_price - executable_ask,
                 "fee_usdc": shares * (entry_price - executable_ask),
+                "immediate_exit_fee_usdc": shares * (
+                    executable_bid - immediate_net_bid
+                ),
+                "immediate_roundtrip_loss_usdc": immediate_loss_usdc,
+                "immediate_roundtrip_loss_pct": immediate_loss_pct,
                 "slippage_price": executable_ask - price,
             },
+        })
+        if immediate_loss_pct > float(
+            STRATEGY.get("max_immediate_roundtrip_cost_pct", 0.025)
+        ) + 1e-12:
+            return reject("immediate_roundtrip_cost_too_high")
+
+        result.update({
+            "eligible": True,
+            "reason": "passed_pretrade_checks",
         })
         return result
 
@@ -1717,6 +1803,20 @@ class PaperTradingSimulator:
             EXECUTION.get("max_open_positions", BUDGET["max_open_positions"])
         ):
             return reject("max_open_positions")
+        paper_wallet_count = sum(
+            1 for pos in (
+                list(self.portfolio.positions.values())
+                + self.portfolio.closed_positions
+            )
+            if (pos.strategy or "copy") == "copy"
+            and pos.run_id == self.run_id
+            and str(pos.source_wallet or "").lower()
+            == str(source_wallet or "").lower()
+        )
+        if paper_wallet_count >= int(
+            EXECUTION.get("paper_max_trades_per_wallet", 20)
+        ):
+            return reject("wallet_sample_cap")
         if not book or book.get("best_ask") is None or book.get("best_bid") is None:
             return reject("no_executable_two_sided_book")
         price = float(book["best_ask"])
@@ -1912,6 +2012,8 @@ class PaperTradingSimulator:
             entry_best_ask=eff_price,
             source_trade_price=info.get("source_trade_price"),
             source_trade_size=info.get("source_trade_size"),
+            num_holders=int(evaluation.get("num_holders", 1) or 1),
+            holder_wallets=list(evaluation.get("holder_wallets", [])),
             last_mark_at=datetime.now(),
             current_price=mark_bid,
         )
@@ -2186,6 +2288,10 @@ class PaperTradingSimulator:
             source = sorted(source_pool)[0]
             candidate_info = dict(entry["info"])
             candidate_info["source_wallet"] = source
+            candidate_info["holder_wallets"] = sorted(
+                str(holder).lower()
+                for holder in entry.get("holders", set())
+            )
             if hasattr(fetcher, "get_recent_buy_result"):
                 lookup = fetcher.get_recent_buy_result(source, asset)
                 candidate_info["source_trade_status"] = lookup.status
@@ -2984,6 +3090,12 @@ class PaperTradingSimulator:
             intended_domains=domains,
             bootstrap_iterations=2000,
             max_drawdown_override=self.shadow_max_drawdown,
+            min_distinct_wallets=int(
+                EXECUTION.get("promotion_min_distinct_wallets", 5)
+            ),
+            max_trade_share_per_wallet=float(
+                EXECUTION.get("promotion_max_trade_share_per_wallet", 0.20)
+            ),
         )
         metrics = evaluation.get("metrics", {})
         ci_lower = metrics.get("bootstrap_ci95_lower_ev")
@@ -3013,7 +3125,7 @@ class PaperTradingSimulator:
             "enabled": self._shadow_enabled(),
             "run_id": self.run_id,
             "state_saved_at": self.shadow_state_saved_at,
-            "state_version": 2,
+            "state_version": 3,
             "initial_capital": self.shadow_initial_capital,
             "cash": self.shadow_cash,
             "equity": self._shadow_total_value(),
@@ -3044,6 +3156,12 @@ class PaperTradingSimulator:
             "unrealized_pnl": unrealized,
             "total_pnl": realized + unrealized,
             "distinct_events": metrics.get("distinct_events", 0),
+            "distinct_source_wallets": metrics.get("distinct_source_wallets", 0),
+            "max_wallet_trade_share": metrics.get("max_wallet_trade_share", 1.0),
+            "trades_by_wallet": metrics.get("trades_by_wallet", {}),
+            "max_trades_per_wallet": int(
+                EXECUTION.get("shadow_max_trades_per_wallet", 20)
+            ),
             "elapsed_days": metrics.get("elapsed_days", 0.0),
             "ev_per_trade": metrics.get("ev_per_trade", 0.0),
             "bootstrap_ci95_lower_ev": ci_lower,
@@ -3351,6 +3469,8 @@ class PaperTradingSimulator:
             "entry_best_ask": pos.entry_best_ask,
             "source_trade_price": pos.source_trade_price,
             "source_trade_size": pos.source_trade_size,
+            "num_holders": pos.num_holders,
+            "holder_wallets": list(pos.holder_wallets),
             "last_mark_at": (
                 pos.last_mark_at.isoformat() if pos.last_mark_at else None
             ),
@@ -3397,6 +3517,8 @@ class PaperTradingSimulator:
             entry_best_ask=data.get("entry_best_ask"),
             source_trade_price=data.get("source_trade_price"),
             source_trade_size=data.get("source_trade_size"),
+            num_holders=int(data.get("num_holders", 1) or 1),
+            holder_wallets=list(data.get("holder_wallets", []) or []),
             last_mark_at=(
                 datetime.fromisoformat(data["last_mark_at"])
                 if data.get("last_mark_at") else None

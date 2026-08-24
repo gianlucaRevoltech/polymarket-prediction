@@ -64,6 +64,17 @@ def get_candidate_summary(run_id: str):
     reasons = Counter(
         row.get("reason") for row in candidate_rows if row.get("reason")
     )
+    candidates_by_wallet = Counter(
+        str(row.get("wallet") or "unknown") for row in candidate_rows
+    )
+    eligible_by_wallet = Counter(
+        str(row.get("wallet") or "unknown") for row in candidate_rows
+        if row.get("pretrade_eligible") is True
+        or row.get("decision") in {"eligible", "opened"}
+    )
+    consensus = Counter(
+        int(row.get("num_holders", 1) or 1) for row in candidate_rows
+    )
     return {
         "total": len(candidate_rows),
         "unique": len(unique_ids),
@@ -76,6 +87,11 @@ def get_candidate_summary(run_id: str):
             if candidate_rows else 0.0
         ),
         "top_reasons": dict(reasons.most_common(8)),
+        "candidates_by_wallet": dict(candidates_by_wallet.most_common()),
+        "eligible_by_wallet": dict(eligible_by_wallet.most_common()),
+        "consensus_counts": {
+            str(count): total for count, total in sorted(consensus.items())
+        },
         "last_detected_at": (
             candidate_rows[-1].get("detected_at") if candidate_rows else None
         ),
@@ -125,6 +141,7 @@ def get_bot_health(state_saved_at):
         "last_cycle_at": runtime.get("last_cycle_at"),
         "runtime_updated_at": runtime.get("updated_at"),
         "last_error": runtime.get("error", ""),
+        "feed_health": runtime.get("feed_health", {}),
     }
 
 
@@ -229,6 +246,7 @@ def get_portfolio_data():
             "deployed_commit": get_deployed_commit(),
             "state_age_seconds": age_seconds(summary.get("state_saved_at")),
             "bot_health": get_bot_health(summary.get("state_saved_at")),
+            "feed_health": get_runtime_status().get("feed_health", {}),
             "candidate_summary": get_candidate_summary(summary.get("run_id", "")),
             "shadow_validation": summary.get("shadow_validation", {}),
             "wallet_validation_registry": get_wallet_validation_registry(),

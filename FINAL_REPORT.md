@@ -1,5 +1,10 @@
 # Polymarket Paper Trading Bot - Report Finale
 
+> **ARCHIVIO STORICO (2026-06-26):** metriche, stime e stato di deploy qui
+> descritti sono superati. Fare riferimento a `VALIDATION_PROTOCOL.md` e agli
+> audit prospettici: il bot resta in OBSERVE, non ha dimostrato edge e non
+> autorizza denaro reale.
+
 ## ✅ Sistema Completato e Testato
 
 **Data:** 2026-06-26  

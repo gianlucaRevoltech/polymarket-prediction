@@ -51,7 +51,9 @@ def evaluate_copy_run(closed_positions: Iterable, run_id: str,
                       intended_domains: Optional[List[str]] = None,
                       now: Optional[datetime] = None,
                       bootstrap_iterations: int = 10000,
-                      max_drawdown_override: Optional[float] = None) -> Dict:
+                      max_drawdown_override: Optional[float] = None,
+                      min_distinct_wallets: int = 5,
+                      max_trade_share_per_wallet: float = 0.20) -> Dict:
     """Valuta esclusivamente trade COPY chiusi e appartenenti al run indicato."""
     trades = [
         p for p in closed_positions
@@ -86,11 +88,14 @@ def evaluate_copy_run(closed_positions: Iterable, run_id: str,
     positive_total = sum(pnl for pnl in pnls if pnl > 0)
     by_event = defaultdict(float)
     by_wallet = defaultdict(float)
+    trades_by_wallet = defaultdict(int)
     by_domain = defaultdict(int)
     for p in trades:
+        source_wallet = getattr(p, "source_wallet", "") or "unknown"
+        trades_by_wallet[source_wallet] += 1
         if p.pnl > 0:
             by_event[getattr(p, "event_slug", "") or p.condition_id] += p.pnl
-            by_wallet[getattr(p, "source_wallet", "") or "unknown"] += p.pnl
+            by_wallet[source_wallet] += p.pnl
         by_domain[getattr(p, "category", "") or "other"] += 1
 
     event_concentration = (
@@ -106,6 +111,10 @@ def evaluate_copy_run(closed_positions: Iterable, run_id: str,
     ci_lower = _event_cluster_bootstrap_lower_95(
         trades, bootstrap_iterations
     )
+    max_wallet_trade_share = (
+        max(trades_by_wallet.values(), default=0) / len(trades)
+        if trades else 1.0
+    )
 
     checks = {
         "closed_trades_at_least_100": len(trades) >= 100,
@@ -118,6 +127,10 @@ def evaluate_copy_run(closed_positions: Iterable, run_id: str,
             event_concentration <= 0.20,
         "wallet_positive_pnl_concentration_at_most_20pct":
             wallet_concentration <= 0.20,
+        "distinct_source_wallets_at_least_5":
+            len(trades_by_wallet) >= int(min_distinct_wallets),
+        "wallet_trade_concentration_at_most_20pct":
+            max_wallet_trade_share <= float(max_trade_share_per_wallet),
         "intended_domains_at_least_30_trades": domain_ok,
     }
     return {
@@ -136,6 +149,9 @@ def evaluate_copy_run(closed_positions: Iterable, run_id: str,
             "max_drawdown": max_dd,
             "event_positive_pnl_concentration": event_concentration,
             "wallet_positive_pnl_concentration": wallet_concentration,
+            "distinct_source_wallets": len(trades_by_wallet),
+            "max_wallet_trade_share": max_wallet_trade_share,
+            "trades_by_wallet": dict(trades_by_wallet),
             "trades_by_domain": dict(by_domain),
         },
     }
@@ -145,7 +161,9 @@ def evaluate_shadow_run(closed_positions: Iterable, run_id: str,
                         intended_domains: Optional[List[str]] = None,
                         now: Optional[datetime] = None,
                         bootstrap_iterations: int = 10000,
-                        max_drawdown_override: Optional[float] = None) -> Dict:
+                        max_drawdown_override: Optional[float] = None,
+                        min_distinct_wallets: int = 5,
+                        max_trade_share_per_wallet: float = 0.20) -> Dict:
     """Valuta lo shadow cohort; puo promuovere solo a un paper indipendente."""
     result = evaluate_copy_run(
         closed_positions,
@@ -154,6 +172,8 @@ def evaluate_shadow_run(closed_positions: Iterable, run_id: str,
         now=now,
         bootstrap_iterations=bootstrap_iterations,
         max_drawdown_override=max_drawdown_override,
+        min_distinct_wallets=min_distinct_wallets,
+        max_trade_share_per_wallet=max_trade_share_per_wallet,
     )
     passed = bool(result.pop("eligible_for_paper_promotion", False))
     domains_frozen = bool(intended_domains)

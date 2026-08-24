@@ -1,5 +1,113 @@
 # Findings & Decisions — Polymarket Copy Bot
 
+## Hardening successivo al NO-GO (2026-08-24)
+
+- Il prossimo campione non può essere promosso se dipende da una sola fonte:
+  cap prospettico 20 aperture shadow/wallet, almeno 5 wallet distinti e quota
+  massima 20% delle chiusure per wallet.
+- Il vincolo sul P&L positivo per wallet resta, ma non sostituisce la nuova
+  concentrazione sul numero di trade: entrambi devono passare.
+- Il BUY sorgente deve coprire almeno la size paper. `usdcSize` è autorevole;
+  `size` è shares e non può essere usato come notional di fallback.
+- La frizione certa è un gate autonomo: ask VWAP + entry fee contro bid VWAP -
+  exit fee non può produrre perdita immediata oltre il 2,5% della size.
+- Il journal v6 rende auditabile il consenso che mancava nel run fallito;
+  Position e shadow v3 mantengono gli stessi campi dopo restart.
+- Gli HTTP 429 non autorizzano retry aggressivi o snapshot parziali: il client
+  applica pacing/cooldown e continua a fallire chiuso. La soglia ufficiale
+  `/positions` è 150 richieste/10s, ma il margine serve per throttling e traffico
+  condiviso osservati sulla VPS.
+- Queste misure riducono errori e selezione concentrata; non creano né
+  garantiscono edge. Il rollout resta `OBSERVE` e richiede un nuovo campione.
+
+## Audit prospettico 14 giorni - integrità bundle (2026-08-24)
+
+- Bundle: `exports/polymarket-validation-20260824T122121Z.tar.gz`, 1.060.980
+  byte, SHA-256 `9D44C58D2018450B8CFE71D742A5746F62EDD03B1F4660404D125743CE5CF72F`.
+- Archivio tar valido, estratto in una directory temporanea esterna al repo.
+- Commit VPS `eebf50e3b2396bf19f367d5fc6361a348e82c4df`, branch `main` allineato a
+  `origin/main`; bot e dashboard attivi, latency-arb fermo.
+- Ambiente del processo bot: `POLYMARKET_EXECUTION_MODE=observe`.
+- Presenti ledger/journal candidate e shadow v2, curva equity MTM, manifest
+  wallet, registro quarantene, runtime, scan, API snapshot e log completi.
+- I tre file di errore curl sono vuoti; snapshot API acquisiti correttamente.
+- Run coerente `run-20260810T174414-f6d13226`, OBSERVE, portfolio paper intatto
+  a $300 con zero aperture/chiusure; runtime al ciclo 56.079, fase idle e stato
+  aggiornato circa 9 secondi prima dell'export.
+- Shadow v2 già terminato dal breaker: 4 chiuse, 0W/4L, P&L netto
+  `-$4,402640`, equity/cash `$295,597360`, drawdown massimo 1,468% e halt
+  persistente `copy: 3 consecutive shadow losses`.
+- Il manifest è congelato su 6 wallet e domini `geopolitics/politics`; il
+  vecchio wallet fallito `0x970367...` è escluso. Il nuovo wallet
+  `0xb1ca909...` ha prodotto quattro perdite ed è ora in quarantena cross-run.
+- Candidate journal: 1.201 record v5, tutti dello stesso run, 67 eligible e
+  1.134 rejected. Shadow journal: 4 open, 4 close e 63 reject portfolio/safety.
+- Durata run→export 13,776 giorni; copertura candidati 13,356 giorni. Il gate
+  dei 14 giorni non è quindi formalmente raggiunto, anche se il run è già
+  terminato economicamente dal breaker e non può raccogliere nuovi ingressi.
+- I 67 eligible sono tutti `politics`, tutti dal solo wallet `0xb1ca909...`,
+  su 48 eventi/56 condition/64 asset. Tutti hanno BUY sorgente, tx hash,
+  evento, book e fee schedule completi; latenza mediana 10,44s, p95 21,46s.
+- Copertura shadow perfetta: i 67 signal_id eligible hanno esattamente una
+  decisione shadow (4 opened, 63 rejected), senza mancanti o extra.
+- Le quattro perdite sono tutte stop-loss su quattro eventi politici distinti:
+  `-$0,4851`, `-$0,9145`, `-$1,6654`, `-$1,3377`.
+- Decomposizione: movimento lordo raw ask→exit `-$3,7996`; fee ingresso
+  `$0,2955` e uscita `$0,3075`; totale riconciliato `-$4,4026`. Anche senza
+  fee il segnale è nettamente negativo.
+- La curva shadow conserva gli ultimi 10.000 punti: gap massimo 26,62s e zero
+  gap >60s. Il buffer è interamente post-halt, quindi la continuità pre-halt va
+  verificata dal log/runtime e dai lifecycle journal, non dal solo ring buffer.
+- Log bot: 56.079 snapshot e un solo avvio, zero traceback. Sono presenti 295
+  cicli con almeno un wallet non leggibile (0,526% dei cicli), dominati da 696
+  risposte HTTP 429 su `/positions`, più 6 timeout, 4 HTTP 500 e 2 disconnect.
+  In 55 cicli tutti i 6 wallet erano temporaneamente non leggibili. La baseline
+  è stata sempre preservata: non risultano falsi ingressi/uscite, ma il rate
+  limiting può far perdere segnali brevi e va corretto prima di un altro run.
+- Dashboard: zero traceback e zero risposte 500; due richieste ostili di SQL
+  injection hanno ottenuto 404. L'esposizione pubblica resta un rischio noto.
+- Dei 67 eligible, 5 arrivano prima del terzo stop (4 opened e 1 rifiutato per
+  max posizioni); gli altri 62 vengono correttamente respinti dall'halt.
+- I cinque wallet diversi da `0xb1ca909...` producono complessivamente 37
+  candidati e zero eligible; il cohort è quindi totalmente dipendente da un
+  solo wallet, ora fallito e quarantinato.
+- Le quattro perdite nette equivalgono a -9,70%, -18,29%, -33,31% e -26,75%
+  della size. Due stop sono avvenuti dopo movimenti a gap molto oltre la soglia:
+  lo stop limita il rischio ma non garantisce il prezzo d'uscita.
+- Frizione immediata sui 67 eligible, prima ancora della fee di uscita: entry
+  economica meno bid mediana 1,99 cent; mark immediato medio `-$0,2233` e
+  mediano `-$0,2121` per size $5 (circa 4,2-4,5%). Un segnale COPY deve quindi
+  superare un hurdle elevato solo per pareggiare.
+- Il valutatore esportato restituisce EV `-$1,10066/trade`, limite inferiore
+  bootstrap CI95 a cluster evento `-$1,50155`, drawdown 1,468% e NO-GO.
+  Passano solo `intended_domains_frozen` e drawdown <=3%; falliscono gli altri
+  8 gate, inclusi P&L, CI, 100 chiusure, 30 eventi, 14 giorni e 30 trade/dominio.
+- La concentrazione positiva per evento/wallet è impostata conservativamente
+  al 100% quando non esiste alcun profitto positivo; il relativo fallimento non
+  è interpretabile come concentrazione di guadagni, ma non cambia il verdetto.
+- Il candidate journal v5 non persiste `num_holders`/consenso. Il reconcile lo
+  calcola e lo passa al valutatore, ma viene scritto solo nel trade log paper;
+  poiché OBSERVE non apre trade paper, il consenso dei 67 eligible non è
+  auditabile retrospettivamente. Va aggiunto al journal prima del prossimo run.
+- Tredici eligible hanno source notional < $5; due delle quattro aperture
+  copiavano BUY da $4,40 e $1,70 con size fissa $5 e sono le due perdite più
+  grandi. Tuttavia anche le due aperture con source notional $118/$314 sono
+  perdenti: un filtro $5 avrebbe limitato danno, non dimostrato edge.
+
+### Verdetto Phase CV
+
+- **NO-GO** a `paper_validation` e a qualunque capitale reale. Il run fallisce
+  8 dei 10 gate formali e il segno economico è negativo anche prima delle fee.
+- Il breaker e la quarantena hanno funzionato: hanno impedito 62 ulteriori
+  aperture e il wallet fallito non sarà selezionabile nel prossimo scan.
+- Aspettare non recupera questo run: lo shadow è halted, ha solo 4 chiusure e
+  nessuna nuova apertura; le 67 eligibility non sono lifecycle/P&L.
+- Un nuovo scan identico non basta: selezionare ripetutamente vincitori storici
+  e scartare prospetticamente i perdenti rischia survivor bias. Prima del nuovo
+  campione servono pacing/backoff sui 429, consenso persistito nel journal,
+  guardrail sul source notional e un contratto che impedisca a un solo wallet di
+  costituire il 100% del campione promozionale.
+
 ## Revisione finale del diff
 
 - Le modifiche sono coerenti con il contenimento richiesto: il run corrente non cambia wallet in modo adattivo, mentre i run successivi escludono quelli in quarantena persistente.

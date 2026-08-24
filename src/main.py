@@ -87,6 +87,10 @@ class PolymarketPaperTradingBot:
             "phase": phase,
             "cycle": self._cycle_count,
             "error": error,
+            "feed_health": (
+                self.fetcher.get_feed_health()
+                if hasattr(self.fetcher, "get_feed_health") else {}
+            ),
         }
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         tmp = self.runtime_status_file.with_suffix(".json.tmp")

@@ -1,5 +1,30 @@
 # Progress Log — Polymarket Copy Bot
 
+## SESSIONE 2026-08-24 - Phase CV audit prospettico
+
+- Ricevuto l'unico bundle presente nella cartella locale `exports` dopo circa
+  due settimane di OBSERVE con shadow constrained.
+- Avviato audit read-only; ripristinati integralmente piano e progress storico.
+- Restano da leggere integralmente i findings prima di aprire l'archivio.
+- Ripristinati i primi 1.000/1.337 record-line dei findings; confermati i gate
+  vigenti, il divieto real-money e la necessità di usare soltanto shadow v2.
+- Ripristinati integralmente anche i findings storici. Contesto completo prima
+  dell'apertura del nuovo bundle.
+- Verificati hash, struttura, commit e processi del bundle; CV1 preliminare OK.
+- Prima riconciliazione completata: portfolio paper immutato, shadow fermato a
+  0W/4L e -$4,40; registrato un errore console Unicode non relativo ai dati.
+- Ricostruiti durata, candidate quality, lifecycle e costi: copertura 1:1,
+  perdita raw pre-fee e campione concentrato integralmente in un solo wallet.
+- Classificati gli errori feed: fail-closed corretto ma 429 frequenti; analisi
+  economica per trade completata. Un calcolo aggregato shares richiede fallback
+  size/entry ed è stato registrato per il retry.
+- Retry con shares ricostruite da size/entry completato; frizione e tutti i gate
+  di promozione riconciliati con lo snapshot API.
+- Auditata la concentrazione del segnale e il source notional; individuato il
+  campo consenso mancante dal journal OBSERVE.
+- Phase CV completata. Verdetto NO-GO: nessuna attesa ulteriore utile sul run
+  halted e nessuna promozione; consegnare risultati e interventi pre-new-run.
+
 ## 2026-08-10 - Revisione diff hardening shadow
 
 - Il diff corrente resta circoscritto a simulatore, selezione wallet, persistenza run, dashboard, documentazione e test.
@@ -909,3 +934,38 @@ OBSERVE di default, COPY unica candidata futura, nessun capitale reale.
 - Il movimento lordo ask→bid dei chiusi è già -$8,483044; fee complessive -$7,522576. EV/trade netto -$0,500176; bootstrap CI95 per evento circa [-$0,7281, -$0,2793].
 - Confermati tre difetti metodologici: stop sport misurato dall'entry economica inclusiva di fee invece che dal raw ask; domini intended ricavati post-hoc dai trade; assenza di quarantena cross-run per wallet già falliti.
 - Verdetto operativo: NO-GO. Nessuna modifica al bot o allo stato VPS effettuata durante questo audit.
+# 2026-08-24 — Avvio implementazione hardening post-audit
+
+- Ricevuta autorizzazione esplicita: “vai implementa tutto quello che serve”.
+- Aperta Phase CW nel piano.
+- Ambito: rate-limit feed, journal verificabile, filtro notional, diversificazione multi-wallet, promotion gate, dashboard/API, test e documentazione.
+- Rollout previsto: nuovo run `OBSERVE`; `paper_validation` solo dopo una nuova revisione del journal.
+- Nota operativa: una lettura completa di `progress.md` ha superato l'output disponibile ed è stata ripresa per intervalli di righe; nessun dato è stato modificato da quell'errore.
+
+## Implementazione CW in corso
+
+- Aggiunto pacing Data API 100 ms e cooldown esponenziale 1-30 secondi per
+  408/425/429/5xx/timeout, con contatori di salute serializzati nel runtime.
+- Candidate journal portato a v6: holder count/list, source notional, costo
+  round-trip immediato e relativi dettagli fee/VWAP.
+- BUY sorgente sotto $5 respinto; `size` in shares non viene più usato come
+  fallback improprio per `usdcSize`.
+- Nuovo gate economico fail-closed: perdita certa ask->bid incluse fee <=2,5%.
+- Shadow state/journal v3: massimo 20 aperture per wallet; i campioni v2 restano
+  leggibili. Position persiste holder/consenso con default legacy.
+- Promotion gate: almeno 5 wallet sorgente e massimo 20% delle chiusure per
+  wallet, oltre ai criteri esistenti.
+- Dashboard/API mostrano wallet produttivi, consenso, source notional,
+  diversificazione shadow e salute Data API.
+- Documenti storici con target/real money marcati esplicitamente non operativi.
+- Primo `apply_patch` dashboard fallito per contesto con caratteri UTF-8
+  visualizzati come mojibake; patch ripetuta su contesti più piccoli, riuscita.
+- Primo `apply_patch` protocollo fallito per lo stesso motivo; ripetuto usando
+  lettura e contesto UTF-8 esatto, riuscito.
+- Prima suite mirata dopo journal v6: 2 failure dovute ad assert v5 obsoleti;
+  test aggiornati.
+- Prima suite dopo gate costi: 3 fixture fee-heavy respinte intenzionalmente;
+  i test di migrazione/fee ora disabilitano localmente soltanto quel gate per
+  continuare a verificare la loro responsabilità specifica.
+- Verifiche finali pre-commit: `compileall` OK, JavaScript `node --check` OK,
+  `bash -n start_all.sh` OK, `git diff --check` OK e suite completa 74 test OK.

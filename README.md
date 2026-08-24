@@ -56,6 +56,9 @@ La dashboard mostra:
 - 📈 Posizioni aperte con P&L real-time
 - 🎯 Wallet monitorati con ROI
 - 📝 Trade recenti copiati
+- 🔬 Journal candidati v6 con notional sorgente, consenso e costi eseguibili
+- 🧪 Shadow v3 con distribuzione per wallet e gate di promozione
+- 🌐 Salute Data API con HTTP 429, cicli parziali e backoff
 
 Si aggiorna automaticamente ogni 10 secondi.
 

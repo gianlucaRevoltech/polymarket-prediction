@@ -114,6 +114,14 @@ class SimulatorSafetyTests(unittest.TestCase):
         self.patch_data.stop()
         self.tmp.cleanup()
 
+    def _allow_high_roundtrip_cost(self):
+        patcher = mock.patch.dict(
+            simulator_module.STRATEGY,
+            {"max_immediate_roundtrip_cost_pct": 1.0},
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_observe_journals_but_never_opens(self):
         EXECUTION["mode"] = "observe"
         sim = PaperTradingSimulator()
@@ -125,7 +133,9 @@ class SimulatorSafetyTests(unittest.TestCase):
             json.loads(line)
             for line in (self.data / "candidate_journal.jsonl").read_text().splitlines()
         ]
-        self.assertEqual(rows[-1]["journal_version"], 5)
+        self.assertEqual(rows[-1]["journal_version"], 6)
+        self.assertEqual(rows[-1]["num_holders"], 1)
+        self.assertEqual(rows[-1]["source_trade_size"], 25.0)
         self.assertEqual(rows[-1]["decision"], "eligible")
         self.assertEqual(rows[-1]["reason"], "passed_pretrade_checks")
         self.assertEqual(rows[-1]["best_ask"], 0.50)
@@ -138,6 +148,122 @@ class SimulatorSafetyTests(unittest.TestCase):
         self.assertEqual(sim.recent_opens, {})
         self.assertEqual(len(sim.shadow_positions), 1)
         self.assertTrue((self.data / "shadow_state.json").exists())
+
+    def test_source_notional_must_cover_fixed_paper_size(self):
+        EXECUTION["mode"] = "observe"
+        sim = PaperTradingSimulator()
+        feed = FakeFetcher()
+        feed.books["asset-small"] = book()
+        info = candidate(asset="asset-small", condition="cond-small")
+        info["source_trade_size"] = 4.99
+
+        self.assertFalse(sim.open_position("wallet-a", info, fetcher=feed))
+
+        row = json.loads(
+            (self.data / "candidate_journal.jsonl").read_text().splitlines()[-1]
+        )
+        self.assertEqual(
+            row["reason"], "source_trade_notional_below_paper_size"
+        )
+        self.assertFalse(row["pretrade_eligible"])
+        self.assertEqual(len(sim.shadow_positions), 0)
+
+    def test_immediate_roundtrip_cost_is_capped_before_shadow(self):
+        EXECUTION["mode"] = "observe"
+        sim = PaperTradingSimulator()
+        feed = FakeFetcher()
+        feed.books["asset-costly"] = book(0.39, 0.40)
+        feed.markets["cond-costly"] = {
+            "category": "other",
+            "fees_enabled": True,
+            "fee_schedule": {
+                "rate": 0.05, "exponent": 1.0, "taker_only": True,
+            },
+            "fee_metadata_known": True,
+        }
+        info = candidate(asset="asset-costly", condition="cond-costly")
+        info["category"] = "other"
+
+        self.assertFalse(sim.open_position("wallet-a", info, fetcher=feed))
+
+        row = json.loads(
+            (self.data / "candidate_journal.jsonl").read_text().splitlines()[-1]
+        )
+        self.assertEqual(row["reason"], "immediate_roundtrip_cost_too_high")
+        self.assertGreater(row["costs"]["immediate_roundtrip_loss_pct"], 0.025)
+        self.assertEqual(len(sim.shadow_positions), 0)
+
+    def test_consensus_and_holders_survive_journal_and_restart(self):
+        EXECUTION["mode"] = "observe"
+        sim = PaperTradingSimulator()
+        feed = FakeFetcher()
+        feed.books["asset-consensus"] = book()
+        info = candidate(asset="asset-consensus", condition="cond-consensus")
+        info["holder_wallets"] = ["Wallet-B", "wallet-a"]
+
+        self.assertFalse(
+            sim.open_position("wallet-a", info, num_holders=2, fetcher=feed)
+        )
+
+        row = json.loads(
+            (self.data / "candidate_journal.jsonl").read_text().splitlines()[-1]
+        )
+        self.assertEqual(row["num_holders"], 2)
+        self.assertEqual(row["holder_wallets"], ["wallet-a", "wallet-b"])
+        restarted = PaperTradingSimulator()
+        pos = next(iter(restarted.shadow_positions.values()))
+        self.assertEqual(pos.num_holders, 2)
+        self.assertEqual(pos.holder_wallets, ["wallet-a", "wallet-b"])
+
+    def test_shadow_caps_each_wallet_to_twenty_percent_of_target_sample(self):
+        EXECUTION["mode"] = "observe"
+        with mock.patch.dict(EXECUTION, {"shadow_max_trades_per_wallet": 1}):
+            sim = PaperTradingSimulator()
+            feed = FakeFetcher()
+            feed.books["asset-first"] = book()
+            feed.books["asset-second"] = book()
+            first = candidate(
+                asset="asset-first", condition="cond-first", event="event-first"
+            )
+            second = candidate(
+                asset="asset-second", condition="cond-second", event="event-second"
+            )
+
+            self.assertFalse(sim.open_position("wallet-a", first, fetcher=feed))
+            pid = next(iter(sim.shadow_positions))
+            self.assertTrue(sim._close_shadow(pid, 0.51, "exit"))
+            self.assertFalse(sim.open_position("wallet-a", second, fetcher=feed))
+
+            rows = [
+                json.loads(line)
+                for line in (self.data / "shadow_journal.jsonl").read_text().splitlines()
+            ]
+            self.assertEqual(rows[-1]["reason"], "wallet_sample_cap")
+            self.assertEqual(len(sim.shadow_positions), 0)
+
+    def test_paper_validation_uses_the_same_wallet_sample_cap(self):
+        EXECUTION["mode"] = "paper_validation"
+        with mock.patch.dict(EXECUTION, {"paper_max_trades_per_wallet": 1}):
+            sim = PaperTradingSimulator()
+            feed = FakeFetcher()
+            feed.books["asset-first"] = book()
+            feed.books["asset-second"] = book()
+            first = candidate(
+                asset="asset-first", condition="cond-first", event="event-first"
+            )
+            second = candidate(
+                asset="asset-second", condition="cond-second", event="event-second"
+            )
+
+            self.assertTrue(sim.open_position("wallet-a", first, fetcher=feed))
+            self.assertTrue(sim.close_by_asset("asset-first", 0.51, "exit"))
+            self.assertFalse(sim.open_position("wallet-a", second, fetcher=feed))
+
+            row = json.loads(
+                (self.data / "candidate_journal.jsonl").read_text().splitlines()[-1]
+            )
+            self.assertEqual(row["reason"], "wallet_sample_cap")
+            self.assertEqual(sim.portfolio.open_positions_count, 0)
 
     def test_shadow_tracks_every_pretrade_pass_without_mutating_portfolio(self):
         EXECUTION["mode"] = "paper_validation"
@@ -294,6 +420,7 @@ class SimulatorSafetyTests(unittest.TestCase):
         self.assertIn("3 consecutive", sim.shadow_halt_reason)
 
     def test_shadow_stop_is_net_of_exit_fee_and_survives_restart(self):
+        self._allow_high_roundtrip_cost()
         EXECUTION["mode"] = "observe"
         sim = PaperTradingSimulator()
         feed = FakeFetcher()
@@ -586,6 +713,12 @@ class SimulatorSafetyTests(unittest.TestCase):
         self.assertAlmostEqual(sim.portfolio.closed_positions[-1].pnl, -0.10, places=6)
 
     def test_market_fee_schedule_applies_to_entry_journal_and_exit(self):
+        fee_gate = mock.patch.dict(
+            simulator_module.STRATEGY,
+            {"max_immediate_roundtrip_cost_pct": 1.0},
+        )
+        fee_gate.start()
+        self.addCleanup(fee_gate.stop)
         feed = FakeFetcher()
         feed.books["asset-1"] = book(0.39, 0.40)
         feed.markets["cond-1"] = {
@@ -614,7 +747,7 @@ class SimulatorSafetyTests(unittest.TestCase):
             json.loads(line)
             for line in (self.data / "candidate_journal.jsonl").read_text().splitlines()
         ]
-        self.assertEqual(rows[-1]["journal_version"], 5)
+        self.assertEqual(rows[-1]["journal_version"], 6)
         self.assertEqual(rows[-1]["fee_schedule"]["rate"], 0.05)
         self.assertGreater(rows[-1]["costs"]["fee_usdc"], 0)
 
@@ -646,6 +779,7 @@ class SimulatorSafetyTests(unittest.TestCase):
         self.assertGreater(rows[-1]["costs"]["exit_fee_usdc"], 0)
 
     def test_state_v2_gross_bid_is_migrated_once_without_reset(self):
+        self._allow_high_roundtrip_cost()
         feed = FakeFetcher()
         feed.books["asset-1"] = book(0.45, 0.46)
         feed.markets["cond-1"] = {
@@ -686,6 +820,7 @@ class SimulatorSafetyTests(unittest.TestCase):
         self.assertAlmostEqual(pos_again.current_price, 0.437625, places=9)
 
     def test_state_v2_gross_close_cash_is_rebuilt_from_net_exits(self):
+        self._allow_high_roundtrip_cost()
         feed = FakeFetcher()
         feed.books["asset-1"] = book(0.39, 0.40)
         feed.markets["cond-1"] = {

@@ -52,6 +52,38 @@ class PromotionCriteriaTests(unittest.TestCase):
         self.assertFalse(result["eligible_for_paper_promotion"])
         self.assertFalse(result["checks"]["closed_trades_at_least_100"])
 
+    def test_single_wallet_sample_cannot_promote(self):
+        run_id = "single-wallet"
+        now = datetime.now()
+        trades = []
+        for index in range(100):
+            trades.append(Position(
+                position_id=str(index), market_title=f"Market {index}",
+                market_slug=f"market-{index}", condition_id=f"cond-{index}",
+                outcome="Yes", entry_price=0.50, size_usdc=5.0, shares=10.0,
+                entry_time=now - timedelta(days=15), source_wallet="wallet-only",
+                asset=f"asset-{index}", run_id=run_id,
+                signal_id=f"signal-{index}", event_slug=f"event-{index}",
+                category="macro", strategy="copy", current_price=0.51,
+                exit_price=0.51, exit_time=now - timedelta(days=1),
+                is_closed=True,
+            ))
+
+        result = evaluate_copy_run(
+            trades, run_id, intended_domains=["macro"], now=now,
+            bootstrap_iterations=500,
+        )
+
+        self.assertFalse(result["eligible_for_paper_promotion"])
+        self.assertFalse(
+            result["checks"]["distinct_source_wallets_at_least_5"]
+        )
+        self.assertFalse(
+            result["checks"]["wallet_trade_concentration_at_most_20pct"]
+        )
+        self.assertEqual(result["metrics"]["distinct_source_wallets"], 1)
+        self.assertEqual(result["metrics"]["max_wallet_trade_share"], 1.0)
+
     def test_bootstrap_respects_event_correlation(self):
         run_id = "clustered-run"
         now = datetime.now()

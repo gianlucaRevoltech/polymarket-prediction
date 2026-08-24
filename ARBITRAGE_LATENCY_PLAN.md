@@ -1,6 +1,11 @@
 # Piano Arbitraggio a Latenza — Polymarket Bot
 
-> Documento di riferimento per le prossime settimane. Aggiornare dopo ogni step.
+> **STATO: DOCUMENTO STORICO, NON OPERATIVO.** Le tesi di edge, i target e i
+> passaggi a denaro reale descritti sotto sono stati invalidati dai run
+> successivi. La policy vigente è in `VALIDATION_PROTOCOL.md`: latency-arb
+> resta spento, COPY resta in OBSERVE e nessun percorso autorizza denaro reale.
+
+> Conservato esclusivamente come evidenza diagnostica delle ipotesi precedenti.
 > Ultimo update: 2026-07-13
 
 ## Situazione attuale (14:45 dashboard)

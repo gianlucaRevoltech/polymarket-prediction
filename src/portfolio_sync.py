@@ -11,9 +11,11 @@ posizioni simulate in modo fedele.
 """
 import requests
 import json as _json
+import time
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set
-from config import POLYMARKET_API, STRATEGY
+from config import POLYMARKET_API, STRATEGY, TRACKING
 from categories import categorize_market, normalize_fee_schedule
 from time_utils import utc_iso, utc_now_iso
 
@@ -59,6 +61,115 @@ class PolymarketPositionFetcher:
             "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
                           "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         })
+        self._data_last_request_monotonic = 0.0
+        self._data_blocked_until_monotonic = 0.0
+        self._data_consecutive_transient_errors = 0
+        self._feed_status_codes: Counter = Counter()
+        self._feed_health = {
+            "requests": 0,
+            "successful_requests": 0,
+            "transient_errors": 0,
+            "rate_limit_errors": 0,
+            "network_errors": 0,
+            "snapshot_cycles": 0,
+            "partial_snapshot_cycles": 0,
+            "fully_failed_snapshot_cycles": 0,
+            "wallet_reads_ok": 0,
+            "wallet_reads_failed": 0,
+            "last_success_at": None,
+            "last_error_at": None,
+            "last_error": "",
+            "backoff_seconds": 0.0,
+        }
+
+    def _wait_for_data_api_slot(self) -> None:
+        """Pacing unico per il Data API, incluso il cooldown dopo errori."""
+        now = time.monotonic()
+        min_interval = max(
+            0.0, float(TRACKING.get("data_api_min_interval_sec", 0.10))
+        )
+        ready_at = max(
+            self._data_blocked_until_monotonic,
+            self._data_last_request_monotonic + min_interval,
+        )
+        if ready_at > now:
+            time.sleep(ready_at - now)
+
+    def _record_data_api_failure(self, error: str, status_code=None,
+                                 transient: bool = False) -> None:
+        self._feed_health["last_error_at"] = utc_now_iso()
+        self._feed_health["last_error"] = str(error)
+        if status_code is not None:
+            self._feed_status_codes[str(status_code)] += 1
+        if transient:
+            self._feed_health["transient_errors"] += 1
+            self._data_consecutive_transient_errors += 1
+            if status_code == 429:
+                self._feed_health["rate_limit_errors"] += 1
+            base = max(
+                0.0, float(TRACKING.get("data_api_backoff_base_sec", 1.0))
+            )
+            ceiling = max(
+                base, float(TRACKING.get("data_api_backoff_max_sec", 30.0))
+            )
+            delay = min(
+                ceiling,
+                base * (2 ** min(self._data_consecutive_transient_errors - 1, 5)),
+            )
+            self._data_blocked_until_monotonic = max(
+                self._data_blocked_until_monotonic, time.monotonic() + delay
+            )
+            self._feed_health["backoff_seconds"] = delay
+
+    def _data_get(self, path: str, *, params: Dict, timeout):
+        """GET Data API con pacing e backoff fail-closed tra le richieste."""
+        self._wait_for_data_api_slot()
+        self._feed_health["requests"] += 1
+        response = None
+        try:
+            response = self.session.get(
+                f"{self.data_api}/{path.lstrip('/')}",
+                params=params,
+                timeout=timeout,
+            )
+            self._data_last_request_monotonic = time.monotonic()
+            if not response.ok:
+                status_code = getattr(response, "status_code", None)
+                transient = (
+                    status_code in {408, 425, 429}
+                    or (isinstance(status_code, int) and status_code >= 500)
+                )
+                self._record_data_api_failure(
+                    f"HTTP {status_code}", status_code, transient
+                )
+            else:
+                self._feed_health["successful_requests"] += 1
+                self._feed_health["last_success_at"] = utc_now_iso()
+                self._feed_health["backoff_seconds"] = 0.0
+                self._data_consecutive_transient_errors = 0
+                self._data_blocked_until_monotonic = 0.0
+            return response
+        except Exception as exc:
+            self._data_last_request_monotonic = time.monotonic()
+            transient = isinstance(
+                exc, (requests.Timeout, requests.ConnectionError)
+            )
+            if transient:
+                self._feed_health["network_errors"] += 1
+            self._record_data_api_failure(str(exc), None, transient)
+            raise
+
+    def get_feed_health(self) -> Dict:
+        """Snapshot serializzabile della salute feed del processo corrente."""
+        health = dict(self._feed_health)
+        health["status_codes"] = dict(self._feed_status_codes)
+        health["consecutive_transient_errors"] = (
+            self._data_consecutive_transient_errors
+        )
+        health["backoff_remaining_seconds"] = max(
+            0.0, self._data_blocked_until_monotonic - time.monotonic()
+        )
+        return health
 
     def get_positions_result(self, wallet_address: str,
                              limit: int = 500) -> PositionsFetchResult:
@@ -66,7 +177,6 @@ class PolymarketPositionFetcher:
         Ritorna uno snapshot strutturato. Una lista vuota con `ok=True` prova
         che il wallet non ha posizioni; `ok=False` non è mai una vendita.
         """
-        url = f"{self.data_api}/positions"
         page_size = min(max(int(limit), 1), 500)
         offset = 0
         raw = []
@@ -80,8 +190,8 @@ class PolymarketPositionFetcher:
                     "sortBy": "TOKENS",
                     "sortDirection": "DESC",
                 }
-                response = self.session.get(
-                    url, params=params, timeout=(5, 10)
+                response = self._data_get(
+                    "positions", params=params, timeout=(5, 10)
                 )
                 response.raise_for_status()
                 page = response.json()
@@ -144,7 +254,6 @@ class PolymarketPositionFetcher:
         if not wallet_address or not asset:
             return RecentBuyResult(status="not_found")
         try:
-            url = f"{self.data_api}/activity"
             params = {
                 "user": wallet_address,
                 "type": "TRADE",
@@ -154,7 +263,9 @@ class PolymarketPositionFetcher:
                 "sortBy": "TIMESTAMP",
                 "sortDirection": "DESC",
             }
-            response = self.session.get(url, params=params, timeout=15)
+            response = self._data_get(
+                "activity", params=params, timeout=15
+            )
             response.raise_for_status()
             matches = [
                 row for row in response.json()
@@ -169,9 +280,9 @@ class PolymarketPositionFetcher:
                 "transaction_hash": row.get("transactionHash", ""),
                 "source_trade_at": utc_iso(row.get("timestamp")),
                 "source_trade_price": float(row.get("price", 0) or 0),
-                "source_trade_size": float(
-                    row.get("usdcSize", row.get("size", 0)) or 0
-                ),
+                # `size` e' numero di shares; solo `usdcSize` e' confrontabile
+                # con la size paper in dollari. Se manca, il gate fallisce chiuso.
+                "source_trade_size": float(row.get("usdcSize", 0) or 0),
             })
         except Exception as exc:
             print(f"[SYNC] Errore activity BUY {wallet_address[:10]}...: {exc}")
@@ -538,6 +649,7 @@ class PolymarketPositionFetcher:
         Aggrega le posizioni e conserva l'esito di ogni wallet. Gli errori non
         vengono trasformati in snapshot vuoti.
         """
+        self._feed_health["snapshot_cycles"] += 1
         aggregate: Dict[str, Dict] = {}
         successful_wallets: Set[str] = set()
         failed_wallets: Dict[str, str] = {}
@@ -581,6 +693,12 @@ class PolymarketPositionFetcher:
                     # preferiamo quella con redeemable=True se presente)
                     if pos["redeemable"]:
                         entry["info"] = pos
+        self._feed_health["wallet_reads_ok"] += len(successful_wallets)
+        self._feed_health["wallet_reads_failed"] += len(failed_wallets)
+        if failed_wallets:
+            self._feed_health["partial_snapshot_cycles"] += 1
+        if wallet_addresses and not successful_wallets:
+            self._feed_health["fully_failed_snapshot_cycles"] += 1
         return WalletSnapshotResult(
             aggregate=aggregate,
             successful_wallets=successful_wallets,

@@ -1,5 +1,9 @@
 """
-Configurazione Polymarket Paper Trading Bot — MULTI-STRATEGY AGGRESSIVO (2026-07-02)
+Configurazione Polymarket Paper Trading Bot.
+
+Stato operativo corrente: COPY in osservazione prospettica; tutte le altre
+strategie e latency-arb disabilitate. Le note Phase R-Y sotto sono storico e
+non costituiscono target o autorizzazione di rischio.
 
 Sessione 2026-07-02 (Phase R-Y): respiro aggressivo per target doubling 1-2 sett.
   - Phase R: sizing 6% partenza, tier 0/10/25/50, max_open 12, reserve 15%
@@ -44,6 +48,12 @@ EXECUTION = {
     "shadow_run_loss_usdc": 6.0,
     "shadow_max_consecutive_losses": 3,
     "wallet_quarantine_consecutive_losses": 3,
+    # Campionamento prospettico: una singola fonte non puo' riempire il run.
+    # Con 100 trade richiesti e cap 20 servono almeno cinque wallet produttivi.
+    "shadow_max_trades_per_wallet": 20,
+    "paper_max_trades_per_wallet": 20,
+    "promotion_min_distinct_wallets": 5,
+    "promotion_max_trade_share_per_wallet": 0.20,
 }
 if EXECUTION["mode"] not in {"observe", "paper_validation"}:
     EXECUTION["mode"] = "observe"
@@ -149,6 +159,12 @@ STRATEGY = {
     "max_entry_drift": 0.08,
     # Il delta snapshot deve essere confermato da un BUY recente e identificabile.
     "max_source_trade_age_sec": 60.0,
+    # Non assumiamo piu' rischio maggiore del trade sorgente: per copiare $5 il
+    # BUY verificato del wallet deve avere notional almeno pari alla size paper.
+    "min_source_trade_notional_ratio": 1.0,
+    # Il costo certo di entrare e liquidare subito (spread + fee su entrambi i
+    # lati) non puo' assorbire piu' del 2.5% della size prima di ogni edge.
+    "max_immediate_roundtrip_cost_pct": 0.025,
     # copy-trade puntuale via delta-snapshot PER-WALLET (Phase I)
     "delta_copy": True,
     # filtro scadenza (Phase S: min_days 0.5 -> 0.25, sport intraday 6h+)
@@ -462,6 +478,11 @@ TRACKING = {
     "poll_interval": 20,           # Phase X: 30 -> 20s (capture più rapido)
     "activity_limit": 100,
     "dedup_window": 3600,
+    # Il limite ufficiale /positions e' 150 richieste/10s. Manteniamo margine e
+    # applichiamo backoff persistente tra richieste dopo 429/5xx.
+    "data_api_min_interval_sec": 0.10,
+    "data_api_backoff_base_sec": 1.0,
+    "data_api_backoff_max_sec": 30.0,
 }
 
 # Monitoring / Alert (Phase L)

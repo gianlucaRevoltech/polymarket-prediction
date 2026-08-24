@@ -1,5 +1,31 @@
 # Task Plan: Polymarket Bot — FIX EMERGENZA PERFORMANCE (-5.63%, WR 24%)
 
+## Current active phase
+
+Phase CW — hardening del campione prospettico; implementazione e test completi,
+in revisione finale prima di commit/push e rollout OBSERVE.
+
+## Active Phase CV: audit validazione prospettica 14 giorni (2026-08-24)
+
+- [x] CV1: verificare integrita archivio, commit, run_id e durata effettiva
+- [x] CV2: verificare process health, feed, timestamp e continuita ledger
+- [x] CV3: riconciliare candidati, shadow lifecycle, cash ed equity MTM
+- [x] CV4: misurare EV netto, CI95 bootstrap, drawdown e costi eseguibili
+- [x] CV5: analizzare concentrazione per wallet, evento e dominio
+- [x] CV6: applicare i gate 100 trade / 30 eventi / 14 giorni e formulare verdetto
+
+Vincoli:
+- audit read-only dell'unico bundle presente in `exports/`;
+- nessun restart, `new-run`, scan o modifica del run VPS;
+- nessuna autorizzazione automatica a paper o capitale reale;
+- contano soltanto record coerenti con il `run_id` esportato.
+
+Verdetto: NO-GO per paper e denaro reale. Il collector è tecnicamente vivo e
+fail-closed, ma lo shadow constrained termina 0W/4L, -$4,40 e CI negativo dopo
+la quarantena del solo wallet produttivo. Non prolungare il run halted; prima di
+un nuovo campione correggere rate limiting, audit del consenso/source notional
+e dipendenza da un singolo wallet.
+
 ## Active Phase CU: hardening post-audit shadow (2026-08-10)
 
 - [x] CU1: inventariare contratti scanner/run/simulator/dashboard e test esistenti
@@ -18,6 +44,12 @@ Vincoli:
 - la quarantena usa solo run prospettici conclusi, senza tuning retroattivo.
 
 Errori incontrati:
+- il primo calcolo della frizione su tutti gli eligible assumeva il campo
+  `shares` nel candidate journal v5; il journal conserva size ed entry ma non
+  shares. Ricalcolare `shares=planned_size_usdc/entry_price`.
+- il primo dump compatto del journal shadow ha incontrato un
+  `UnicodeEncodeError` della console Windows su un titolo Unicode; i conteggi
+  precedenti all'errore sono validi. Proseguire forzando stdout UTF-8.
 - primo inserimento CU fallito per mismatch encoding dell'intestazione storica;
   retry applicato usando l'ancora ASCII stabile della fase CT.
 - primo inserimento findings CU fallito per la stessa intestazione legacy;
@@ -233,8 +265,8 @@ in un sistema profittevole. ROOT CAUSE: il bot entra a prezzi estremi (0.999, 0.
 0.026) dove lo stop-loss percentuale viene triggerato dal RUMORE di mercato, non
 dal fallimento del segnale. Risk/reward invertito: gain minuscolo, loss enorme.
 
-## Current Phase
-Phase CO feed coverage COMPLETE nel codice → pubblicazione e nuovo OBSERVE 48h
+## Current Phase (storico)
+Phase CO feed coverage completata; superseded dalla Phase CW.
 
 ## Phase CK: Arresto perdite e nuova validazione (2026-07-23)
 
@@ -575,7 +607,24 @@ Vedi `ARBITRAGE_LATENCY_PLAN.md` per Step 2/3 (scaling + diversificazione oracle
   @0.999) sono near-certain → risolveranno in profitto. NON chiuderle forzatamente.
 - Il problema NON è "poca frequenza" o "sizing troppo basso" come pensato prima.
   È l'opposto: sizing troppo alto + entrate a prezzi estremi + SL rumore-trigger.
-- La strategia copy (50% WR, -$1.54) è la migliore. L'edge è reale in banda 0.30-0.70.
-  Le altre strategie sono state aggiunte senza backtest e sono la causa della perdita.
+- Il precedente claim di edge COPY in banda 0.30-0.70 è ritirato: i run
+  prospettici successivi sono negativi e COPY deve restare in OBSERVE.
 - Priorità: PRIMA fermare il sanguinamento (Phase CC), POI fixare la meccanica
   (Phase CD-CE), POI ridurre sizing (Phase CG), POI validare (Phase CH).
+# Phase CW — Hardening del campione prospettico (2026-08-24)
+
+Obiettivo: correggere i difetti emersi dal run OBSERVE/shadow di 14 giorni senza promuovere una strategia in perdita. Il rollout finale deve ripartire in `observe`, con un campione auditabile e non dominabile da un solo wallet.
+
+- [completed] CW1 — Inventariare feed, journal, shadow engine, promotion gate, dashboard e test esistenti.
+- [completed] CW2 — Ridurre HTTP 429 con pacing/backoff del Data API e rendere osservabile la salute del feed.
+- [completed] CW3 — Journal v6: persistere consenso/holder, notional sorgente e motivi di scarto; bloccare sorgenti sotto la size paper.
+- [completed] CW4 — Imporre diversificazione prospettica: cap di 20 trade per wallet, almeno 5 wallet e massimo 20% dei trade per wallet per la promozione.
+- [completed] CW5 — Esporre dashboard/API per distribuzione wallet, consensus e feed health.
+- [completed] CW6 — Aggiornare protocollo, migrazioni e test automatici; eseguire suite completa e smoke test.
+- [in_progress] CW7 — Commit/push delle sole modifiche pertinenti e consegnare rollout VPS in `OBSERVE`.
+
+Decisioni già fissate dall'evidenza:
+
+- Il run `run-20260810T174414-f6d13226` è fallito: 0W/4L, P&L netto -$4.402640; non è promotibile.
+- Nessuna garanzia di profitto e nessun denaro reale: una promozione futura richiede evidenza prospettica netta positiva.
+- I file utente non tracciati (`exports/`, `polymarket-observe-*`, `progressi.txt`, `resp.json`) devono restare intatti.

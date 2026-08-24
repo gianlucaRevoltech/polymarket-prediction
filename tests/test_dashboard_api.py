@@ -26,12 +26,14 @@ class DashboardApiTests(unittest.TestCase):
                 sim._save_state()
                 (data / "candidate_journal.jsonl").write_text(
                     json.dumps({
-                        "journal_version": 5,
+                        "journal_version": 6,
                         "run_id": sim.run_id,
                         "signal_id": "opened-signal",
                         "decision": "opened",
                         "reason": "paper_validation",
                         "pretrade_eligible": True,
+                        "wallet": "0xactual",
+                        "num_holders": 2,
                     }) + "\n",
                     encoding="utf-8",
                 )
@@ -69,6 +71,15 @@ class DashboardApiTests(unittest.TestCase):
                         },
                     }), encoding="utf-8",
                 )
+                (data / "runtime_status.json").write_text(json.dumps({
+                    "run_id": sim.run_id,
+                    "phase": "idle",
+                    "feed_health": {
+                        "requests": 12,
+                        "rate_limit_errors": 1,
+                        "partial_snapshot_cycles": 2,
+                    },
+                }), encoding="utf-8")
 
                 client = dashboard.app.test_client()
                 response = client.get("/api/status")
@@ -84,6 +95,14 @@ class DashboardApiTests(unittest.TestCase):
                 self.assertEqual(payload["summary"]["max_open_positions"], 2)
                 self.assertEqual(payload["summary"]["peak_equity"], 300.0)
                 self.assertEqual(payload["candidate_summary"]["passed_pretrade"], 1)
+                self.assertEqual(
+                    payload["candidate_summary"]["eligible_by_wallet"]["0xactual"],
+                    1,
+                )
+                self.assertEqual(
+                    payload["candidate_summary"]["consensus_counts"]["2"], 1
+                )
+                self.assertEqual(payload["feed_health"]["rate_limit_errors"], 1)
                 self.assertFalse(
                     payload["shadow_validation"]["real_money_authorized"]
                 )

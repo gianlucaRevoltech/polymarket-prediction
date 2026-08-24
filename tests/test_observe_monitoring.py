@@ -170,6 +170,18 @@ class ObserveMonitoringTests(unittest.TestCase):
             fetcher.session.get.call_args.kwargs["params"]["limit"], 500
         )
 
+    def test_recent_buy_does_not_treat_share_size_as_usdc_notional(self):
+        fetcher = PolymarketPositionFetcher()
+        fetcher.session.get = mock.Mock(return_value=response([{
+            "type": "TRADE", "side": "BUY", "asset": "asset-1",
+            "timestamp": 1784876400, "transactionHash": "0xtx",
+            "price": 0.50, "size": 100,
+        }]))
+
+        trade = fetcher.get_recent_buy("0x" + "3" * 40, "asset-1")
+
+        self.assertEqual(trade["source_trade_size"], 0.0)
+
     def test_positions_paginates_stably_up_to_500_per_page(self):
         fetcher = PolymarketPositionFetcher()
         fetcher.session.get = mock.Mock(side_effect=[
@@ -216,6 +228,10 @@ class ObserveMonitoringTests(unittest.TestCase):
         self.assertEqual(failed.positions, [])
         self.assertIn("HTTP 429", failed.error)
         self.assertTrue(failed.transient)
+        health = fetcher.get_feed_health()
+        self.assertEqual(health["rate_limit_errors"], 1)
+        self.assertEqual(health["status_codes"]["429"], 1)
+        self.assertGreater(health["backoff_remaining_seconds"], 0)
 
     def test_recent_buy_distinguishes_not_found_from_error(self):
         fetcher = PolymarketPositionFetcher()

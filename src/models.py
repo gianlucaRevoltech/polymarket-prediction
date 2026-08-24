@@ -109,6 +109,8 @@ class Position:
     entry_best_ask: Optional[float] = None
     source_trade_price: Optional[float] = None
     source_trade_size: Optional[float] = None
+    num_holders: int = 1
+    holder_wallets: List[str] = field(default_factory=list)
     last_mark_at: Optional[datetime] = None
 
     # Strategia di origine (Phase M multi-strategy): copy | arb_binary | harvest | arb_cross

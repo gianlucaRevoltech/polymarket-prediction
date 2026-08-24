@@ -902,7 +902,11 @@
             }
 
             // Dashboard v2: risk + cluster
-            updateRiskDashboard(summary, data.wallet_validation_registry || {});
+            updateRiskDashboard(
+                summary,
+                data.wallet_validation_registry || {},
+                data.feed_health || health.feed_health || {}
+            );
             updateClusterExposure(summary);
             updateCandidateJournal(data.candidate_summary || {}, data.recent_candidates || []);
             updateShadowValidation(
@@ -1125,6 +1129,7 @@
             const reasonText = Object.entries(summary.top_reasons || {})
                 .map(([reason, count]) => `${escapeHtml(reason)}: ${count}`)
                 .join(' · ') || 'nessun motivo disponibile';
+            const productiveWallets = Object.keys(summary.eligible_by_wallet || {}).length;
             document.getElementById('candidateSummary').innerHTML =
                 `<div class="strat-summary">
                     <div class="strat-card" style="border-left-color:#60a5fa">
@@ -1141,6 +1146,11 @@
                         <div class="label">Motivi principali</div>
                         <div class="label">${reasonText}</div>
                     </div>
+                    <div class="strat-card" style="border-left-color:#a78bfa">
+                        <div class="label">Wallet con segnali validi</div>
+                        <div class="val">${productiveWallets}</div>
+                        <div class="label">consenso e notional persistiti</div>
+                    </div>
                 </div>`;
 
             const container = document.getElementById('candidatesContainer');
@@ -1151,7 +1161,8 @@
             }
             let html = '<div class="table-wrap"><table><thead><tr>' +
                 '<th>Rilevato</th><th>Mercato</th><th>Wallet</th><th>Categoria</th>' +
-                '<th>Bid / Ask</th><th>Latenza</th><th>Decisione</th></tr></thead><tbody>';
+                '<th>Bid / Ask</th><th>Sorgente</th><th>Consenso</th>' +
+                '<th>Latenza</th><th>Decisione</th></tr></thead><tbody>';
             rows.forEach(row => {
                 const detected = row.detected_at
                     ? new Date(row.detected_at).toLocaleString('it-IT', {
@@ -1165,13 +1176,16 @@
                 const latencySeconds = row.latency_seconds ?? row.detection_latency_seconds;
                 const latency = latencySeconds == null
                     ? '-' : Number(latencySeconds).toFixed(1) + 's';
-                const decisionClass = row.decision === 'eligible' ? 'positive' : 'negative';
+                const decisionClass = ['eligible', 'opened'].includes(row.decision)
+                    ? 'positive' : 'negative';
                 html += `<tr>
                     <td class="trade-time">${detected}</td>
                     <td>${escapeHtml((row.market || '').slice(0, 55))}</td>
                     <td title="${escapeHtml(row.wallet || '')}">${escapeHtml(wallet)}</td>
                     <td>${escapeHtml(row.category || 'other')}</td>
                     <td>${bid} / ${ask}</td>
+                    <td>${row.source_trade_size == null ? '-' : formatMoney(Number(row.source_trade_size))}</td>
+                    <td>${Number(row.num_holders || 1)}</td>
                     <td>${latency}</td>
                     <td class="${decisionClass}">${escapeHtml(row.decision || '')}<br>
                         <span class="label">${escapeHtml(row.reason || '')}</span></td>
@@ -1196,6 +1210,9 @@
             const cash = Number(summary.cash ?? summary.initial_capital ?? 0);
             const drawdown = Number(summary.max_drawdown || 0) * 100;
             const maxOpen = Number(summary.max_open_positions || 2);
+            const distinctWallets = Number(summary.distinct_source_wallets || 0);
+            const maxWalletShare = Number(summary.max_wallet_trade_share || 0) * 100;
+            const maxPerWallet = Number(summary.max_trades_per_wallet || 20);
             const halt = summary.halt_reason || '';
             const domains = Array.isArray(summary.intended_domains)
                 ? summary.intended_domains.join(', ') : '-';
@@ -1239,6 +1256,11 @@
                         <div class="label">Ingressi shadow rifiutati</div><div class="val">${rejected}</div>
                         <div class="label">Top: ${escapeHtml(topRejectionText)}</div>
                     </div>
+                    <div class="strat-card" style="border-left-color:#a78bfa">
+                        <div class="label">Diversificazione fonti</div>
+                        <div class="val">${distinctWallets} wallet</div>
+                        <div class="label">max quota ${maxWalletShare.toFixed(1)}% · cap ${maxPerWallet} trade/wallet</div>
+                    </div>
                 </div>`;
 
             const container = document.getElementById('shadowContainer');
@@ -1275,7 +1297,7 @@
         }
 
         // Dashboard v2: Risk & System Info
-        function updateRiskDashboard(summary, walletRegistry) {
+        function updateRiskDashboard(summary, walletRegistry, feedHealth) {
             const container = document.getElementById('riskContainer');
             if (!summary) { container.innerHTML = '<div class="empty-state"><div>Dati non disponibili</div></div>'; return; }
             const tier = summary.sizing_tier || {};
@@ -1292,6 +1314,9 @@
             const halt = summary.halt_reason || '';
             const quarantinedWallets = Number(walletRegistry.quarantined_count || 0);
             const registryError = walletRegistry.load_error || '';
+            const rateLimits = Number((feedHealth || {}).rate_limit_errors || 0);
+            const partialCycles = Number((feedHealth || {}).partial_snapshot_cycles || 0);
+            const feedRequests = Number((feedHealth || {}).requests || 0);
             let html = '<div class="strat-summary">';
             html += `<div class="strat-card" style="border-left-color:#ef4444"><div class="label">Execution Mode</div><div class="val">${escapeHtml(mode)}</div><div class="label" style="margin-top:4px">${escapeHtml(halt || 'nessun halt')}</div></div>`;
             html += `<div class="strat-card" style="border-left-color:#60a5fa"><div class="label">Paper Size</div><div class="val">$5</div><div class="label" style="margin-top:4px">Run: ${escapeHtml((summary.run_id||'').slice(0,24))}</div></div>`;
@@ -1301,6 +1326,7 @@
             html += `<div class="strat-card" style="border-left-color:#c084fc"><div class="label">Strategie Scansionate</div><div class="val">${strategies.length}</div><div class="label" style="margin-top:4px">${strategies.join(', ')}</div></div>`;
             html += `<div class="strat-card" style="border-left-color:#f472b6"><div class="label">Posizioni</div><div class="val">${summary.open_positions||0}/${summary.max_open_positions||0}</div><div class="label" style="margin-top:4px">Chiuse: ${summary.closed_positions||0} | WR: ${(summary.win_rate||0).toFixed(0)}%</div></div>`;
             html += `<div class="strat-card" style="border-left-color:${registryError?'#ef4444':'#fb7185'}"><div class="label">Wallet Quarantena Cross-run</div><div class="val">${quarantinedWallets}</div><div class="label" style="margin-top:4px">${escapeHtml(registryError || 'esclusi dai prossimi run')}</div></div>`;
+            html += `<div class="strat-card" style="border-left-color:${rateLimits?'#fbbf24':'#34d399'}"><div class="label">Salute Data API</div><div class="val">${rateLimits} HTTP 429</div><div class="label" style="margin-top:4px">${feedRequests} richieste · ${partialCycles} cicli parziali</div></div>`;
             html += '</div>';
             container.innerHTML = html;
         }
