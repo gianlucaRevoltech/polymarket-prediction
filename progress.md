@@ -969,3 +969,5 @@ OBSERVE di default, COPY unica candidata futura, nessun capitale reale.
   continuare a verificare la loro responsabilità specifica.
 - Verifiche finali pre-commit: `compileall` OK, JavaScript `node --check` OK,
   `bash -n start_all.sh` OK, `git diff --check` OK e suite completa 74 test OK.
+- Commit principale `e335218` creato e pubblicato su `origin/main`; export e
+  file locali non tracciati non sono stati inclusi.

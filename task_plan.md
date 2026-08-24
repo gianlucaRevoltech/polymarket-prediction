@@ -621,7 +621,7 @@ Obiettivo: correggere i difetti emersi dal run OBSERVE/shadow di 14 giorni senza
 - [completed] CW4 — Imporre diversificazione prospettica: cap di 20 trade per wallet, almeno 5 wallet e massimo 20% dei trade per wallet per la promozione.
 - [completed] CW5 — Esporre dashboard/API per distribuzione wallet, consensus e feed health.
 - [completed] CW6 — Aggiornare protocollo, migrazioni e test automatici; eseguire suite completa e smoke test.
-- [in_progress] CW7 — Commit/push delle sole modifiche pertinenti e consegnare rollout VPS in `OBSERVE`.
+- [completed] CW7 — Commit/push delle sole modifiche pertinenti e consegnare rollout VPS in `OBSERVE`.
 
 Decisioni già fissate dall'evidenza:
 
