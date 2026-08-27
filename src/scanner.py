@@ -429,7 +429,13 @@ class PolymarketScanner:
                 "win_rate": 0.0, "status": "unknown",
                 "error": "activity_fetch_failed",
             }
-        posmap = self.bt.positions_map(address)
+        posmap = self.bt.positions_map_result(address)
+        if posmap is None:
+            return {
+                "roi": 0.0, "pnl": 0.0, "bought": 0.0, "decided": 0,
+                "win_rate": 0.0, "status": "unknown",
+                "error": "positions_fetch_failed",
+            }
         closed = self.bt.reconstruct_positions(activity, posmap)
 
         pnl = sum(p["realized_pnl"] for p in closed.values())

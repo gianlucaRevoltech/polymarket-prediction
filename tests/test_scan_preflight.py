@@ -87,6 +87,19 @@ class ScanContractTests(unittest.TestCase):
         self.assertEqual(scanner.scan_health["holder_errors"], 1)
         self.assertTrue(scanner.scan_health["last_holder_error"])
 
+    def test_incomplete_positions_snapshot_cannot_qualify_wallet(self):
+        scanner = PolymarketScanner()
+        scanner.bt.fetch_activity = mock.Mock(return_value=[{"type": "TRADE"}])
+        scanner.bt.positions_map_result = mock.Mock(return_value=None)
+        scanner.bt.reconstruct_positions = mock.Mock()
+
+        performance = scanner._wallet_realized_performance("0xwallet")
+
+        self.assertEqual(performance["status"], "unknown")
+        self.assertEqual(performance["error"], "positions_fetch_failed")
+        self.assertEqual(performance["decided"], 0)
+        scanner.bt.reconstruct_positions.assert_not_called()
+
     def test_bot_refuses_an_insufficient_frozen_cohort(self):
         with tempfile.TemporaryDirectory() as tmp:
             data = Path(tmp)

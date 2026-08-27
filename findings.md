@@ -97,6 +97,15 @@
   prematuramente la condizione EOF e rendeva falsamente vuoti sport/crypto/meteo.
 - Fix successivo: pagine Gamma da 100 con offset 0,100,... fino a 600; nessuna
   modifica ai criteri di qualifica o al minimo 5 wallet.
+- Secondo scan VPS: 600 mercati completi (133 sport, 37 crypto, 234 politics,
+  22 macro, 83 geopolitics, 91 other), 14 wallet selezionati e servizi avviati
+  correttamente in OBSERVE. Due wallet selezionati compaiono pero anche tra gli
+  snapshot `/positions` falliti per offset >10.000.
+- `Backtester.positions_map()` trasformava l'errore strutturato in `{}` e il
+  profiler qualificava comunque il wallet dai soli SELL/REDEEM dell'activity.
+  Questo riapriva survivorship bias: le perdite residue non erano verificabili.
+  Il nuovo `positions_map_result()` propaga `None` e scanner/profiler scartano
+  fail-closed qualunque wallet con snapshot corrente incompleto.
 
 
 

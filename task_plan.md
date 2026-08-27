@@ -52,6 +52,10 @@ Errori incontrati:
 - primo rollout CX ha richiesto 600 mercati ma Gamma ne ha restituiti 100; la
   logica `len(page) < 300` ha concluso erroneamente la paginazione. Correzione:
   richieste da 100 record, coerenti con il cap osservato in produzione.
+- secondo rollout ha selezionato wallet per cui `/positions` aveva superato
+  offset 10.000: il wrapper legacy convertiva l'errore in lista/mappa vuota e
+  permetteva metriche activity parziali. Corretto con esito fail-closed
+  esplicito nel profiler e scanner.
 
 ## Active Phase CV: audit validazione prospettica 14 giorni (2026-08-24)
 

@@ -90,12 +90,19 @@ class Backtester:
             print(f"[BT] Errore activity {wallet[:10]}...: {e}")
             return None
 
-    def positions_map(self, wallet: str) -> Dict[str, Dict]:
-        """asset -> {cur_price, redeemable} dallo snapshot corrente."""
+    def positions_map_result(self, wallet: str) -> Optional[Dict[str, Dict]]:
+        """Mappa posizioni completa; ``None`` distingue un errore dal vuoto."""
+        result = self.fetcher.get_positions_result(wallet)
+        if not result.ok:
+            return None
         out = {}
-        for p in self.fetcher.get_positions(wallet):
+        for p in result.positions:
             out[p["asset"]] = {"cur_price": p["cur_price"], "redeemable": p["redeemable"]}
         return out
+
+    def positions_map(self, wallet: str) -> Dict[str, Dict]:
+        """Wrapper legacy; i profili nuovi devono usare l'esito non ambiguo."""
+        return self.positions_map_result(wallet) or {}
 
     # ------------------------------------------------------------------
     def reconstruct_positions(self, activity: List[Dict], posmap: Dict[str, Dict]) -> Dict[str, Dict]:
@@ -290,7 +297,14 @@ class Backtester:
                 }
                 continue
             rewards_sum += self.rewards_total(activity)
-            posmap = self.positions_map(addr)
+            posmap = self.positions_map_result(addr)
+            if posmap is None:
+                per_wallet[addr] = {
+                    "name": name, "error": "positions_fetch_failed",
+                    "positions": 0, "pnl": 0.0, "bought": 0.0,
+                    "roi": 0.0, "win_rate": 0.0,
+                }
+                continue
             closed = self.reconstruct_positions(activity, posmap)
 
             pnl = sum(p["realized_pnl"] for p in closed.values())

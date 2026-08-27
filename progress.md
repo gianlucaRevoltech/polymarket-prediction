@@ -63,6 +63,11 @@
   bot/dashboard/latency-arb tutti spenti come previsto. Nessun capitale mutato.
 - Il log reale ha rivelato che Gamma tronca la risposta a 100 mercati: corretta
   la paginazione da 300 a 100 e aggiornato il test a tre pagine 100+100+1.
+- Secondo rollout `a3c3993`: discovery 600/600, 14 wallet, bot/dashboard attivi
+  in OBSERVE e latency-arb fermo. Audit dei warning ha scoperto qualifica
+  parziale per wallet oltre 10.000 posizioni.
+- Aggiunto esito non ambiguo al profiler: errore snapshot non equivale piu a
+  portafoglio vuoto e impedisce qualifica/ranking. Test mirato 7/7 PASS.
 
 
 ## SESSIONE 2026-08-24 - Phase CV audit prospettico
