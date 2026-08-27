@@ -877,6 +877,7 @@
             const haltReason = data.halt_reason || summary.halt_reason || '';
             const health = data.bot_health || {};
             const cohort = data.cohort_health || {};
+            const readiness = data.readiness || {};
             const stale = Boolean(health.stale);
             const banner = document.getElementById('safetyBanner');
             const bannerParts = [];
@@ -889,6 +890,9 @@
             if (cohort.validation_ready === false) {
                 bannerParts.push((cohort.reason || 'COORTE WALLET NON VALIDABILE').toUpperCase());
             }
+            (readiness.blockers || []).forEach(item => {
+                if (item && item.message) bannerParts.push(String(item.message).toUpperCase());
+            });
             if (bannerParts.length) {
                 banner.style.display = 'block';
                 banner.textContent = '⚠ ' + bannerParts.join(' — ');
@@ -901,6 +905,10 @@
                 observeBanner.style.display = 'block';
                 observeBanner.textContent =
                     'OBSERVE — candidati valutati e registrati; nessuna posizione viene aperta.';
+            } else if (mode === 'PAPER_VALIDATION') {
+                observeBanner.style.display = 'block';
+                observeBanner.textContent =
+                    'PAPER EXPERIMENTAL — posizioni esclusivamente simulate. Edge non ancora dimostrato; denaro reale non autorizzato.';
             } else {
                 observeBanner.style.display = 'none';
             }
@@ -910,7 +918,11 @@
                 summary,
                 data.wallet_validation_registry || {},
                 data.feed_health || health.feed_health || {},
-                cohort
+                cohort,
+                readiness,
+                data.economic_status || {},
+                data.run_manifest || {},
+                data.runtime_mode || mode.toLowerCase()
             );
             updateClusterExposure(summary);
             updateCandidateJournal(data.candidate_summary || {}, data.recent_candidates || []);
@@ -1302,7 +1314,7 @@
         }
 
         // Dashboard v2: Risk & System Info
-        function updateRiskDashboard(summary, walletRegistry, feedHealth, cohortHealth) {
+        function updateRiskDashboard(summary, walletRegistry, feedHealth, cohortHealth, readiness, economic, manifest, runtimeMode) {
             const container = document.getElementById('riskContainer');
             if (!summary) { container.innerHTML = '<div class="empty-state"><div>Dati non disponibili</div></div>'; return; }
             const tier = summary.sizing_tier || {};
@@ -1326,9 +1338,20 @@
             const cohortMinimum = Number((cohortHealth || {}).minimum_required || 0);
             const cohortReady = Boolean((cohortHealth || {}).validation_ready);
             const cohortReason = (cohortHealth || {}).reason || '';
+            const preflightReady = Boolean((readiness || {}).ready);
+            const preflightAt = (readiness || {}).generated_at || '';
+            const blockerCount = ((readiness || {}).blockers || []).length;
+            const configuredMode = ((manifest || {}).execution_mode || mode).toUpperCase();
+            const runtimeModeLabel = String(runtimeMode || mode).toUpperCase();
+            const fees = Number((economic || {}).fees_usdc || 0);
+            const maxWalletShare = Number((economic || {}).max_positive_wallet_share || 0) * 100;
+            const maxDomainShare = Number((economic || {}).max_positive_domain_share || 0) * 100;
             let html = '<div class="strat-summary">';
-            html += `<div class="strat-card" style="border-left-color:#ef4444"><div class="label">Execution Mode</div><div class="val">${escapeHtml(mode)}</div><div class="label" style="margin-top:4px">${escapeHtml(halt || 'nessun halt')}</div></div>`;
+            html += `<div class="strat-card" style="border-left-color:${configuredMode===runtimeModeLabel?'#34d399':'#ef4444'}"><div class="label">Modalità Persistente</div><div class="val">${escapeHtml(configuredMode)}</div><div class="label" style="margin-top:4px">runtime: ${escapeHtml(runtimeModeLabel)} · ${escapeHtml(halt || 'nessun halt')}</div></div>`;
             html += `<div class="strat-card" style="border-left-color:#60a5fa"><div class="label">Paper Size</div><div class="val">$5</div><div class="label" style="margin-top:4px">Run: ${escapeHtml((summary.run_id||'').slice(0,24))}</div></div>`;
+            html += `<div class="strat-card" style="border-left-color:${preflightReady?'#34d399':'#ef4444'}"><div class="label">Ultimo Preflight</div><div class="val ${preflightReady?'positive':'negative'}">${preflightReady?'READY':'NON READY'}</div><div class="label" style="margin-top:4px">${blockerCount} blocchi · ${escapeHtml(preflightAt || 'mai eseguito')}</div></div>`;
+            html += `<div class="strat-card" style="border-left-color:#fbbf24"><div class="label">Stato Economico</div><div class="val">EDGE NON DIMOSTRATO</div><div class="label" style="margin-top:4px">P&L netto ${formatMoney((economic||{}).net_pnl||0)} · fee ${formatMoney(fees)} · ${Number((economic||{}).closed_trades||0)} chiusure</div></div>`;
+            html += `<div class="strat-card" style="border-left-color:#fbbf24"><div class="label">Concentrazione Profitto</div><div class="val">${maxWalletShare.toFixed(1)}% / ${maxDomainShare.toFixed(1)}%</div><div class="label" style="margin-top:4px">quota max wallet / dominio · solo paper</div></div>`;
             html += `<div class="strat-card" style="border-left-color:#fbbf24"><div class="label">Peak Equity</div><div class="val">$${(summary.peak_equity||0).toFixed(2)}</div><div class="label" style="margin-top:4px">Drawdown: <span class="${ddClass}">${dd.toFixed(1)}%</span></div></div>`;
             html += `<div class="strat-card" style="border-left-color:#34d399"><div class="label">Deployed / Cash</div><div class="val">$${deployed.toFixed(0)} / $${avail.toFixed(0)}</div><div class="label" style="margin-top:4px">Reserve: $${reserve.toFixed(0)}</div></div>`;
             html += `<div class="strat-card" style="border-left-color:${rf<=0?'#f87171':rf<1?'#fbbf24':'#34d399'}"><div class="label">Risk Factor</div><div class="val ${rfClass}">${rfLabel}</div><div class="label" style="margin-top:4px">Trailing: ${summary.trailing_stop_enabled?'ON':'OFF'} | Kelly: ${summary.kelly_enabled?'ON':'OFF'}</div></div>`;

@@ -12,6 +12,7 @@ import dashboard
 import simulator as simulator_module
 from config import EXECUTION
 from simulator import PaperTradingSimulator
+from time_utils import utc_now_iso
 
 
 class DashboardApiTests(unittest.TestCase):
@@ -20,7 +21,8 @@ class DashboardApiTests(unittest.TestCase):
             data = Path(tmp)
             with mock.patch.object(simulator_module, "DATA_DIR", data), \
                  mock.patch.object(dashboard, "DATA_DIR", data), \
-                 mock.patch.dict(EXECUTION, {"mode": "observe"}):
+                 mock.patch.dict(EXECUTION, {"mode": "observe"}), \
+                 mock.patch.object(dashboard, "get_bot_status", return_value="running"):
                 sim = PaperTradingSimulator()
                 sim.portfolio.cash = 297.0869
                 sim._save_state()
@@ -74,11 +76,20 @@ class DashboardApiTests(unittest.TestCase):
                 (data / "runtime_status.json").write_text(json.dumps({
                     "run_id": sim.run_id,
                     "phase": "idle",
+                    "runtime_mode": "observe",
+                    "updated_at": utc_now_iso(),
                     "feed_health": {
                         "requests": 12,
                         "rate_limit_errors": 1,
                         "partial_snapshot_cycles": 2,
                     },
+                }), encoding="utf-8")
+                (data / "preflight_report.json").write_text(json.dumps({
+                    "report_version": 1,
+                    "run_id": sim.run_id,
+                    "ready": True,
+                    "blockers": [],
+                    "warnings": [{"key": "economic_edge", "severity": "yellow"}],
                 }), encoding="utf-8")
 
                 client = dashboard.app.test_client()
@@ -118,6 +129,12 @@ class DashboardApiTests(unittest.TestCase):
                 self.assertEqual(
                     payload["wallet_validation_registry"]["quarantined_count"], 1
                 )
+                self.assertTrue(payload["readiness"]["ready"])
+                self.assertFalse(payload["economic_status"]["edge_demonstrated"])
+                self.assertFalse(payload["economic_status"]["real_money_authorized"])
+                readiness_response = client.get("/api/readiness")
+                self.assertEqual(readiness_response.status_code, 200)
+                self.assertTrue(readiness_response.get_json()["ready"])
                 shadow_response = client.get("/api/shadow?limit=50")
                 self.assertIn("no-store", shadow_response.headers["Cache-Control"])
                 shadow_rows = shadow_response.get_json()

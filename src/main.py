@@ -29,6 +29,7 @@ from config import (
 )
 from time_utils import age_seconds, utc_now_iso
 from wallet_registry import quarantined_wallets
+from run_manifest import load_run_manifest
 
 
 class PolymarketPaperTradingBot:
@@ -82,6 +83,11 @@ class PolymarketPaperTradingBot:
     def _write_runtime_status(self, phase: str, error: str = "") -> None:
         payload = {
             "run_id": self.simulator.run_id,
+            "configured_mode": self.simulator.execution_mode,
+            "runtime_mode": self.simulator.execution_mode,
+            "execution_mode_source": self.simulator.execution_mode_source,
+            "mode_drift_warning": self.simulator.mode_drift_warning,
+            "run_integrity_error": self.simulator.run_integrity_error,
             "updated_at": utc_now_iso(),
             "last_cycle_at": self.last_cycle_at,
             "phase": phase,
@@ -105,7 +111,14 @@ class PolymarketPaperTradingBot:
     # Selezione wallet da monitorare
     # ------------------------------------------------------------------
     def load_monitored_from_file(self) -> List[str]:
-        """Carica gli indirizzi dei top wallet da data/scan_results.json se presente."""
+        """Carica la coorte immutabile del run; fallback scan solo per legacy."""
+        run_manifest = load_run_manifest(DATA_DIR)
+        if run_manifest:
+            return [
+                str(wallet.get("address"))
+                for wallet in run_manifest.get("wallets", [])
+                if isinstance(wallet, dict) and wallet.get("address")
+            ]
         manifest = DATA_DIR / "monitored_wallets.json"
         if manifest.exists():
             try:
@@ -141,6 +154,20 @@ class PolymarketPaperTradingBot:
     def _persist_monitored_wallets(self) -> None:
         """Persistenza della lista realmente usata dal loop, non dei primi scan."""
         if not self.monitored_addresses:
+            return
+        run_manifest = load_run_manifest(DATA_DIR)
+        if run_manifest:
+            frozen = [
+                str(wallet.get("address", "")).lower()
+                for wallet in run_manifest.get("wallets", [])
+                if isinstance(wallet, dict) and wallet.get("address")
+            ]
+            runtime = [str(address).lower() for address in self.monitored_addresses]
+            if runtime != frozen:
+                self.simulator.run_integrity_error = (
+                    "coorte runtime diversa dalla coorte congelata nel manifest"
+                )
+                raise RuntimeError(self.simulator.run_integrity_error)
             return
         by_addr = {}
         results_file = DATA_DIR / "scan_results.json"
@@ -370,7 +397,8 @@ class PolymarketPaperTradingBot:
 
         self.monitored_addresses = addresses
         self._persist_monitored_wallets()
-        print(f"[BOT] {len(addresses)} wallet caricati da scan_results.json")
+        source = "run_manifest.json" if load_run_manifest(DATA_DIR) else "scan_results.json"
+        print(f"[BOT] {len(addresses)} wallet caricati da {source}")
 
         frozen_run = EXECUTION.get("freeze_wallets_for_run", True)
         if self._is_scan_stale() and not frozen_run:

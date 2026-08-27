@@ -2,8 +2,26 @@
 
 ## Current active phase
 
-Phase CX — audit del run OBSERVE esportato il 2026-08-27; verifica tecnica,
-ricostruzione shadow e decisione sul prossimo ciclo senza capitale reale.
+Phase CY — rendere persistente il lifecycle del run e introdurre preflight e
+avvio paper sperimentale transazionale, senza ordini reali.
+
+## Active Phase CY: avvio definitivo paper simulato (2026-08-27)
+
+- [x] CY1: inventariare contratti run/startup/API e riallineare planning files
+- [x] CY2: introdurre manifest autoritativo con migrazione legacy e mode drift
+- [x] CY3: estendere CLI con new-run --mode, preflight-paper e paper-start
+- [x] CY4: implementare preflight lifecycle isolato e readiness live
+- [x] CY5: esporre readiness e stato PAPER EXPERIMENTAL in API/dashboard
+- [x] CY6: completare archiviazione, documentazione e compatibilita operativa
+- [x] CY7: test mirati, suite completa, smoke statico e audit diff
+- [x] CY8: commit/push e consegna rollout VPS dell'ultimo OBSERVE
+
+Vincoli:
+- nessun ordine reale e nessuna promessa di profitto;
+- il paper di lunedi parte anche senza gate economico, ma non con blocker
+  tecnici, coorte invalida o circuit breaker shadow;
+- COPY sola, size $5, massimo due posizioni e soglie economiche immutate;
+- preservare export e file utente non tracciati.
 
 ## Active Phase CX: audit prospettico post-hardening (2026-08-27)
 

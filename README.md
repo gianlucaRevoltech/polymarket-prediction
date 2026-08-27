@@ -234,7 +234,7 @@ sudo netstat -tulpn | grep 5000
 ```bash
 # Archivia il run e crea un nuovo cohort con scan fresco.
 # Non cancellare manualmente ledger o registro di validazione.
-./start_all.sh new-run scan
+./start_all.sh new-run --mode observe scan
 ```
 
 I wallet con tre perdite shadow consecutive vengono esclusi dai run successivi.
@@ -244,6 +244,32 @@ Lo startup richiede almeno 5 wallet qualificati: se `new-run scan` termina con
 soglie per forzare l'avvio; conservare `logs/scan_categories.log` per l'audit.
 Lo scanner congela soltanto domini con almeno due specialisti distinti, cosi il
 cap di 20 trade per wallet non rende impossibile il gate di 30 trade/dominio.
+
+### Lifecycle OBSERVE e paper sperimentale
+
+Ogni run possiede `data/run_manifest.json`: modalità, wallet e domini sono
+congelati e sopravvivono a `restart`, logout SSH e variabili d'ambiente. Un
+`restart` non effettua scan e non cambia mai la coorte.
+
+```bash
+# Ultimo run tecnico OBSERVE con scan fresco
+./start_all.sh new-run --mode observe scan
+
+# Controlli tecnici, safety e lifecycle isolato (nessun reset)
+./start_all.sh preflight-paper
+
+# Solo se il preflight è READY: archivia OBSERVE e avvia il paper simulato
+./start_all.sh paper-start
+
+# Riavvio conservativo del run corrente
+./start_all.sh restart
+```
+
+`paper-start` usa la stessa coorte OBSERVE, crea un nuovo ledger da $300 e
+verifica due cicli prima di dichiarare attivo `PAPER EXPERIMENTAL`. Zero
+candidati o edge non ancora dimostrato sono warning; errori tecnici, coorte
+invalida e circuit breaker bloccano l'avvio. Il sistema non invia ordini reali
+e non autorizza capitale reale.
 
 ### Errori API Polymarket
 ```bash

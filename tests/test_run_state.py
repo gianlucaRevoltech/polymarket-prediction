@@ -30,6 +30,11 @@ class RunStateTests(unittest.TestCase):
             (data / "shadow_state.json").write_text('{"shadow_version": 1}')
             (data / "shadow_journal.jsonl").write_text('{"action": "opened"}\n')
             (data / "shadow_equity_curve.json").write_text("[]")
+            (data / "run_manifest.json").write_text(json.dumps({
+                "manifest_version": 1, "run_id": "unsafe-run",
+                "execution_mode": "observe",
+            }))
+            (data / "preflight_report.json").write_text('{"ready": true}')
             (data / "wallet_validation_registry.json").write_text(json.dumps({
                 "registry_version": 1,
                 "wallets": {"0xbad": {"status": "quarantined"}},
@@ -46,6 +51,8 @@ class RunStateTests(unittest.TestCase):
                 self.assertTrue((archived / "shadow_state.json").exists())
                 self.assertTrue((archived / "shadow_journal.jsonl").exists())
                 self.assertTrue((archived / "shadow_equity_curve.json").exists())
+                self.assertTrue((archived / "run_manifest.json").exists())
+                self.assertTrue((archived / "preflight_report.json").exists())
                 self.assertTrue(
                     (archived / "wallet_validation_registry.json").exists()
                 )
@@ -56,6 +63,8 @@ class RunStateTests(unittest.TestCase):
                 self.assertFalse((data / "shadow_state.json").exists())
                 self.assertFalse((data / "shadow_journal.jsonl").exists())
                 self.assertFalse((data / "shadow_equity_curve.json").exists())
+                self.assertFalse((data / "run_manifest.json").exists())
+                self.assertFalse((data / "preflight_report.json").exists())
                 self.assertTrue(
                     (data / "wallet_validation_registry.json").exists()
                 )

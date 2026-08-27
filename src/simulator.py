@@ -27,6 +27,7 @@ from config import (
 from time_utils import parse_utc, utc_iso, utc_now_iso
 from validation import evaluate_shadow_run
 from wallet_registry import quarantine_wallet
+from run_manifest import legacy_identity, load_run_manifest, mode_drift
 
 
 class PaperTradingSimulator:
@@ -49,8 +50,29 @@ class PaperTradingSimulator:
         self.shadow_journal = DATA_DIR / "shadow_journal.jsonl"
         self.shadow_equity_file = DATA_DIR / "shadow_equity_curve.json"
 
-        self.execution_mode = EXECUTION.get("mode", "observe")
-        self.run_id = f"run-{datetime.now().strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:8]}"
+        manifest_path = DATA_DIR / "run_manifest.json"
+        self.run_manifest = load_run_manifest(DATA_DIR)
+        invalid_manifest = manifest_path.exists() and not self.run_manifest
+        if self.run_manifest:
+            self.execution_mode = self.run_manifest["execution_mode"]
+            self.run_id = str(self.run_manifest["run_id"])
+            self.execution_mode_source = "run_manifest"
+        else:
+            identity = legacy_identity(
+                DATA_DIR, configured_mode=EXECUTION.get("mode", "observe")
+            )
+            self.execution_mode = identity["execution_mode"]
+            self.run_id = identity["run_id"]
+            self.execution_mode_source = identity["source"]
+        self.mode_drift_warning = mode_drift(self.run_manifest)
+        self.run_integrity_error = (
+            "run_manifest.json presente ma non valido o incompatibile"
+            if invalid_manifest else ""
+        )
+        if self.run_integrity_error:
+            print(f"[ERRORE] {self.run_integrity_error}")
+        if self.mode_drift_warning:
+            print(f"[WARNING] {self.mode_drift_warning}")
         self.state_saved_at: Optional[str] = None
         self.halt_reason: str = ""
         self.blocked_conditions: Dict[str, Dict] = {}
@@ -193,6 +215,8 @@ class PaperTradingSimulator:
         return ""
 
     def _opening_halt_reason(self, strategy: str) -> str:
+        if self.run_integrity_error:
+            return f"run_integrity:{self.run_integrity_error}"
         if self.execution_mode != "paper_validation":
             return "execution_mode=observe"
         cfg = STRATEGIES.get(strategy, {})
@@ -3212,6 +3236,12 @@ class PaperTradingSimulator:
         return {
             "strategy_mode": self.strategy_mode,
             "execution_mode": self.execution_mode,
+            "execution_mode_source": self.execution_mode_source,
+            "mode_drift_warning": self.mode_drift_warning,
+            "run_integrity_error": self.run_integrity_error,
+            "run_manifest_version": self.run_manifest.get("manifest_version"),
+            "experimental_paper": self.execution_mode == "paper_validation",
+            "real_money_authorized": False,
             "halt_reason": effective_halt,
             "run_id": self.run_id,
             "state_saved_at": self.state_saved_at,
@@ -3582,11 +3612,31 @@ class PaperTradingSimulator:
         try:
             self.state_saved_at = state.get("saved_at")
             stored_run = state.get("run_id")
-            if stored_run:
+            stored_mode = state.get("execution_mode")
+            if self.run_manifest and stored_run and str(stored_run) != self.run_id:
+                self.run_integrity_error = (
+                    f"ledger run_id {stored_run} diverso dal manifest {self.run_id}"
+                )
+                print(f"[ERRORE] {self.run_integrity_error}; ledger non caricato")
+                return
+            if (
+                self.run_manifest and stored_mode
+                and str(stored_mode) != self.execution_mode
+            ):
+                self.run_integrity_error = (
+                    f"ledger mode {stored_mode} diversa dal manifest "
+                    f"{self.execution_mode}"
+                )
+                print(f"[ERRORE] {self.run_integrity_error}; ledger non caricato")
+                return
+            if stored_run and not self.run_manifest:
                 self.run_id = str(stored_run)
-            elif self.state_saved_at:
+            elif not stored_run and self.state_saved_at and not self.run_manifest:
                 compact = "".join(ch for ch in self.state_saved_at if ch.isdigit())[:14]
                 self.run_id = f"legacy-{compact or 'unknown'}"
+            if not self.run_manifest and stored_mode in ("observe", "paper_validation"):
+                self.execution_mode = str(stored_mode)
+                self.execution_mode_source = "ledger"
             self.portfolio.cash = state["cash"]
             self.baseline_done = state.get("baseline_done", False)
             self.baseline_assets = set(state.get("baseline_assets", []))

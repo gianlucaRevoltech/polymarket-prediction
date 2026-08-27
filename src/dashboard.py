@@ -23,6 +23,7 @@ from simulator import PaperTradingSimulator
 from config import BUDGET, STRATEGY, DATA_DIR, EXECUTION
 from time_utils import age_seconds, utc_now_iso
 from wallet_registry import load_registry
+from run_manifest import load_run_manifest
 
 app = Flask(__name__, template_folder=str(Path(__file__).parent / "templates"))
 
@@ -126,6 +127,131 @@ def get_runtime_status():
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
+
+
+def get_preflight_report(run_id: str = ""):
+    report = {}
+    try:
+        report = json.loads(
+            (DATA_DIR / "preflight_report.json").read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError, TypeError):
+        return {}
+    if run_id and report.get("run_id") != run_id:
+        return {
+            "ready": False,
+            "stale_for_run": True,
+            "blockers": [{
+                "key": "preflight_run",
+                "severity": "red",
+                "passed": False,
+                "message": "preflight riferito a un altro run",
+            }],
+        }
+    return report
+
+
+def get_economic_status(run_id: str, summary: dict):
+    rows = _candidate_rows(run_id)
+    total_fees = 0.0
+    for row in rows:
+        costs = row.get("costs", {}) if isinstance(row.get("costs"), dict) else {}
+        total_fees += float(costs.get("fee_usdc", 0) or 0)
+        total_fees += float(costs.get("exit_fee_usdc", 0) or 0)
+    wallet_pnl = Counter()
+    domain_pnl = Counter()
+    state = {}
+    try:
+        state = json.loads((DATA_DIR / "portfolio_state.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        pass
+    for pos in state.get("closed_positions", []) if isinstance(state, dict) else []:
+        if not isinstance(pos, dict):
+            continue
+        pnl = float(pos.get("pnl", 0) or 0)
+        wallet_pnl[str(pos.get("source_wallet") or "unknown")] += pnl
+        domain_pnl[str(pos.get("category") or "other")] += pnl
+    positive = sum(value for value in wallet_pnl.values() if value > 0)
+    positive_domains = sum(value for value in domain_pnl.values() if value > 0)
+    return {
+        "paper_experimental": summary.get("execution_mode") == "paper_validation",
+        "edge_demonstrated": False,
+        "real_money_authorized": False,
+        "net_pnl": float(summary.get("total_pnl", 0) or 0),
+        "realized_pnl": float(summary.get("realized_pnl", 0) or 0),
+        "fees_usdc": total_fees,
+        "closed_trades": int(summary.get("closed_positions", 0) or 0),
+        "wallet_pnl": dict(wallet_pnl),
+        "domain_pnl": dict(domain_pnl),
+        "max_positive_wallet_share": (
+            max((value for value in wallet_pnl.values() if value > 0), default=0) / positive
+            if positive > 0 else 0.0
+        ),
+        "max_positive_domain_share": (
+            max((value for value in domain_pnl.values() if value > 0), default=0)
+            / positive_domains if positive_domains > 0 else 0.0
+        ),
+    }
+
+
+def get_readiness(run_id: str = ""):
+    """Readiness salvata più overlay live, senza rieseguire lo smoke a ogni fetch."""
+    report = get_preflight_report(run_id)
+    if not report:
+        report = {
+            "ready": False,
+            "blockers": [{
+                "key": "preflight_missing", "severity": "red", "passed": False,
+                "message": "preflight non ancora eseguito",
+            }],
+            "warnings": [],
+        }
+    else:
+        report = dict(report)
+        report["blockers"] = list(report.get("blockers", []))
+        report["warnings"] = list(report.get("warnings", []))
+    runtime = get_runtime_status()
+    state = {}
+    try:
+        state = json.loads(
+            (DATA_DIR / "portfolio_state.json").read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError, TypeError):
+        pass
+    live_failures = []
+    if get_bot_status() != "running":
+        live_failures.append(("bot_process_live", "processo bot fermo"))
+    latency_alive = False
+    try:
+        latency_pid = int(
+            (DATA_DIR / "latency_arb.pid").read_text(encoding="utf-8").strip()
+        )
+        os.kill(latency_pid, 0)
+        latency_alive = True
+    except (OSError, ValueError):
+        pass
+    if latency_alive:
+        live_failures.append(("latency_arb_live", "latency-arb non è in quarantena"))
+    state_age = age_seconds(state.get("saved_at"))
+    if state_age is None or state_age > 60:
+        live_failures.append(("ledger_fresh_live", "ledger realmente stale"))
+    runtime_age = age_seconds(runtime.get("updated_at"))
+    if runtime_age is None or runtime_age > 60:
+        live_failures.append(("heartbeat_fresh_live", "heartbeat realmente stale"))
+    manifest = load_run_manifest(DATA_DIR)
+    runtime_mode = runtime.get("runtime_mode") or state.get("execution_mode")
+    if manifest and runtime_mode != manifest.get("execution_mode"):
+        live_failures.append(("runtime_mode_live", "mode drift manifest/runtime"))
+    existing = {item.get("key") for item in report["blockers"] if isinstance(item, dict)}
+    for key, message in live_failures:
+        if key not in existing:
+            report["blockers"].append({
+                "key": key, "severity": "red", "passed": False,
+                "message": message,
+            })
+    report["ready"] = bool(report.get("ready")) and not live_failures
+    report["live_checked_at"] = utc_now_iso()
+    return report
 
 
 def get_bot_health(state_saved_at):
@@ -232,6 +358,10 @@ def get_portfolio_data():
                 "run_id": pos.run_id,
             })
         
+        runtime = get_runtime_status()
+        manifest = load_run_manifest(DATA_DIR)
+        preflight = get_preflight_report(summary.get("run_id", ""))
+        readiness = get_readiness(summary.get("run_id", ""))
         return {
             "summary": summary,
             "positions": positions,
@@ -246,11 +376,17 @@ def get_portfolio_data():
             "deployed_commit": get_deployed_commit(),
             "state_age_seconds": age_seconds(summary.get("state_saved_at")),
             "bot_health": get_bot_health(summary.get("state_saved_at")),
-            "feed_health": get_runtime_status().get("feed_health", {}),
+            "feed_health": runtime.get("feed_health", {}),
             "cohort_health": get_cohort_health(summary.get("run_id", "")),
             "candidate_summary": get_candidate_summary(summary.get("run_id", "")),
             "shadow_validation": summary.get("shadow_validation", {}),
             "wallet_validation_registry": get_wallet_validation_registry(),
+            "run_manifest": manifest,
+            "configured_mode": manifest.get("execution_mode"),
+            "runtime_mode": runtime.get("runtime_mode", summary.get("execution_mode")),
+            "preflight": preflight,
+            "readiness": readiness,
+            "economic_status": get_economic_status(summary.get("run_id", ""), summary),
         }
     except Exception as e:
         return {
@@ -461,6 +597,22 @@ def api_candidates():
         if row.get("decision") in {"eligible", "rejected", "opened"}
     ]
     return jsonify(list(reversed(candidates[-limit:])))
+
+
+@app.route("/api/readiness")
+def api_readiness():
+    manifest = load_run_manifest(DATA_DIR)
+    report = get_readiness(str(manifest.get("run_id") or ""))
+    if not report:
+        report = {
+            "ready": False,
+            "blockers": [{
+                "key": "preflight_missing", "severity": "red", "passed": False,
+                "message": "preflight non ancora eseguito",
+            }],
+            "warnings": [],
+        }
+    return jsonify(report)
 
 
 @app.route("/api/shadow")

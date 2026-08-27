@@ -1,5 +1,22 @@
 # Progress Log — Polymarket Copy Bot
 
+## SESSIONE 2026-08-27 - Phase CY avvio paper persistente
+
+- Ricevuta autorizzazione a implementare il piano per l'avvio paper simulato
+  di lunedi 31 agosto.
+- Ripristinati integralmente piano e progress storico; i run negativi restano
+  evidenza e nessuna soglia economica verra allentata.
+- Perimetro: manifest autoritativo, CLI sicura, preflight isolato/live,
+  readiness API/dashboard, test, commit e push; nessun ordine reale.
+- Worktree iniziale: `main` allineato a `origin/main` su `cf3d9f7`; file utente
+  non tracciati da preservare (`exports/`, snapshot locale, `progressi.txt`,
+  `resp.json`).
+- Inventario completato: mode non ripristinata dal ledger, restart dipendente
+  da `scan_results.json`, dashboard priva di readiness/manifest e lifecycle
+  paper gia coperto dai test esistenti.
+- Contratto scelto: manifest run autoritativo; paper-start usa la coorte
+  congelata dell'OBSERVE e non esegue scan adattivo il lunedi.
+
 ## SESSIONE 2026-08-27 - Phase CX audit post-hardening
 
 - Ricevuto l'unico archivio presente in `exports/`.
@@ -993,6 +1010,35 @@ OBSERVE di default, COPY unica candidata futura, nessun capitale reale.
   mutazione degli export diagnostici.
 - Worktree iniziale contiene soltanto planning file già aggiornati e file utente
   non tracciati (`exports/`, bundle osservazione e file diagnostici): preservarli.
+
+## Phase CY — implementazione completata, rilascio in corso (2026-08-27)
+
+- Introdotto `run_manifest.json` schema v1: run, modalità, commit, hash coorte,
+  wallet e domini sono persistenti e autoritativi; env discordanti sono ignorate
+  con warning. Ledger misti vengono rifiutati fail-closed.
+- `restart` non effettua più scan; `new-run --mode observe scan` crea il
+  contratto prima di avviare. `LATENCY_ARB_ENABLED` non può riaccendere il
+  validator in quarantena.
+- Aggiunti `preflight-paper` e `paper-start`: il primo non modifica il run; il
+  secondo archivia OBSERVE, preserva esattamente la coorte, crea un nuovo paper
+  e verifica almeno due cicli. Se il preflight iniziale fallisce non archivia o
+  azzera nulla.
+- Smoke lifecycle isolato verificato: ask VWAP + fee, cash 300->295, restart con
+  modalità/posizione/dedup, mark bid netto, vendita sorgente, cash e P&L
+  riconciliati, journal `opened`/`closed`.
+- Preflight live implementato con blocker rossi per manifest/commit/coorte,
+  processi e freshness, runtime drift/error, traceback, outage feed, journal v6
+  incompleto e breaker shadow; volume/edge insufficiente restano warning.
+- API `/api/readiness` e `/api/status` espongono manifest, modalità
+  configured/runtime, preflight e stato economico. Dashboard mostra PAPER
+  EXPERIMENTAL, edge non dimostrato, fee, P&L e concentrazione.
+- Suite completa: 87/87 test PASS. `compileall`, Git Bash `bash -n`, sintassi
+  JavaScript dashboard e `git diff --check` PASS.
+- Primo comando Node di validazione JS fallito per escaping della regex nella
+  shell PowerShell (nessun file modificato); ripetuto estraendo lo script con
+  indici di stringa, risultato PASS.
+- Modifiche finali preparate per commit e pubblicazione su `origin/main`; export
+  e altri artefatti locali dell'utente esclusi esplicitamente dallo staging.
 - Ripristinati i primi 700 record-line del progress storico: i nuovi cambiamenti
   devono restare compatibili con journal v5, state v3, fee dinamiche e run
   archiviati; latency-arb e strategie diverse da COPY restano fuori scope.

@@ -1,5 +1,27 @@
 # Findings & Decisions — Polymarket Copy Bot
 
+## Phase CY - contratti per l'avvio paper persistente (2026-08-27)
+
+- Suite baseline locale: 81/81 test PASS su `cf3d9f7`; il lifecycle paper
+  ask/fee -> restart -> bid/fee -> exit esiste gia e va protetto, non riscritto.
+- La VPS risulta ancora su `b45f182`; il dominio-capacity fix `cf3d9f7` deve
+  arrivare con il prossimo deploy e nuovo OBSERVE.
+- Bug operativo confermato: `PaperTradingSimulator` legge la mode soltanto da
+  `EXECUTION` all'avvio e `_load_state()` non ripristina `execution_mode` dal
+  ledger. Un logout/restart senza export puo tornare silenziosamente a OBSERVE.
+- `start_all.sh restart` rivalida oggi `scan_results.json`, sebbene il cohort
+  autorevole del run sia `monitored_wallets.json`; uno scan estraneo potrebbe
+  quindi impedire o alterare la semantica di un restart congelato.
+- Decisione: `run_manifest.json` diventa autorita di run/mode/cohort; l'env e
+  solo fallback legacy e non puo cambiare un run esistente.
+- Decisione utente: lunedi avvio manuale con preflight; campione economico
+  insufficiente e warning, non blocker. Errori tecnici, cohort invalido e halt
+  shadow restano blocker rossi.
+- Documentazione ufficiale ricontrollata: usare `POST /books`, fee per-market e
+  pacing sotto i rate limit correnti. Nessuna modifica alle soglie economiche.
+- Il paper resta sperimentale e non autorizza real money; i run storici
+  negativi impediscono qualunque promessa di profitto.
+
 ## Audit run OBSERVE esportato 2026-08-27
 
 - Archivio ricevuto: `exports/polymarket-validation-20260827T063905Z.tar.gz`
@@ -1558,6 +1580,21 @@ HARVEST, perché HARVEST resta disabilitata e non ha edge dimostrato.
   formula ufficiale generalizzata con exponent. Suite finale: 44/44 test pass,
   compileall e `git diff --check` puliti.
 # Audit shadow 2026-08-10 — riscontri documentazione ufficiale
+
+## Phase CY — contratti finali per il paper sperimentale
+
+- Il difetto operativo residuo era reale: il simulatore leggeva la modalità da
+  config/env prima del ledger, quindi un restart senza `export` poteva tornare
+  in OBSERVE. Il manifest ora precede ogni altra sorgente.
+- La coorte non può più essere ricostruita da `scan_results.json` al restart:
+  il main legge soltanto i wallet congelati nel manifest e fallisce se la lista
+  runtime differisce.
+- Il lifecycle deterministico produce entry 0,5025 su ask 0,50 con fee rate
+  0,01; uscita netta 0,547525 su bid 0,55; P&L/cash finale +0,44800995. Questo
+  dimostra la correttezza contabile del percorso, non un edge economico.
+- Il preflight separa esplicitamente readiness tecnica e risultato economico:
+  zero candidati/edge non dimostrato non bloccano il paper sperimentale scelto,
+  ma non autorizzano mai denaro reale.
 
 - L'endpoint ufficiale batch `POST /books` restituisce i book con livelli `bids` e `asks` per gli asset richiesti: il journal sta quindi acquisendo la sorgente corretta per prezzi eseguibili, non un midpoint teorico.
 - La documentazione ufficiale definisce le fee come dipendenti dal mercato, lato taker, con formula proporzionale a `C × feeRate × p × (1-p)`. Il replay deve pertanto continuare a usare il `fee_schedule` persistito per ciascun mercato; non va sostituito con una percentuale globale per categoria.
