@@ -46,7 +46,7 @@ sostituzioni si eseguono solo tra run con `new-run scan`, così il campione non
 cambia adattivamente.
 
 Il preflight richiede almeno 5 wallet unici gia nel cohort congelato. Lo scan
-pagina 600 mercati Gamma e mantiene invariati ROI, win rate, overlap e
+pagina 600 mercati Gamma in blocchi da 100 e mantiene invariati ROI, win rate, overlap e
 quarantene; se trova meno di 5 wallet, `start_all.sh` termina con errore e non
 avvia bot o dashboard. `scan_results.json` conserva `scan_diagnostics` con
 richieste holder, errori, esclusioni e stato `validation_ready`. Il limite

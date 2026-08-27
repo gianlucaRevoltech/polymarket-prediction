@@ -59,6 +59,10 @@
 - Verifica finale dopo il fix fallback: 80/80 unittest PASS; compileall,
   sintassi Bash e diff check PASS. Phase CX completata con verdetto NO-GO e
   rollout previsto esclusivamente in nuovo `OBSERVE`.
+- Rollout VPS commit `923df2d`: vecchio run archiviato, scan fermato a 2/5 e
+  bot/dashboard/latency-arb tutti spenti come previsto. Nessun capitale mutato.
+- Il log reale ha rivelato che Gamma tronca la risposta a 100 mercati: corretta
+  la paginazione da 300 a 100 e aggiornato il test a tre pagine 100+100+1.
 
 
 ## SESSIONE 2026-08-24 - Phase CV audit prospettico

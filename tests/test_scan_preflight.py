@@ -34,12 +34,21 @@ class ScanContractTests(unittest.TestCase):
                 "volumeNum": 1000 - index,
                 "events": [],
             }
-            for index in range(300)
+            for index in range(100)
         ]
         second = [
             {
-                "conditionId": "cond-300",
-                "question": "Market 300",
+                "conditionId": f"cond-{index}",
+                "question": f"Market {index}",
+                "volumeNum": 1000 - index,
+                "events": [],
+            }
+            for index in range(100, 200)
+        ]
+        third = [
+            {
+                "conditionId": "cond-200",
+                "question": "Market 200",
                 "volumeNum": 1,
                 "events": [],
             }
@@ -48,16 +57,18 @@ class ScanContractTests(unittest.TestCase):
         with mock.patch.object(
             scanner_module.requests,
             "get",
-            side_effect=[_response(first), _response(second)],
+            side_effect=[_response(first), _response(second), _response(third)],
         ) as get:
-            markets = scanner.get_popular_markets(301)
+            markets = scanner.get_popular_markets(201)
 
-        self.assertEqual(len(markets), 301)
-        self.assertEqual(get.call_count, 2)
+        self.assertEqual(len(markets), 201)
+        self.assertEqual(get.call_count, 3)
         self.assertEqual(get.call_args_list[0].kwargs["params"]["offset"], 0)
-        self.assertEqual(get.call_args_list[0].kwargs["params"]["limit"], 300)
-        self.assertEqual(get.call_args_list[1].kwargs["params"]["offset"], 300)
-        self.assertEqual(get.call_args_list[1].kwargs["params"]["limit"], 1)
+        self.assertEqual(get.call_args_list[0].kwargs["params"]["limit"], 100)
+        self.assertEqual(get.call_args_list[1].kwargs["params"]["offset"], 100)
+        self.assertEqual(get.call_args_list[1].kwargs["params"]["limit"], 100)
+        self.assertEqual(get.call_args_list[2].kwargs["params"]["offset"], 200)
+        self.assertEqual(get.call_args_list[2].kwargs["params"]["limit"], 1)
 
     def test_holder_limit_is_clamped_and_errors_are_observable(self):
         scanner = PolymarketScanner()

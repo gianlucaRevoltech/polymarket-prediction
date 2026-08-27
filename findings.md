@@ -90,6 +90,13 @@
 - L'export ha catturato `equity_curve.json` durante una riscrittura e il JSON e
   risultato troncato. Curva equity, curva shadow e trade log vengono ora
   sostituiti atomicamente; non viene creato un backup ad ogni tick delle curve.
+- Primo rollout CX sulla VPS: il preflight ha fermato correttamente il run a
+  2/5 wallet e tutti i servizi sono rimasti spenti. Il log ha pero mostrato 100
+  mercati totali nonostante la richiesta di 600: Gamma applica in produzione un
+  cap effettivo di 100 record per risposta. La pagina da 300 faceva scattare
+  prematuramente la condizione EOF e rendeva falsamente vuoti sport/crypto/meteo.
+- Fix successivo: pagine Gamma da 100 con offset 0,100,... fino a 600; nessuna
+  modifica ai criteri di qualifica o al minimo 5 wallet.
 
 
 

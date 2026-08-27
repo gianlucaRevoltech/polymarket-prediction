@@ -307,10 +307,12 @@ class PolymarketScanner:
             url = f"{self.gamma_api}/markets"
             raw_markets = []
             offset = 0
-            # Gamma documenta limit/offset. Usiamo pagine moderate e una
-            # deduplica stabile per non dipendere da un singolo payload grande.
+            # Gamma documenta limit/offset, ma in produzione il servizio
+            # restituisce al massimo 100 record anche quando viene richiesto un
+            # limit maggiore. Pagine da 100 evitano di scambiare quel cap per
+            # la fine del dataset.
             while len(raw_markets) < requested:
-                page_limit = min(300, requested - len(raw_markets))
+                page_limit = min(100, requested - len(raw_markets))
                 params = {
                     "closed": "false", "active": "true",
                     "order": "volumeNum", "ascending": "false",

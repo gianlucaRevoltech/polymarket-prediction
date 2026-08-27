@@ -49,6 +49,9 @@ Errori incontrati:
   file; nessuna modifica applicata. Hunk riuniti in una singola operazione.
 - `bash -n` iniziale ha usato lo stub WSL presente nel PATH, ma `/bin/bash` non
   era installato. Ripetuto con `C:\Program Files\Git\bin\bash.exe`: PASS.
+- primo rollout CX ha richiesto 600 mercati ma Gamma ne ha restituiti 100; la
+  logica `len(page) < 300` ha concluso erroneamente la paginazione. Correzione:
+  richieste da 100 record, coerenti con il cap osservato in produzione.
 
 ## Active Phase CV: audit validazione prospettica 14 giorni (2026-08-24)
 
