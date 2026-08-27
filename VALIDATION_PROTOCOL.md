@@ -45,6 +45,13 @@ del wallet viene respinto come `wallet_domain_mismatch`. Lo scan e le
 sostituzioni si eseguono solo tra run con `new-run scan`, così il campione non
 cambia adattivamente.
 
+Il preflight richiede almeno 5 wallet unici gia nel cohort congelato. Lo scan
+pagina 600 mercati Gamma e mantiene invariati ROI, win rate, overlap e
+quarantene; se trova meno di 5 wallet, `start_all.sh` termina con errore e non
+avvia bot o dashboard. `scan_results.json` conserva `scan_diagnostics` con
+richieste holder, errori, esclusioni e stato `validation_ready`. Il limite
+documentato di `/holders` e 20 per token e viene sempre rispettato.
+
 Tre perdite shadow consecutive dello stesso wallet lo registrano in
 `wallet_validation_registry.json`. Il wallet resta nel cohort corrente per non
 alterare il campione, ma viene escluso da tutti gli scan e seed dei run
@@ -140,6 +147,8 @@ Il dashboard espone il riepilogo candidati e shadow in `/api/status`, le righe
 recenti in `/api/candidates?limit=50` e il lifecycle shadow in
 `/api/shadow?limit=50`. Tutti i timestamp nuovi sono UTC con offset; lo stale
 viene calcolato sul server e scatta dopo 60 secondi senza ledger.
+`/api/status` espone anche `cohort_health`; una coorte insufficiente compare in
+rosso e non puo essere confusa con un run validabile.
 
 La quarantena della strategia paper nel run corrente si rimuove solo
 esplicitamente; questo comando non cancella la quarantena cross-run dei wallet:

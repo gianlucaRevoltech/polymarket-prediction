@@ -2,8 +2,53 @@
 
 ## Current active phase
 
-Phase CW — hardening del campione prospettico; implementazione e test completi,
-in revisione finale prima di commit/push e rollout OBSERVE.
+Phase CX — audit del run OBSERVE esportato il 2026-08-27; verifica tecnica,
+ricostruzione shadow e decisione sul prossimo ciclo senza capitale reale.
+
+## Active Phase CX: audit prospettico post-hardening (2026-08-27)
+
+- [x] CX1: verificare integrita archivio, commit, run_id e durata effettiva
+- [x] CX2: verificare process health, feed, timestamp e continuita ledger
+- [x] CX3: riconciliare candidati, shadow lifecycle, cash ed equity MTM
+- [x] CX4: misurare EV netto, CI95 bootstrap, drawdown e costi eseguibili
+- [x] CX5: analizzare concentrazione per wallet, evento e dominio
+- [x] CX6: confrontare i gate di promozione e individuare difetti implementativi
+- [x] CX7: applicare e testare eventuali fix strettamente necessari
+- [x] CX8: formulare verdetto operativo e consegna VPS sicura
+
+Vincoli:
+- audit read-only dell'archivio originale in `exports/`;
+- nessun capitale reale e nessuna promessa di profitto garantito;
+- non promuovere un run che non supera durata e numerosita minime;
+- preservare tutti i file utente non tracciati e le evidenze dei run precedenti.
+
+Verdetto: NO-GO per `paper_validation` e denaro reale. Il run e tecnicamente
+sano, ma 4 candidati, zero eligible e zero shadow close non consentono alcuna
+stima di EV/CI/drawdown economico; inoltre la coorte 3/5 era strutturalmente
+incapace di superare il gate. I fix CX impediscono nuovi run non validabili e
+richiedono un nuovo campione OBSERVE indipendente con almeno 5 wallet.
+
+Errori incontrati:
+- prima patch combinata dei planning file fallita per intestazione `findings.md`
+  non identica; nessuna modifica applicata, retry con intestazioni esatte.
+- primo parser PowerShell della curva equity ha convertito automaticamente gli
+  ISO timestamp in oggetti locali e generato errori di parsing/cascata; metriche
+  gap scartate. Retry con parser JSON Python esplicito e UTC.
+- retry Python ha rivelato il problema reale: `equity_curve.json` e troncato a
+  EOF (`JSONDecodeError`, riga 41183). Non ritentare parser: ispezionare writer
+  atomico e distinguere corruzione VPS da race del comando export.
+- prima patch multi-hunk su `main.py` non applicata per contesto/funzioni in
+  ordine diverso; nessuna modifica parziale al file. Ripetere per funzioni
+  separate con contesto esatto.
+- prima patch combinata dei writer simulator non applicata per un hunk trade-log
+  non identico; nessuna modifica parziale. Applicare record equity, tre logger e
+  helper atomico in patch separate.
+- patch combinata findings/progress malformata per un hunk di solo contesto;
+  nessun file modificato. Ripetuta con hunk completi e ancore esatte.
+- patch dashboard iniziale rifiutata per due operazioni separate sullo stesso
+  file; nessuna modifica applicata. Hunk riuniti in una singola operazione.
+- `bash -n` iniziale ha usato lo stub WSL presente nel PATH, ma `/bin/bash` non
+  era installato. Ripetuto con `C:\Program Files\Git\bin\bash.exe`: PASS.
 
 ## Active Phase CV: audit validazione prospettica 14 giorni (2026-08-24)
 

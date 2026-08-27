@@ -54,6 +54,10 @@ EXECUTION = {
     "paper_max_trades_per_wallet": 20,
     "promotion_min_distinct_wallets": 5,
     "promotion_max_trade_share_per_wallet": 0.20,
+    # Un run di validazione non deve partire con un cohort che non puo mai
+    # soddisfare il gate di diversificazione. Lo scan resta fail-closed: non si
+    # abbassano ROI/WR per riempire artificialmente la lista.
+    "minimum_monitored_wallets": 5,
 }
 if EXECUTION["mode"] not in {"observe", "paper_validation"}:
     EXECUTION["mode"] = "observe"
@@ -411,8 +415,12 @@ STRATEGIES = {
 CATEGORIES = {
     "active": ["sport", "crypto", "politics", "weather", "macro", "geopolitics"],
     "specialists_per_category": 5,
-    "markets_to_scan": 300,        # Phase V: 200 -> 300
-    "holders_per_market": 25,
+    # Phase CX: amplia la discovery senza allentare i criteri di qualifica.
+    # Lo scanner pagina Gamma e si ferma fail-closed se non trova almeno la
+    # coorte minima richiesta da EXECUTION.minimum_monitored_wallets.
+    "markets_to_scan": 600,
+    # Data API /holders accetta al massimo 20 holder per token.
+    "holders_per_market": 20,
     "min_overlap": 2,
     "min_realized_roi": 0.20,
     "min_decided": 10,

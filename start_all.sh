@@ -20,7 +20,7 @@
 #
 #   Deploy VPS (dopo git pull / copia file):
 #     ./start_all.sh restart
-#   Poi il bot aggiorna da solo la lista wallet ogni 6h — niente cron manuale.
+#   I wallet restano congelati nel run; aggiornarli solo con `new-run scan`.
 #
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -92,7 +92,19 @@ run_wallet_scan() {
     echo "[ERRORE] Scanner completato ma $SCAN_RESULTS non trovato."
     exit 1
   fi
-  echo "[SCAN] Fatto: $(grep -c '"address"' "$SCAN_RESULTS" 2>/dev/null || echo 0) wallet in $SCAN_RESULTS"
+  validate_wallet_scan
+}
+
+validate_wallet_scan() {
+  local wallet_count minimum_required
+  wallet_count="$("$(venv_py)" -c 'import json,pathlib; p=pathlib.Path("data/scan_results.json"); d=json.loads(p.read_text(encoding="utf-8")); print(len({str(w.get("address", "")).lower() for w in d.get("wallets", []) if w.get("address")}))')"
+  minimum_required="$(PYTHONPATH=src "$(venv_py)" -c 'from config import EXECUTION; print(int(EXECUTION.get("minimum_monitored_wallets", 5)))')"
+  echo "[SCAN] Fatto: $wallet_count wallet in $SCAN_RESULTS (minimo $minimum_required)"
+  if [ "$wallet_count" -lt "$minimum_required" ]; then
+    echo "[ERRORE] Cohort insufficiente: $wallet_count/$minimum_required wallet."
+    echo "         Il run non viene avviato; le soglie qualitative restano invariate."
+    return 2
+  fi
 }
 
 ensure_wallet_scan() {
@@ -107,6 +119,7 @@ ensure_wallet_scan() {
   else
     echo "[SCAN] $SCAN_RESULTS presente (salto; usa './start_all.sh scan' per aggiornare)"
   fi
+  validate_wallet_scan
 }
 
 start_services() {

@@ -20,7 +20,7 @@ BASE_DIR = Path(__file__).parent.parent
 sys.path.insert(0, str(Path(__file__).parent))
 
 from simulator import PaperTradingSimulator
-from config import BUDGET, STRATEGY, DATA_DIR
+from config import BUDGET, STRATEGY, DATA_DIR, EXECUTION
 from time_utils import age_seconds, utc_now_iso
 from wallet_registry import load_registry
 
@@ -247,6 +247,7 @@ def get_portfolio_data():
             "state_age_seconds": age_seconds(summary.get("state_saved_at")),
             "bot_health": get_bot_health(summary.get("state_saved_at")),
             "feed_health": get_runtime_status().get("feed_health", {}),
+            "cohort_health": get_cohort_health(summary.get("run_id", "")),
             "candidate_summary": get_candidate_summary(summary.get("run_id", "")),
             "shadow_validation": summary.get("shadow_validation", {}),
             "wallet_validation_registry": get_wallet_validation_registry(),
@@ -304,6 +305,61 @@ def get_monitored_wallets():
         return wallets
     except Exception:
         return []
+
+
+def get_cohort_health(run_id: str = ""):
+    """Verifica che il manifest congelato possa soddisfare i gate del run."""
+    minimum = int(EXECUTION.get("minimum_monitored_wallets", 5))
+    manifest_file = DATA_DIR / "monitored_wallets.json"
+    scan_file = DATA_DIR / "scan_results.json"
+    manifest_run_id = ""
+    load_error = ""
+    addresses = set()
+    scan_diagnostics = {}
+
+    try:
+        if manifest_file.exists():
+            manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
+            manifest_run_id = str(manifest.get("run_id") or "")
+            for raw in manifest.get("wallets", []):
+                wallet = raw if isinstance(raw, dict) else {"address": raw}
+                address = str(wallet.get("address") or "").strip().lower()
+                if address:
+                    addresses.add(address)
+        else:
+            load_error = "manifest wallet assente"
+    except (OSError, ValueError, TypeError) as exc:
+        load_error = f"manifest wallet non leggibile: {exc}"
+
+    try:
+        if scan_file.exists():
+            scan = json.loads(scan_file.read_text(encoding="utf-8"))
+            diagnostics = scan.get("scan_diagnostics", {})
+            if isinstance(diagnostics, dict):
+                scan_diagnostics = diagnostics
+    except (OSError, ValueError, TypeError):
+        scan_diagnostics = {"load_error": "scan_results non leggibile"}
+
+    run_matches = not run_id or manifest_run_id == run_id
+    ready = not load_error and run_matches and len(addresses) >= minimum
+    if load_error:
+        reason = load_error
+    elif not run_matches:
+        reason = "manifest wallet riferito a un altro run"
+    elif len(addresses) < minimum:
+        reason = f"coorte insufficiente: {len(addresses)}/{minimum} wallet"
+    else:
+        reason = "coorte valida"
+
+    return {
+        "wallet_count": len(addresses),
+        "minimum_required": minimum,
+        "validation_ready": ready,
+        "reason": reason,
+        "manifest_run_id": manifest_run_id,
+        "run_matches": run_matches,
+        "scan_diagnostics": scan_diagnostics,
+    }
 
 
 def get_wallet_validation_registry():

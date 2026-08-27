@@ -1,5 +1,103 @@
 # Findings & Decisions — Polymarket Copy Bot
 
+## Audit run OBSERVE esportato 2026-08-27
+
+- Archivio ricevuto: `exports/polymarket-validation-20260827T063905Z.tar.gz`
+  (218.924 byte), SHA-256
+  `25F59098587DA3AECC6780118FA6826DD96AA68307D34D2E64AFBA0104919021`.
+- Il repository locale e su `main` allineato a `origin/main`; restano non
+  tracciati export e file diagnostici dell'utente, da preservare.
+- Il run atteso segue il rollout post-hardening dei commit `e335218` e
+  `9755c65`; il bundle conferma commit `9755c65`, mode `observe`, bot/dashboard
+  attivi e latency-arb fermo.
+- Run `run-20260824T125519-041daa70`, export 2026-08-27 06:39 UTC: portfolio
+  intatto a $300, zero paper open/closed, ledger fresco (eta circa 20,6s).
+- Runtime: 11.484 cicli, 34.456 richieste, 17 errori transitori (16 HTTP 429 e
+  un errore rete), 15 snapshot parziali e zero snapshot totalmente falliti.
+- Il manifest e congelato su soli tre wallet, con domini politics/geopolitics;
+  i due wallet gia falliti restano correttamente in quarantena cross-run.
+- Candidate journal v6 contiene soltanto 4 candidati, tutti di CoffeeLover:
+  zero eligible, tre `source_trade_unavailable` e uno `expiry_too_near`.
+- Nessun `shadow_state.json` o `shadow_journal.jsonl`: coerente con zero segnali
+  pre-trade validi, ma rende impossibile stimare EV/P&L in questo run.
+- Il log contiene un solo avvio, 11.485 snapshot e tre cicli con delta
+  (1+2+1 asset): i quattro record journal coprono quindi tutti i delta osservati.
+- Asset distinti 333 -> 337; nessun falso burst dopo feed failure. I 15 cicli
+  parziali preservano la baseline e non coincidono con i delta journalizzati.
+- Il pacing ha ridotto ma non eliminato i 429: 16 su 34.456 richieste (0,046%);
+  non sono la causa della quasi assenza di segnali.
+- Problema strutturale: il run monitora tre wallet mentre il gate promozionale
+  ne richiede almeno cinque. Anche con risultati positivi questo cohort non
+  potrebbe mai superare la promozione; `new-run scan` avrebbe dovuto fallire
+  chiuso o selezionare un cohort sufficiente.
+- I quattro delta provengono tutti da CoffeeLover. Uno sport ha BUY verificato
+  ma viene respinto per scadenza; tre politics non hanno BUY recente trovato.
+- CoffeeLover e congelato con `allowed_domains=['politics']`, ma il candidato
+  sport viene classificato prima dal filtro scadenza. Va verificato che il gate
+  dominio sia comunque applicato prima di qualsiasi eligibility/apertura.
+- Il codice conferma che `wallet_domain_mismatch` viene applicato prima della
+  fee/VWAP finale e quindi impedirebbe l'eligibility; l'ordine dei reject rende
+  pero invisibile il mismatch quando un filtro precedente fallisce.
+- `load_monitored_from_file()` accetta qualunque lista non vuota e non verifica
+  il minimo promozionale. Lo scanner salva anche un risultato di tre wallet e
+  `new-run scan` lo congela senza allarme o halt strutturale.
+- Config incongruente: `WALLET_MONITOR.top_active=15` e gate promozione >=5,
+  ma non esiste un `min_validation_wallets` enforceato all'avvio.
+- `start_all.sh run_wallet_scan` considera successo la sola esistenza di
+  `scan_results.json`; non controlla `total_wallets`. `Bot._run_wallet_scan`
+  considera successo anche un solo wallet e `ensure_monitored_wallets` congela
+  qualsiasi lista non vuota.
+- Lo scanner non inventa filler: applica overlap>=2, ROI storico>=20%, almeno
+  10 posizioni decise e WR>=55%, poi esclude i wallet cross-run quarantinati.
+  Nel run corrente restano soltanto tre qualificati. Abbassare retroattivamente
+  queste soglie per riempire il cohort introdurrebbe selection bias e non e una
+  correzione ammissibile.
+- `scan_categories.log` non e incluso dall'export corrente; `start_all.sh` lo
+  produce, ma il bundle manuale copiava soltanto bot/dashboard/latency log.
+- `equity_curve.json` nel bundle e JSON troncato all'ultimo record (EOF a riga
+  41.183). Il writer `record_equity()` apre direttamente il file con modalita
+  `w`, quindi durante ogni ciclo esiste una finestra in cui export/dashboard
+  possono leggere un documento parziale; un crash potrebbe corromperlo in modo
+  persistente. Portfolio/runtime restano integri perche usano replace atomico.
+- Il troncamento osservato e compatibile con la `cp` eseguita mentre il bot
+  riscriveva la curva; non prova perdita del file VPS, ma dimostra che il formato
+  di export attuale non garantisce snapshot coerenti.
+- Anche `trades_log.json` usa riscrittura diretta e presenta lo stesso rischio
+  quando esistono trade; va spostato sul writer atomico. Per la curva ad alta
+  frequenza serve replace atomico senza backup ad ogni ciclo, per non triplicare
+  l'I/O.
+- Documentazione ufficiale verificata il 2026-08-27: `/holders` accetta massimo
+  20 holder per token, mentre il config scanner usa 25. Il client deve clampare
+  sempre a 20; oggi gli errori sono silenziati come lista vuota e possono
+  impoverire lo scan senza segnalarlo.
+- L'endpoint Gamma legacy `/markets` supporta `limit` e `offset` non negativi;
+  il codepath corrente richiede una singola pagina da 300. Il nuovo endpoint
+  keyset ha limite 100 e cursor, ma non e necessario migrarlo per il fix minimo.
+- Rate limit ufficiale Gamma `/markets`: 300 richieste/10s. Allargare la
+  discovery non richiede abbassare soglie, ma deve restare dentro i limiti; la
+  criticita maggiore e il parametro holders fuori contratto.
+
+## Correzioni derivanti dall'audit CX
+
+- Il gate di promozione richiede almeno 5 wallet sorgente distinti, ma il run
+  esportato ne congelava soltanto 3: era strutturalmente non validabile anche
+  con durata e numero di trade sufficienti. Il nuovo contratto richiede almeno
+  5 wallet gia all'avvio e termina fail-closed in caso contrario.
+- La discovery viene ampliata da 300 a 600 mercati tramite paginazione Gamma
+  `limit`/`offset`, senza abbassare ROI, win rate, overlap o quarantene.
+- Il limite `/holders` viene clampato a 20 e gli errori non sono piu silenziosi:
+  contatori e ultimo errore vengono persistiti in `scan_diagnostics`.
+- L'export ha catturato `equity_curve.json` durante una riscrittura e il JSON e
+  risultato troncato. Curva equity, curva shadow e trade log vengono ora
+  sostituiti atomicamente; non viene creato un backup ad ogni tick delle curve.
+
+
+
+
+
+
+
+
 ## Hardening successivo al NO-GO (2026-08-24)
 
 - Il prossimo campione non può essere promosso se dipende da una sola fonte:

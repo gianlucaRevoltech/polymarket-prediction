@@ -175,6 +175,13 @@ class PolymarketPaperTradingBot:
             "frozen": True,
             "domain_policy_version": 1,
             "intended_domains": sorted(intended_domains),
+            "wallet_count": len(wallets),
+            "minimum_required": int(
+                EXECUTION.get("minimum_monitored_wallets", 5)
+            ),
+            "validation_ready": len(wallets) >= int(
+                EXECUTION.get("minimum_monitored_wallets", 5)
+            ),
             "updated_at": utc_now_iso(),
             "wallets": wallets,
         }
@@ -213,9 +220,14 @@ class PolymarketPaperTradingBot:
         print("[BOT] Scan wallet specialisti (categorie)...")
         try:
             wallets = self.scanner.scan_categories(top_n=STRATEGY["top_wallets"])
-            if wallets:
+            minimum = int(EXECUTION.get("minimum_monitored_wallets", 5))
+            if len(wallets) >= minimum:
                 return True
-            print("[BOT] Scan completato senza wallet qualificati.")
+            print(
+                "[BOT] Scan non utilizzabile: "
+                f"{len(wallets)}/{minimum} wallet qualificati. "
+                "Nessun run di validazione verra avviato."
+            )
             return False
         except Exception as e:
             print(f"[BOT] Scan fallito: {e}")
@@ -339,12 +351,22 @@ class PolymarketPaperTradingBot:
         if not addresses:
             print("[BOT] scan_results.json assente — scan iniziale automatico...")
             if not self._run_wallet_scan():
-                print("[BOT] Fallback scan legacy leaderboard...")
-                ok = self.run_initial_scan(top_n=STRATEGY["top_wallets"])
-                if ok:
-                    self._persist_monitored_wallets()
-                return ok
+                print(
+                    "[BOT] Nessun fallback legacy: il run resta fermo "
+                    "finche la coorte specialistica non supera il preflight."
+                )
+                return False
             addresses = self.load_monitored_from_file()
+
+        minimum = int(EXECUTION.get("minimum_monitored_wallets", 5))
+        if len(addresses) < minimum:
+            print(
+                "[ERRORE] Cohort di validazione insufficiente: "
+                f"{len(addresses)}/{minimum} wallet. "
+                "Esegui un nuovo scan; le soglie qualitative non vengono "
+                "abbassate automaticamente."
+            )
+            return False
 
         self.monitored_addresses = addresses
         self._persist_monitored_wallets()
@@ -575,9 +597,9 @@ class PolymarketPaperTradingBot:
         except KeyboardInterrupt:
             print("\n[BOT] Interrotto dall'utente")
 
-    def run_full_cycle(self):
+    def run_full_cycle(self) -> bool:
         if not self.ensure_monitored_wallets():
-            return
+            return False
         self.simulator.print_portfolio_summary()
         try:
             self.run_mirror_loop()
@@ -586,12 +608,14 @@ class PolymarketPaperTradingBot:
             print(f"SESSIONE TERMINATA")
             print(f"{'='*60}")
             self.simulator.print_portfolio_summary()
+        return True
 
 
 def main():
     bot = PolymarketPaperTradingBot()
     print("\n=== POLYMARKET PAPER TRADING BOT (mirroring copy/consenso) ===\n")
-    bot.run_full_cycle()
+    if not bot.run_full_cycle():
+        raise SystemExit(2)
 
 
 if __name__ == "__main__":

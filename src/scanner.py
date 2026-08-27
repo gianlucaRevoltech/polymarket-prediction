@@ -21,7 +21,7 @@ from models import Wallet
 from portfolio_sync import PolymarketPositionFetcher
 from backtester import Backtester
 from categories import categorize_market
-from config import POLYMARKET_API, SCANNER, CATEGORIES, DATA_DIR
+from config import POLYMARKET_API, SCANNER, CATEGORIES, DATA_DIR, EXECUTION
 from time_utils import utc_now_iso
 from wallet_registry import quarantined_wallets
 
@@ -42,6 +42,26 @@ class PolymarketScanner:
         self.session.headers.update(self.rsc_headers)
         self.fetcher = PolymarketPositionFetcher()
         self.bt = Backtester(activity_limit=1000)
+        self.scan_health = self._new_scan_health()
+
+    @staticmethod
+    def _new_scan_health() -> Dict:
+        return {
+            "holder_requests": 0,
+            "holder_successes": 0,
+            "holder_errors": 0,
+            "holder_limit_clamped": 0,
+            "last_holder_error": "",
+            "markets_returned": 0,
+            "qualified_before_quarantine": 0,
+            "qualified_after_quarantine": 0,
+            "quarantined_excluded": 0,
+            "selected_wallets": 0,
+            "minimum_required": int(
+                EXECUTION.get("minimum_monitored_wallets", 5)
+            ),
+            "validation_ready": False,
+        }
     
     def _fetch_leaderboard_page(self) -> str:
         """Scarica la pagina leaderboard con header RSC"""
@@ -279,21 +299,45 @@ class PolymarketScanner:
         Returns:
             Lista di {condition_id, question, slug, volume, category}
         """
+        requested = max(0, int(n_markets or 0))
+        if requested == 0:
+            return []
+
         try:
             url = f"{self.gamma_api}/markets"
-            params = {
-                "closed": "false", "active": "true",
-                "order": "volumeNum", "ascending": "false",
-                "limit": n_markets,
-            }
-            r = requests.get(url, params=params, timeout=25,
-                             headers={"User-Agent": "Mozilla/5.0"})
-            r.raise_for_status()
+            raw_markets = []
+            offset = 0
+            # Gamma documenta limit/offset. Usiamo pagine moderate e una
+            # deduplica stabile per non dipendere da un singolo payload grande.
+            while len(raw_markets) < requested:
+                page_limit = min(300, requested - len(raw_markets))
+                params = {
+                    "closed": "false", "active": "true",
+                    "order": "volumeNum", "ascending": "false",
+                    "limit": page_limit, "offset": offset,
+                }
+                r = requests.get(
+                    url,
+                    params=params,
+                    timeout=25,
+                    headers={"User-Agent": "Mozilla/5.0"},
+                )
+                r.raise_for_status()
+                page = r.json()
+                if not isinstance(page, list):
+                    raise ValueError("gamma markets response is not a list")
+                raw_markets.extend(page)
+                if len(page) < page_limit:
+                    break
+                offset += len(page)
+
             out = []
-            for m in r.json():
+            seen_conditions = set()
+            for m in raw_markets:
                 cond = m.get("conditionId", "")
-                if not cond:
+                if not cond or cond in seen_conditions:
                     continue
+                seen_conditions.add(cond)
                 events = m.get("events") or []
                 event_ticker = events[0].get("ticker", "") if events else ""
                 event_slug = events[0].get("slug", "") if events else ""
@@ -310,24 +354,42 @@ class PolymarketScanner:
                     "volume": float(m.get("volumeNum", 0) or 0),
                     "category": category,
                 })
-            return out
-        except requests.RequestException as e:
+            return out[:requested]
+        except (requests.RequestException, ValueError, TypeError) as e:
             print(f"  [ERRORE] gamma markets: {e}")
             return []
 
-    def get_market_holders(self, condition_id: str, limit: int = 25) -> List[Dict]:
+    def get_market_holders(self, condition_id: str, limit: int = 20) -> List[Dict]:
         """
         Top holder di un mercato (entrambi gli outcome) via data-api /holders.
 
         Returns:
             Lista di {address, name, pseudonym, amount, outcome_index}
         """
+        requested_limit = max(0, int(limit or 0))
+        applied_limit = min(requested_limit, 20)
+        self.scan_health["holder_requests"] += 1
+        if applied_limit != requested_limit:
+            self.scan_health["holder_limit_clamped"] += 1
         try:
             url = f"{self.data_api}/holders"
-            r = self.session.get(url, params={"market": condition_id, "limit": limit}, timeout=15)
+            r = self.session.get(
+                url,
+                params={"market": condition_id, "limit": applied_limit},
+                timeout=15,
+            )
             r.raise_for_status()
             data = r.json()
-        except requests.RequestException:
+            if not isinstance(data, list):
+                raise ValueError("holders response is not a list")
+            self.scan_health["holder_successes"] += 1
+        except (requests.RequestException, ValueError, TypeError) as exc:
+            self.scan_health["holder_errors"] += 1
+            self.scan_health["last_holder_error"] = str(exc)
+            if self.scan_health["holder_errors"] <= 5:
+                print(
+                    f"  [SCAN-FEED] holders {condition_id[:10]}...: {exc}"
+                )
             return []
 
         holders = []
@@ -443,6 +505,7 @@ class PolymarketScanner:
         cosi seguiamo i wallet giusti per ciascun tipo di mercato.
         """
         cfg = CATEGORIES
+        self.scan_health = self._new_scan_health()
         print(f"\n{'*'*64}")
         print(f"  SCANNER PER CATEGORIA - specialisti per tipo di mercato")
         print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -450,6 +513,7 @@ class PolymarketScanner:
 
         print(f"[1/3] Mercati popolari (top {cfg['markets_to_scan']}) e categorizzazione...")
         markets = self.get_popular_markets(n_markets=cfg["markets_to_scan"])
+        self.scan_health["markets_returned"] = len(markets)
         by_cat: Dict[str, List[Dict]] = defaultdict(list)
         for m in markets:
             by_cat[m["category"]].append(m)
@@ -480,11 +544,15 @@ class PolymarketScanner:
                 min_realized_roi=cfg["min_realized_roi"],
                 min_decided=cfg["min_decided"],
                 min_win_rate=cfg.get("min_win_rate", 0.55))
+            self.scan_health["qualified_before_quarantine"] += len(qualified)
             if excluded_wallets:
+                before = len(qualified)
                 qualified = [
                     wallet for wallet in qualified
                     if str(wallet.get("address", "")).lower() not in excluded_wallets
                 ]
+                self.scan_health["quarantined_excluded"] += before - len(qualified)
+            self.scan_health["qualified_after_quarantine"] += len(qualified)
             results_by_cat[cat] = qualified[:per_cat]
             print(f"  -> {len(results_by_cat[cat])} specialisti '{cat}'")
 
@@ -533,6 +601,27 @@ class PolymarketScanner:
             print(f"  {w['name'][:22]:22} | {w['category']:9} | {w['overlap']:3} | "
                   f"{w['roi']:6.1%} | {w['win_rate']:4.0%} | {w['decided']:3}")
         print(f"{'='*70}")
+
+        minimum_required = int(
+            EXECUTION.get("minimum_monitored_wallets", 5)
+        )
+        self.scan_health["selected_wallets"] = len(interleaved)
+        self.scan_health["minimum_required"] = minimum_required
+        self.scan_health["validation_ready"] = (
+            len(interleaved) >= minimum_required
+        )
+        if not self.scan_health["validation_ready"]:
+            print(
+                "  [VALIDATION] Cohort insufficiente: "
+                f"{len(interleaved)}/{minimum_required} wallet. "
+                "Il run non deve essere avviato."
+            )
+        if self.scan_health["holder_errors"]:
+            print(
+                "  [SCAN-FEED] Richieste holders fallite: "
+                f"{self.scan_health['holder_errors']}/"
+                f"{self.scan_health['holder_requests']}"
+            )
 
         result = []
         for rank, w in enumerate(interleaved, 1):
@@ -769,10 +858,20 @@ class PolymarketScanner:
                 )),
             })
 
+        diagnostics = dict(self.scan_health)
+        minimum_required = int(
+            EXECUTION.get("minimum_monitored_wallets", 5)
+        )
+        diagnostics.update({
+            "selected_wallets": len(wallets_out),
+            "minimum_required": minimum_required,
+            "validation_ready": len(wallets_out) >= minimum_required,
+        })
         data = {
             "scan_time": utc_now_iso(),
             "total_wallets": len(wallets),
             "wallets": wallets_out,
+            "scan_diagnostics": diagnostics,
         }
 
         with open(results_file, "w") as f:

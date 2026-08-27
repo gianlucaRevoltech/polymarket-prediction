@@ -876,6 +876,7 @@
             const mode = (data.execution_mode || summary.execution_mode || 'observe').toUpperCase();
             const haltReason = data.halt_reason || summary.halt_reason || '';
             const health = data.bot_health || {};
+            const cohort = data.cohort_health || {};
             const stale = Boolean(health.stale);
             const banner = document.getElementById('safetyBanner');
             const bannerParts = [];
@@ -885,6 +886,9 @@
                 bannerParts.push('PROCESSO BOT FERMO');
             }
             if (stale) bannerParts.push('STATO STALE: ledger non salvato da oltre 60 secondi');
+            if (cohort.validation_ready === false) {
+                bannerParts.push((cohort.reason || 'COORTE WALLET NON VALIDABILE').toUpperCase());
+            }
             if (bannerParts.length) {
                 banner.style.display = 'block';
                 banner.textContent = '⚠ ' + bannerParts.join(' — ');
@@ -905,7 +909,8 @@
             updateRiskDashboard(
                 summary,
                 data.wallet_validation_registry || {},
-                data.feed_health || health.feed_health || {}
+                data.feed_health || health.feed_health || {},
+                cohort
             );
             updateClusterExposure(summary);
             updateCandidateJournal(data.candidate_summary || {}, data.recent_candidates || []);
@@ -1297,7 +1302,7 @@
         }
 
         // Dashboard v2: Risk & System Info
-        function updateRiskDashboard(summary, walletRegistry, feedHealth) {
+        function updateRiskDashboard(summary, walletRegistry, feedHealth, cohortHealth) {
             const container = document.getElementById('riskContainer');
             if (!summary) { container.innerHTML = '<div class="empty-state"><div>Dati non disponibili</div></div>'; return; }
             const tier = summary.sizing_tier || {};
@@ -1317,6 +1322,10 @@
             const rateLimits = Number((feedHealth || {}).rate_limit_errors || 0);
             const partialCycles = Number((feedHealth || {}).partial_snapshot_cycles || 0);
             const feedRequests = Number((feedHealth || {}).requests || 0);
+            const cohortWallets = Number((cohortHealth || {}).wallet_count || 0);
+            const cohortMinimum = Number((cohortHealth || {}).minimum_required || 0);
+            const cohortReady = Boolean((cohortHealth || {}).validation_ready);
+            const cohortReason = (cohortHealth || {}).reason || '';
             let html = '<div class="strat-summary">';
             html += `<div class="strat-card" style="border-left-color:#ef4444"><div class="label">Execution Mode</div><div class="val">${escapeHtml(mode)}</div><div class="label" style="margin-top:4px">${escapeHtml(halt || 'nessun halt')}</div></div>`;
             html += `<div class="strat-card" style="border-left-color:#60a5fa"><div class="label">Paper Size</div><div class="val">$5</div><div class="label" style="margin-top:4px">Run: ${escapeHtml((summary.run_id||'').slice(0,24))}</div></div>`;
@@ -1327,6 +1336,7 @@
             html += `<div class="strat-card" style="border-left-color:#f472b6"><div class="label">Posizioni</div><div class="val">${summary.open_positions||0}/${summary.max_open_positions||0}</div><div class="label" style="margin-top:4px">Chiuse: ${summary.closed_positions||0} | WR: ${(summary.win_rate||0).toFixed(0)}%</div></div>`;
             html += `<div class="strat-card" style="border-left-color:${registryError?'#ef4444':'#fb7185'}"><div class="label">Wallet Quarantena Cross-run</div><div class="val">${quarantinedWallets}</div><div class="label" style="margin-top:4px">${escapeHtml(registryError || 'esclusi dai prossimi run')}</div></div>`;
             html += `<div class="strat-card" style="border-left-color:${rateLimits?'#fbbf24':'#34d399'}"><div class="label">Salute Data API</div><div class="val">${rateLimits} HTTP 429</div><div class="label" style="margin-top:4px">${feedRequests} richieste · ${partialCycles} cicli parziali</div></div>`;
+            html += `<div class="strat-card" style="border-left-color:${cohortReady?'#34d399':'#ef4444'}"><div class="label">Coorte Wallet</div><div class="val ${cohortReady?'positive':'negative'}">${cohortWallets}/${cohortMinimum}</div><div class="label" style="margin-top:4px">${escapeHtml(cohortReason || (cohortReady ? 'validabile' : 'non validabile'))}</div></div>`;
             html += '</div>';
             container.innerHTML = html;
         }

@@ -472,7 +472,9 @@ class PaperTradingSimulator:
                 if not isinstance(curve, list):
                     curve = []
             curve.append(point)
-            self._atomic_write_json(self.shadow_equity_file, curve[-10000:])
+            self._atomic_write_json(
+                self.shadow_equity_file, curve[-10000:], create_backup=False
+            )
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             print(f"[ERRORE] shadow equity curve: {exc}")
 
@@ -3000,8 +3002,7 @@ class PaperTradingSimulator:
             else:
                 logs = []
             logs.append(trade_log)
-            with open(self.trades_log, 'w') as f:
-                json.dump(logs, f, indent=2)
+            self._atomic_write_json(self.trades_log, logs)
         except Exception as e:
             print(f"[ERRORE] Salvataggio trade log: {e}")
         asks = getattr(opp, "best_asks", []) or []
@@ -3059,8 +3060,7 @@ class PaperTradingSimulator:
                 logs = []
             logs.append(close_log)
             logs = logs[-500:]  # cap 500 trade
-            with open(self.trades_log, 'w') as f:
-                json.dump(logs, f, indent=2)
+            self._atomic_write_json(self.trades_log, logs)
         except Exception as e:
             print(f"[ERRORE] Salvataggio close trade log: {e}")
 
@@ -3346,8 +3346,12 @@ class PaperTradingSimulator:
             curve.append(point)
             curve = curve[-10000:]  # cap
 
-            with open(self.equity_file, "w") as f:
-                json.dump(curve, f, indent=2)
+            # Dashboard ed export possono leggere mentre il bot salva. Il
+            # replace atomico evita JSON parziali; niente backup ad ogni ciclo
+            # per non moltiplicare l'I/O della curva ad alta frequenza.
+            self._atomic_write_json(
+                self.equity_file, curve, create_backup=False
+            )
         except Exception as e:
             print(f"[ERRORE] Salvataggio equity curve: {e}")
 
@@ -3382,8 +3386,7 @@ class PaperTradingSimulator:
             else:
                 logs = []
             logs.append(trade_log)
-            with open(self.trades_log, 'w') as f:
-                json.dump(logs, f, indent=2)
+            self._atomic_write_json(self.trades_log, logs)
         except Exception as e:
             print(f"[ERRORE] Salvataggio trade log: {e}")
 
@@ -3418,7 +3421,7 @@ class PaperTradingSimulator:
         except Exception as e:
             print(f"[ERRORE] Salvataggio stato: {e}")
 
-    def _atomic_write_json(self, filepath, data):
+    def _atomic_write_json(self, filepath, data, create_backup=True):
         """Scrittura atomica: scrive su temp file, poi rinomina. Crea backup."""
         filepath = str(filepath)
         backup_path = filepath + ".bak"
@@ -3432,7 +3435,7 @@ class PaperTradingSimulator:
                     f.flush()
                     os.fsync(f.fileno())
 
-                if os.path.exists(filepath):
+                if create_backup and os.path.exists(filepath):
                     shutil.copy2(filepath, backup_path)
 
                 if os.path.exists(filepath):

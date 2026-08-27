@@ -239,6 +239,9 @@ sudo netstat -tulpn | grep 5000
 
 I wallet con tre perdite shadow consecutive vengono esclusi dai run successivi.
 Il cohort e i domini specialistici restano congelati durante ogni run.
+Lo startup richiede almeno 5 wallet qualificati: se `new-run scan` termina con
+`Cohort insufficiente`, il bot resta fermo intenzionalmente. Non ridurre le
+soglie per forzare l'avvio; conservare `logs/scan_categories.log` per l'audit.
 
 ### Errori API Polymarket
 ```bash

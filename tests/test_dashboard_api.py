@@ -103,6 +103,9 @@ class DashboardApiTests(unittest.TestCase):
                     payload["candidate_summary"]["consensus_counts"]["2"], 1
                 )
                 self.assertEqual(payload["feed_health"]["rate_limit_errors"], 1)
+                self.assertEqual(payload["cohort_health"]["wallet_count"], 1)
+                self.assertEqual(payload["cohort_health"]["minimum_required"], 5)
+                self.assertFalse(payload["cohort_health"]["validation_ready"])
                 self.assertFalse(
                     payload["shadow_validation"]["real_money_authorized"]
                 )

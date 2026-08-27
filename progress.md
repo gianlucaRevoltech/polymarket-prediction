@@ -1,5 +1,66 @@
 # Progress Log — Polymarket Copy Bot
 
+## SESSIONE 2026-08-27 - Phase CX audit post-hardening
+
+- Ricevuto l'unico archivio presente in `exports/`.
+- Avviata analisi read-only del bundle originale.
+- Obiettivo: distinguere salute tecnica da evidenza economica e correggere
+  soltanto difetti implementativi dimostrati dai dati.
+- Ripristinate le prime 460 righe del piano storico: restano vincolanti il
+  divieto real-money, i gate prospettici e la separazione fra run diagnostici.
+- Piano storico letto integralmente; ripristinate le prime 600 righe dei
+  findings. Il confronto corrente usera journal v6, shadow v3 e i gate di
+  diversificazione introdotti dopo il NO-GO del 24 agosto.
+- Ripristinate 900 righe dei findings: le stime aggressive storiche sono
+  esplicitamente superseded; il solo criterio valido e un campione prospettico
+  netto dei costi, indipendente e sufficientemente diversificato.
+- Findings letti integralmente. I run precedenti mostrano piu volte che fee,
+  concentrazione e selezione in-sample possono creare edge apparente; l'audit
+  corrente applichera i contratti post-hardening senza tuning retroattivo.
+- Ripristinate 660 righe del progress storico; nessuna istruzione operativa
+  obsoleta (reset aggressivi o latency-arb) verra riutilizzata nel run corrente.
+- Progress storico letto integralmente. Contesto ripristinato; inizia ora
+  l'apertura read-only e la riconciliazione dell'archivio del 27 agosto.
+- Bundle estratto in directory temporanea: integrita, commit, run e processi OK.
+- Primo limite sostanziale: solo 4 candidati e zero lifecycle shadow; avviata
+  diagnosi su log, scanner, baseline e produttivita dei tre wallet congelati.
+- Log riconciliato: collector continuo e fail-closed; la scarsita non deriva
+  dai 429. Identificato un cohort strutturalmente insufficiente (3 wallet contro
+  il gate minimo di 5), ora in verifica nel contratto scanner/new-run.
+- Audit statico preliminare conferma l'assenza di un minimo wallet enforceato;
+  una lettura multi-file e stata troncata e verra ripresa su intervalli mirati.
+- Ripresa completata: scanner e startup accettano liste non vuote anche quando
+  insufficienti ai gate. Non verranno allentate soglie storiche a posteriori.
+- Rilevata una race reale di persistenza/export: curva equity troncata durante
+  la copia live. Avviato fix atomico per curva/trade log e progettazione del
+  preflight cohort minimo.
+- Verifica API ufficiale completata: scoperto `holders_per_market=25` oltre il
+  massimo documentato di 20; il fetcher scanner dovra clampare e rendere gli
+  errori osservabili invece di trasformarli silenziosamente in zero holder.
+- Inventariati test e call-site. Fix scelti: minimo cohort fail-closed, health
+  scanner persistita/API, limite holders conforme, JSON atomici per curva/log e
+  test regressione. Nessuna soglia ROI/WR verra allentata.
+- Implementato il preflight di coorte in scanner, bot e `start_all.sh`: meno di
+  5 wallet produce exit non-zero e impedisce l'avvio del run.
+- Discovery Gamma portata a 600 mercati con paginazione `limit`/`offset`; il
+  limite holder e clampato a 20 e la diagnostica scan viene persistita.
+- Curve equity/shadow e trade log spostati su replace atomico per evitare JSON
+  troncati durante export o crash.
+- Dashboard/API espongono `cohort_health`; la UI mostra 3/5 (o il valore reale)
+  e un banner rosso quando il run non e validabile.
+- Prima suite mirata CX: 9/9 test superati, inclusi paginazione, clamp holder,
+  preflight 3/5, API coorte e JSON atomico.
+- Suite completa CX: 79/79 unittest PASS; `compileall`, JavaScript dashboard e
+  `git diff --check` PASS. Il primo `bash -n` ha invocato lo stub WSL privo di
+  `/bin/bash`; retry con Git Bash reale PASS.
+- Revisione fail-closed: rimosso anche il fallback leaderboard da
+  `ensure_monitored_wallets`, cosi l'avvio diretto di `src/main.py` non puo
+  aggirare il minimo specialistico; aggiunto test dedicato.
+- Verifica finale dopo il fix fallback: 80/80 unittest PASS; compileall,
+  sintassi Bash e diff check PASS. Phase CX completata con verdetto NO-GO e
+  rollout previsto esclusivamente in nuovo `OBSERVE`.
+
+
 ## SESSIONE 2026-08-24 - Phase CV audit prospettico
 
 - Ricevuto l'unico bundle presente nella cartella locale `exports` dopo circa
