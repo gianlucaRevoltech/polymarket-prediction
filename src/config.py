@@ -54,6 +54,7 @@ EXECUTION = {
     "paper_max_trades_per_wallet": 20,
     "promotion_min_distinct_wallets": 5,
     "promotion_max_trade_share_per_wallet": 0.20,
+    "promotion_min_trades_per_domain": 30,
     # Un run di validazione non deve partire con un cohort che non puo mai
     # soddisfare il gate di diversificazione. Lo scan resta fail-closed: non si
     # abbassano ROI/WR per riempire artificialmente la lista.

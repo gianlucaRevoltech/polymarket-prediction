@@ -14,6 +14,7 @@ import re
 import time
 import json
 import os
+import math
 from collections import defaultdict
 from typing import List, Dict, Optional
 from datetime import datetime
@@ -57,6 +58,10 @@ class PolymarketScanner:
             "qualified_after_quarantine": 0,
             "quarantined_excluded": 0,
             "selected_wallets": 0,
+            "domain_wallet_counts": {},
+            "minimum_wallets_per_domain": 0,
+            "validation_domains": [],
+            "excluded_domains": [],
             "minimum_required": int(
                 EXECUTION.get("minimum_monitored_wallets", 5)
             ),
@@ -570,35 +575,92 @@ class PolymarketScanner:
                 "cross-run esclusi dallo scan"
             )
 
-        qualified_domains: Dict[str, set] = defaultdict(set)
-        for cat, wallets in results_by_cat.items():
-            for wallet in wallets:
-                qualified_domains[str(wallet.get("address", "")).lower()].add(cat)
+        # Un dominio deve poter raggiungere il minimo promozionale anche con il
+        # cap per-wallet. Assegniamo ogni wallet a un solo dominio, cosi la
+        # capacita non viene contata due volte tra categorie diverse.
+        per_wallet_cap = max(
+            1, int(EXECUTION.get("shadow_max_trades_per_wallet", 20))
+        )
+        min_domain_trades = max(
+            1, int(EXECUTION.get("promotion_min_trades_per_domain", 30))
+        )
+        min_wallets_per_domain = math.ceil(
+            min_domain_trades / per_wallet_cap
+        )
+        domain_wallet_counts = {
+            cat: len({str(w.get("address", "")).lower() for w in wallets})
+            for cat, wallets in results_by_cat.items()
+        }
+        candidate_domains = [
+            cat for cat in cfg["active"]
+            if domain_wallet_counts.get(cat, 0) >= min_wallets_per_domain
+        ]
+        excluded_domains = [
+            cat for cat in cfg["active"]
+            if 0 < domain_wallet_counts.get(cat, 0) < min_wallets_per_domain
+        ]
+        for cat in excluded_domains:
+            print(
+                f"  [VALIDATION] Dominio '{cat}' escluso: "
+                f"{domain_wallet_counts[cat]}/{min_wallets_per_domain} "
+                "wallet qualificati"
+            )
 
-        # Interleaving bilanciato tra categorie (round-robin) fino a top_n,
-        # deduplicando per indirizzo (un wallet puo' essere specialista in piu
-        # categorie: lo teniamo una sola volta, nella prima in cui emerge).
+        # Prima riserviamo il minimo di specialisti distinti per ogni dominio.
+        # Se l'overlap impedisce la riserva, quel dominio viene escluso.
         print(f"\n[3/3] Composizione mix bilanciato (max {top_n})...")
         interleaved: List[Dict] = []
         seen_addr = set()
+        validation_domains = []
+        for cat in candidate_domains:
+            seeds = []
+            for raw in results_by_cat.get(cat, []):
+                address = str(raw.get("address", "")).lower()
+                if not address or address in seen_addr:
+                    continue
+                seeds.append(dict(raw))
+                if len(seeds) >= min_wallets_per_domain:
+                    break
+            if len(seeds) < min_wallets_per_domain:
+                print(
+                    f"  [VALIDATION] Dominio '{cat}' escluso dopo deduplica: "
+                    f"{len(seeds)}/{min_wallets_per_domain} wallet distinti"
+                )
+                excluded_domains.append(cat)
+                continue
+            validation_domains.append(cat)
+            for wallet in seeds:
+                wallet["category"] = cat
+                wallet["categories"] = [cat]
+                seen_addr.add(str(wallet["address"]).lower())
+                interleaved.append(wallet)
+
+        # Poi completiamo in round-robin, mantenendo l'assegnazione esclusiva.
         idx = 0
-        max_len = max((len(v) for v in results_by_cat.values()), default=0)
+        max_len = max(
+            (len(results_by_cat.get(cat, [])) for cat in validation_domains),
+            default=0,
+        )
         while len(interleaved) < top_n and idx < max_len:
-            for cat in cfg["active"]:
+            for cat in validation_domains:
                 lst = results_by_cat.get(cat, [])
                 if idx < len(lst):
                     w = dict(lst[idx])
-                    if w["address"] in seen_addr:
+                    address = str(w.get("address", "")).lower()
+                    if not address or address in seen_addr:
                         continue
                     w["category"] = cat
-                    w["categories"] = sorted(
-                        qualified_domains.get(str(w["address"]).lower(), {cat})
-                    )
-                    seen_addr.add(w["address"])
+                    w["categories"] = [cat]
+                    seen_addr.add(address)
                     interleaved.append(w)
                     if len(interleaved) >= top_n:
                         break
             idx += 1
+
+        self.scan_health["domain_wallet_counts"] = domain_wallet_counts
+        self.scan_health["minimum_wallets_per_domain"] = min_wallets_per_domain
+        self.scan_health["validation_domains"] = validation_domains
+        self.scan_health["excluded_domains"] = sorted(set(excluded_domains))
 
         print(f"\n{'='*70}")
         print(f"  WALLET SELEZIONATI: {len(interleaved)}")

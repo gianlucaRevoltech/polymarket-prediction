@@ -242,6 +242,8 @@ Il cohort e i domini specialistici restano congelati durante ogni run.
 Lo startup richiede almeno 5 wallet qualificati: se `new-run scan` termina con
 `Cohort insufficiente`, il bot resta fermo intenzionalmente. Non ridurre le
 soglie per forzare l'avvio; conservare `logs/scan_categories.log` per l'audit.
+Lo scanner congela soltanto domini con almeno due specialisti distinti, cosi il
+cap di 20 trade per wallet non rende impossibile il gate di 30 trade/dominio.
 
 ### Errori API Polymarket
 ```bash

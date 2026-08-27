@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 import random
 from typing import Dict, Iterable, List, Optional
 
+from config import EXECUTION
+
 
 def _bootstrap_lower_95(values: List[float], iterations: int = 10000,
                         seed: int = 42) -> float:
@@ -107,7 +109,10 @@ def evaluate_copy_run(closed_positions: Iterable, run_id: str,
         if positive_total > 0 else 1.0
     )
     domains = intended_domains or []
-    domain_ok = all(by_domain[d] >= 30 for d in domains)
+    minimum_domain_trades = int(
+        EXECUTION.get("promotion_min_trades_per_domain", 30)
+    )
+    domain_ok = all(by_domain[d] >= minimum_domain_trades for d in domains)
     ci_lower = _event_cluster_bootstrap_lower_95(
         trades, bootstrap_iterations
     )
@@ -153,6 +158,7 @@ def evaluate_copy_run(closed_positions: Iterable, run_id: str,
             "max_wallet_trade_share": max_wallet_trade_share,
             "trades_by_wallet": dict(trades_by_wallet),
             "trades_by_domain": dict(by_domain),
+            "minimum_trades_per_domain": minimum_domain_trades,
         },
     }
 

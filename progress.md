@@ -68,6 +68,11 @@
   parziale per wallet oltre 10.000 posizioni.
 - Aggiunto esito non ambiguo al profiler: errore snapshot non equivale piu a
   portafoglio vuoto e impedisce qualifica/ranking. Test mirato 7/7 PASS.
+- Terzo rollout `b45f182`: 12 wallet integri e run OBSERVE sano, ma individuata
+  capacita insufficiente per sport/politics (1 wallet x 20 < 30 trade).
+- Implementata selezione di domini promuovibili: minimo due specialisti
+  esclusivi per dominio, diagnostica persistita e soglia 30 centralizzata.
+  Suite mirata scanner/preflight/promotion: 16/16 PASS.
 
 
 ## SESSIONE 2026-08-24 - Phase CV audit prospettico

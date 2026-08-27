@@ -85,6 +85,12 @@ fonti produttive; il valutatore verifica anche che nessun wallet rappresenti
 più del 20% di tutte le chiusure. Questo impedisce che un unico wallet costituisca
 il campione promozionale, anche se il suo P&L fosse positivo.
 
+Ogni dominio destinato alla validazione richiede almeno 30 trade. Lo scanner
+riserva quindi almeno due specialisti distinti per dominio (cap 20 trade per
+wallet) e assegna ciascun wallet a un solo dominio del run. Domini con capacita
+insufficiente vengono esclusi prima del congelamento, non lasciati fallire dopo
+14 giorni; l'elenco e persistito in `scan_diagnostics.validation_domains`.
+
 Il gate shadow può autorizzare soltanto un nuovo run `paper_validation`
 indipendente. Anche con tutti i gate verdi, `real_money_authorized` resta sempre
 `false`; il repository non contiene un percorso di invio ordini reali.

@@ -44,6 +44,10 @@ class WalletRegistryTests(unittest.TestCase):
             }
             with mock.patch.object(scanner_module, "DATA_DIR", data), \
                  mock.patch.object(scanner_module, "CATEGORIES", cfg), \
+                 mock.patch.dict(
+                     scanner_module.EXECUTION,
+                     {"promotion_min_trades_per_domain": 1},
+                 ), \
                  mock.patch.object(scanner, "get_popular_markets", return_value=[{
                      "category": "macro", "condition_id": "cond",
                      "question": "Fed?", "volume": 100,
@@ -63,7 +67,7 @@ class WalletRegistryTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 quarantined_wallets(data)
 
-    def test_scanner_persists_all_qualified_specialist_domains(self):
+    def test_scanner_freezes_one_validation_domain_per_wallet(self):
         with tempfile.TemporaryDirectory() as tmp:
             data = Path(tmp)
             scanner = PolymarketScanner()
@@ -84,13 +88,23 @@ class WalletRegistryTests(unittest.TestCase):
             ]
             with mock.patch.object(scanner_module, "DATA_DIR", data), \
                  mock.patch.object(scanner_module, "CATEGORIES", cfg), \
+                 mock.patch.dict(
+                     scanner_module.EXECUTION,
+                     {"promotion_min_trades_per_domain": 1},
+                 ), \
                  mock.patch.object(scanner, "get_popular_markets", return_value=markets), \
                  mock.patch.object(scanner, "_collect_overlap", return_value=({}, {})), \
                  mock.patch.object(scanner, "_qualify_wallets", return_value=[wallet]):
                 scanner.scan_categories(top_n=2)
             scan = json.loads((data / "scan_results.json").read_text())
             self.assertEqual(
-                scan["wallets"][0]["categories"], ["macro", "politics"]
+                scan["wallets"][0]["categories"], ["macro"]
+            )
+            self.assertEqual(
+                scan["scan_diagnostics"]["validation_domains"], ["macro"]
+            )
+            self.assertIn(
+                "politics", scan["scan_diagnostics"]["excluded_domains"]
             )
 
 

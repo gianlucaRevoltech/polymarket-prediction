@@ -56,6 +56,9 @@ Errori incontrati:
   offset 10.000: il wrapper legacy convertiva l'errore in lista/mappa vuota e
   permetteva metriche activity parziali. Corretto con esito fail-closed
   esplicito nel profiler e scanner.
+- terzo rollout ha lasciato sport/politics con un solo specialista ciascuno:
+  20 aperture massime non possono soddisfare 30 trade/dominio. Correzione:
+  dominio escluso sotto due wallet e assegnazione esclusiva della capacita.
 
 ## Active Phase CV: audit validazione prospettica 14 giorni (2026-08-24)
 

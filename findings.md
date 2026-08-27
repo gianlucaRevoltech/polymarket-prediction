@@ -106,6 +106,11 @@
   Questo riapriva survivorship bias: le perdite residue non erano verificabili.
   Il nuovo `positions_map_result()` propaga `None` e scanner/profiler scartano
   fail-closed qualunque wallet con snapshot corrente incompleto.
+- Terzo scan: 12 wallet integri, ma sport e politics hanno un solo specialista
+  ciascuno. Con massimo 20 aperture per wallet e minimo 30 trade/dominio, questi
+  domini renderebbero il run matematicamente non promuovibile. Lo scanner ora
+  esclude prima del run i domini sotto due specialisti e assegna ogni wallet a
+  un solo dominio, evitando doppio conteggio della capacita.
 
 
 
