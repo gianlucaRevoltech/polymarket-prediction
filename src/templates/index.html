@@ -1015,31 +1015,33 @@
                 let html = '';
                 wallets.forEach(w => {
                     const roiClass = getColorClass(w.roi);
-                    const wr = (w.win_rate || 0) * 100;
+                    const wr = typeof w.win_rate === 'number' ? w.win_rate * 100 : null;
                     const wrClass = getColorClass(wr - 50);
-                    const profit = w.profit || (w.volume * w.roi / 100) || 0;
+                    const profit = typeof w.profit === 'number' ? w.profit : null;
+                    const provenance = w.metrics_provenance || {};
                     const statusBadge = w.status === 'disabled' ? '<span class="status-badge status-disabled">DISABLED</span>'
                                   : w.status === 'reserve' ? '<span class="status-badge status-reserve">RESERVE</span>'
-                                  : '<span class="status-badge status-active">ACTIVE</span>';
+                                  : '<span class="status-badge status-active" title="Monitorato, non validato come profittevole">ACTIVE · monitorato</span>';
                     html += `<div class="wallet-card">
                         <div class="wallet-name">${escapeHtml(w.name || 'Anonymous')} ${statusBadge}</div>
                         <div class="wallet-address" title="${escapeHtml(w.address)}">${escapeHtml(w.address ? w.address.slice(0,10)+'...'+w.address.slice(-6) : '')}</div>
+                        <div class="wallet-address">Statistiche storiche dello scan · ${escapeHtml(provenance.scan_at || 'data non disponibile')}<br>Metodo: ${escapeHtml(provenance.method || 'legacy non verificato')} · Qualità: ${escapeHtml(provenance.quality || 'non verificata')}<br>Finestra: ${escapeHtml(provenance.window ? JSON.stringify(provenance.window) : 'non documentata')} · Non sono risultati della copia</div>
                         <div class="wallet-stats">
                             <div class="wallet-stat">
-                                <div class="wallet-stat-label">ROI</div>
-                                <div class="wallet-stat-value ${roiClass}">${(w.roi||0).toFixed(1)}%</div>
+                                <div class="wallet-stat-label">ROI storico</div>
+                                <div class="wallet-stat-value ${roiClass}">${typeof w.roi === 'number' ? w.roi.toFixed(1) + '%' : 'n/d'}</div>
                             </div>
                             <div class="wallet-stat">
-                                <div class="wallet-stat-label">PnL</div>
-                                <div class="wallet-stat-value ${roiClass}">${formatMoney(profit)}</div>
+                                <div class="wallet-stat-label">PnL storico</div>
+                                <div class="wallet-stat-value ${roiClass}">${profit === null ? 'n/d' : formatMoney(profit)}</div>
                             </div>
                             <div class="wallet-stat">
-                                <div class="wallet-stat-label">WR</div>
-                                <div class="wallet-stat-value ${wrClass}">${wr.toFixed(0)}%</div>
+                                <div class="wallet-stat-label">WR storico</div>
+                                <div class="wallet-stat-value ${wrClass}">${wr === null ? 'n/d' : wr.toFixed(0) + '%'}</div>
                             </div>
                             <div class="wallet-stat">
-                                <div class="wallet-stat-label">Trades</div>
-                                <div class="wallet-stat-value">${w.trades}</div>
+                                <div class="wallet-stat-label">Posizioni storiche</div>
+                                <div class="wallet-stat-value">${w.trades ?? 'n/d'}</div>
                             </div>
                         </div>
                     </div>`;

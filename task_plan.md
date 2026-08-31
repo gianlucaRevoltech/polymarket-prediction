@@ -2,6 +2,17 @@
 
 ## Current active phase
 
+Phase DA (2026-08-31): wallet history audit isolated from the running paper.
+- [x] DA1: conservative reconstruction, official reconciliation, regression tests.
+- [x] DA2: bounded public API discovery, temporal pagination/cache and standalone reports.
+- [x] DA3: historical metric provenance in dashboard/API; no frozen-cohort changes.
+- [x] DA4a: 148 tests, Flask/JS/Bash/compileall/diff checks and documentation.
+- [external] DA4b: live comparison requires fresh 13-wallet export and valid local TLS.
+Constraints: no run/strategy/risk/registry mutation; unknown data never qualify.
+Current export predates the 13-wallet paper; request fresh evidence for live comparison.
+Release requested after implementation: commit/push the verified patch, then
+VPS pull and conservative restart. No scan/reset/cohort replacement.
+
 Phase CY — rendere persistente il lifecycle del run e introdurre preflight e
 avvio paper sperimentale transazionale, senza ordini reali.
 

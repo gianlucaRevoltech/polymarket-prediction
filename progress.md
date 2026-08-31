@@ -1097,6 +1097,29 @@ OBSERVE di default, COPY unica candidata futura, nessun capitale reale.
   preflight --wait 120, paper-start e paper-report. Nessuna nuova attesa OBSERVE
   a durata prefissata e nessuna autorizzazione a denaro reale.
 
+# 2026-08-31 — DA wallet audit
+
+Read planning skill and restored recent context. Worktree only has unrelated
+untracked user files. Will preserve all. No AGENTS.md found. Current export is
+August 27; current-paper snapshot requested without blocking implementation.
+
+First 23 new tests and full 140-test suite pass. Found import side effect:
+paper_accounting imports validation/config, which creates runtime directories;
+lazy import confines that to economic_report (audit only uses pure ledger math).
+One patch failed on mismatched signature before edits; reread and applied exact signature.
+Confirmed old export is run-20260824T125519-041daa70 with 3 wallets, NOT current 13.
+
+DA implementation finished locally: 148 tests pass including Flask, DOM/JS,
+Bash syntax/startup preservation and isolated audit file-safety tests. Compileall
+and git diff --check pass. No production mode/strategy/simulator/run edits.
+Standalone CLI supports read-only directory/tar snapshots, bounded discovery,
+cached temporal pagination, conservative accounting and JSON/Markdown reports.
+Live API smoke blocked by TLS hostname mismatch; verification NOT disabled.
+No actual shortlist of the current 13 claimed: fresh snapshot still missing.
+Release follow-up: user requests the correct pull/update workflow. Re-run full
+148-test suite before committing and publishing only task files. Exports and
+unrelated local files remain excluded; no VPS service action performed locally.
+
 # 2026-08-24 — Avvio implementazione hardening post-audit
 
 - Ricevuta autorizzazione esplicita: “vai implementa tutto quello che serve”.

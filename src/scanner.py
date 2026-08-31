@@ -443,6 +443,14 @@ class PolymarketScanner:
             }
         closed = self.bt.reconstruct_positions(activity, posmap)
 
+        quality = list(getattr(self.bt, "history_quality_errors", []))
+        if getattr(self.bt, "activity_truncated", False):
+            quality.append("activity_window_truncated")
+        if quality:
+            return {"roi": 0.0, "pnl": 0.0, "bought": 0.0, "decided": 0,
+                    "win_rate": 0.0, "status": "unknown", "quality_errors": quality,
+                    "method": "wallet_history_v2"}
+
         pnl = sum(p["realized_pnl"] for p in closed.values())
         bought = sum(p["bought"] for p in closed.values())
         n = len(closed)
@@ -451,7 +459,8 @@ class PolymarketScanner:
         return {
             "roi": roi, "pnl": pnl, "bought": bought,
             "decided": n, "win_rate": (wins / n if n else 0.0),
-            "status": "ok",
+            "status": "ok", "method": "wallet_history_v2",
+            "fee_coverage": "unknown_public_cashflows",
         }
 
     # ------------------------------------------------------------------
@@ -908,6 +917,7 @@ class PolymarketScanner:
         extra = extra or {}
 
         wallets_out = []
+        scan_time = utc_now_iso()
         for w in wallets:
             e = extra.get(w.address, {})
             wallets_out.append({
@@ -918,6 +928,10 @@ class PolymarketScanner:
                 "roi": w.roi,                 # ROI realizzato storico (%)
                 "num_trades": w.num_trades,   # posizioni decise reali
                 "rank": w.rank,
+                "metrics_scan_at": scan_time,
+                "metrics_method": "wallet_history_v2",
+                "metrics_quality": "historical_only_not_copy_validated",
+                "metrics_window": {"max_activity_rows": self.bt.activity_limit},
                 # Metriche specifiche del consenso (se disponibili)
                 "markets_overlap": e.get("overlap", w.num_trades),
                 "win_rate": e.get("win_rate", w.win_rate),
@@ -938,7 +952,7 @@ class PolymarketScanner:
             "validation_ready": len(wallets_out) >= minimum_required,
         })
         data = {
-            "scan_time": utc_now_iso(),
+            "scan_time": scan_time,
             "total_wallets": len(wallets),
             "wallets": wallets_out,
             "scan_diagnostics": diagnostics,

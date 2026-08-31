@@ -8,7 +8,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from time_utils import parse_utc
-from validation import evaluate_copy_run
 
 
 def read_json(path: Path) -> dict:
@@ -175,6 +174,10 @@ def execution_fees(rows: list[dict], state: dict) -> dict:
 
 
 def economic_report(state: dict, rows: list[dict], manifest: dict, max_drawdown=None) -> dict:
+    # Keep pure accounting importable by standalone audits without importing
+    # config.py (which creates runtime directories on import).
+    from validation import evaluate_copy_run
+
     metrics = ledger_metrics(state, str(manifest.get("run_id") or ""))
     metrics.update(execution_fees(rows, state))
     metrics.update(paper_experimental=manifest.get("execution_mode") == "paper_validation",

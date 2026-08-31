@@ -1,16 +1,13 @@
 """
 Wallet history profiler per strategie copy / consenso su Polymarket.
 
-Ricostruisce dal feed /activity dei wallet monitorati le posizioni e calcola
-quanto avrebbe reso copiarle, valutando ogni posizione fino alla sua RISOLUZIONE.
+Ricostruisce cashflow storici pubblici. Non calcola il rendimento della copia.
 
 PUNTI CHIAVE DI METODO (per evitare risultati falsati):
   - PnL direzionale reale: eventi TRADE (BUY/SELL) e REDEEM. Esclude REWARD e
     MAKER_REBATE (market making non replicabile da un copiatore retail).
   - Anti survivorship-bias: le posizioni PERDENTI non generano un REDEEM, quindi
-    restano "aperte" nel feed. Le valutiamo allo snapshot /positions (curPrice):
-    una perdente risolta vale 0 -> viene contata come perdita. Senza questo, si
-    vedrebbero solo i vincitori (win rate ~100%, ROI assurdo).
+    richiedono evidenza ufficiale di risoluzione, mai un semplice prezzo estremo.
   - Anti inflazione da finestra: sui REDEEM accreditiamo solo le shares che abbiamo
     effettivamente tracciato nella finestra (cap), non l'intero payout del whale.
   - Conta solo posizioni DECISE (vendute, o risolte a 0/1). Le posizioni ancora
@@ -36,10 +33,6 @@ from config import POLYMARKET_API, BUDGET, STRATEGY, SIMULATOR, DATA_DIR
 from portfolio_sync import PolymarketPositionFetcher
 from categories import categorize_market, taker_fee_fraction
 from time_utils import utc_now_iso
-
-RESOLVED_LOW = 0.02
-RESOLVED_HIGH = 0.98
-
 
 def _median(values: List[float]) -> float:
     if not values:
@@ -69,6 +62,7 @@ class Backtester:
             # può quindi leggere al massimo 5.500 record senza HTTP 400.
             requested = min(max(int(self.activity_limit), 0), 5500)
             rows: List[Dict] = []
+            self.activity_truncated = False
             offset = 0
             while len(rows) < requested:
                 page_limit = min(500, requested - len(rows))
@@ -85,6 +79,7 @@ class Backtester:
                 if len(page) < page_limit:
                     break
                 offset += len(page)
+            self.activity_truncated = bool(rows and len(rows) >= requested and len(page) == page_limit)
             return rows
         except Exception as e:
             print(f"[BT] Errore activity {wallet[:10]}...: {e}")
@@ -106,99 +101,12 @@ class Backtester:
 
     # ------------------------------------------------------------------
     def reconstruct_positions(self, activity: List[Dict], posmap: Dict[str, Dict]) -> Dict[str, Dict]:
-        """
-        Ricostruisce per-asset il PnL realizzato fino alla risoluzione.
-
-        Returns asset -> {title, outcome, condition_id, bought, realized_pnl, roi, decided}
-        Solo gli asset DECISI (venduti o risolti a 0/1) hanno decided=True.
-        """
-        state: Dict[str, Dict] = {}
-        cond_assets = defaultdict(set)
-
-        def ensure(asset, ev):
-            if asset not in state:
-                state[asset] = {
-                    "title": ev.get("title", ""),
-                    "outcome": ev.get("outcome", ""),
-                    "condition_id": ev.get("conditionId", ""),
-                    "bought": 0.0,
-                    "shares_bought": 0.0,  # shares totali comprate (per prezzo medio ingresso)
-                    "realized_pnl": 0.0,
-                    "shares": 0.0,
-                    "cost": 0.0,
-                    "first_buy_ts": None,  # timestamp del primo BUY (ordine consenso)
-                }
-            return state[asset]
-
-        for ev in sorted(activity, key=lambda e: e.get("timestamp", 0)):
-            etype = ev.get("type", "")
-            if etype == "TRADE":
-                asset = ev.get("asset", "")
-                if not asset:
-                    continue
-                cond = ev.get("conditionId", "")
-                s = ensure(asset, ev)
-                cond_assets[cond].add(asset)
-                side = ev.get("side", "")
-                shares = float(ev.get("size", 0) or 0)
-                usdc = float(ev.get("usdcSize", 0) or 0)
-                if side == "BUY":
-                    s["shares"] += shares
-                    s["cost"] += usdc
-                    s["bought"] += usdc
-                    s["shares_bought"] += shares
-                    if s["first_buy_ts"] is None:
-                        s["first_buy_ts"] = ev.get("timestamp", 0)
-                elif side == "SELL" and s["shares"] > 1e-9:
-                    frac = min(1.0, shares / s["shares"])
-                    cost_sold = s["cost"] * frac
-                    s["realized_pnl"] += usdc - cost_sold
-                    s["shares"] -= shares
-                    s["cost"] -= cost_sold
-            elif etype == "REDEEM":
-                cond = ev.get("conditionId", "")
-                payout = float(ev.get("usdcSize", 0) or 0)
-                size = float(ev.get("size", 0) or 0)
-                res_per_share = (payout / size) if size > 1e-9 else 1.0
-                remaining = size
-                # Accredita solo le shares tracciate nella finestra (cap), non tutto il payout
-                for a in list(cond_assets.get(cond, set())):
-                    s = state[a]
-                    if s["shares"] <= 1e-9 or remaining <= 1e-9:
-                        continue
-                    redeem_shares = min(s["shares"], remaining)
-                    frac = redeem_shares / s["shares"]
-                    cost_part = s["cost"] * frac
-                    s["realized_pnl"] += redeem_shares * res_per_share - cost_part
-                    s["shares"] -= redeem_shares
-                    s["cost"] -= cost_part
-                    remaining -= redeem_shares
-            # REWARD / MAKER_REBATE ignorati
-
-        # Finalizza: valuta le shares residue allo snapshot (cattura le perdenti a 0)
-        result = {}
-        for asset, s in state.items():
-            if s["bought"] <= 0:
-                continue
-            decided = False
-            if s["shares"] <= 1e-6:
-                decided = True  # interamente venduta/riscattata
-            else:
-                info = posmap.get(asset)
-                if info is not None:
-                    cur = info["cur_price"]
-                    if info["redeemable"] or cur <= RESOLVED_LOW or cur >= RESOLVED_HIGH:
-                        res_price = 1.0 if cur >= 0.5 else 0.0
-                        s["realized_pnl"] += s["shares"] * res_price - s["cost"]
-                        s["shares"] = 0.0
-                        s["cost"] = 0.0
-                        decided = True
-                    # altrimenti posizione ancora aperta (prezzo vivo) -> non decisa
-            if decided:
-                s["roi"] = s["realized_pnl"] / s["bought"] if s["bought"] > 0 else 0.0
-                s["entry_price"] = (s["bought"] / s["shares_bought"]) if s["shares_bought"] > 0 else 0.0
-                result[asset] = s
-        return result
+        """Compatibility adapter; malformed or incomplete history never qualifies."""
+        from wallet_history import reconstruct
+        report = reconstruct(activity, posmap)
+        self.last_history_report = report
+        self.history_quality_errors = report["quality_errors"]
+        return report["closed"] if not report["quality_errors"] else {}
 
     @staticmethod
     def rewards_total(activity: List[Dict]) -> float:
@@ -306,6 +214,16 @@ class Backtester:
                 }
                 continue
             closed = self.reconstruct_positions(activity, posmap)
+
+            quality = list(getattr(self, "history_quality_errors", []))
+            if getattr(self, "activity_truncated", False):
+                quality.append("activity_window_truncated")
+            if quality:
+                per_wallet[addr] = {"name": name, "status": "unknown", "quality_errors": quality,
+                                    "positions": 0, "pnl": None, "bought": None,
+                                    "roi": None, "win_rate": None}
+                print(f"  {name[:22]:22} | UNKNOWN: {', '.join(quality[:3])}")
+                continue
 
             pnl = sum(p["realized_pnl"] for p in closed.values())
             bought = sum(p["bought"] for p in closed.values())

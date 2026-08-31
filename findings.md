@@ -1581,6 +1581,24 @@ HARVEST, perché HARVEST resta disabilitata e non ha edge dimostrato.
   compileall e `git diff --check` puliti.
 # Audit shadow 2026-08-10 — riscontri documentazione ufficiale
 
+## Phase DA — wallet selection audit
+
+Official documentation confirms activity limit500/offset5000 with start/end
+windows; closed positions limit50 sorted TIMESTAMP; leaderboard WEEK/MONTH,
+PNL/VOL. Redemption rows identify their own asset and zero payout for losers.
+Research uses these read-only endpoints, serial pacing, independent cache.
+Live local probe of official leaderboard failed TLS hostname verification.
+No TLS bypass attempted; transport blocks further research requests for this
+audit. Thus no live 13-wallet comparison claimed. Fresh export also absent.
+Legacy finite-window profiler now propagates uncertain basis rather than zeros
+as evidence of quality; production paper engine/config remain unchanged.
+
+Confirmed profiler defects: 0.99 unresolved becomes winning settlement; SELL
+100 shares after observed BUY 10 credits full proceeds against partial basis.
+Scanner uses 1000 activity rows and <=60 candidates/category, ranks ROI first;
+dashboard Trades means decided assets, not recent transactions. Paper cohort
+must stay frozen. Current local export is not the new 13-wallet paper run.
+
 ## Phase CZ — evidenza per la patch 2026-08-31
 
 - Preflight usa fully_failed_snapshot_cycles cumulativo: due outage storici

@@ -4,6 +4,7 @@ Interfaccia leggera Flask per monitoraggio real-time
 """
 import sys
 import json
+import math
 import os
 import subprocess
 from collections import Counter
@@ -337,19 +338,31 @@ def get_monitored_wallets():
         with open(results_file, "r") as f:
             data = json.load(f)
         
+        def metric(value):
+            return value if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) else None
+
         wallets = []
         for raw in data.get("wallets", []):
             w = raw if isinstance(raw, dict) else {"address": raw}
             wallets.append({
                 "name": w.get("name", "Unknown"),
                 "address": w.get("address", ""),
-                "roi": w.get("roi", 0) if isinstance(w.get("roi", 0), (int, float)) else 0,
-                "profit": w.get("profit", w.get("pnl", 0)),
-                "volume": w.get("volume", w.get("invested", 0)),
-                "trades": w.get("trades", w.get("decided", w.get("num_trades", 0))),
-                "win_rate": w.get("win_rate", 0),
+                "roi": metric(w.get("roi")),
+                "profit": metric(w.get("profit", w.get("pnl"))),
+                "volume": metric(w.get("volume", w.get("invested"))),
+                "trades": metric(w.get("trades", w.get("decided", w.get("num_trades")))),
+                "win_rate": metric(w.get("win_rate")),
                 "status": w.get("status", "active"),
                 "allowed_domains": w.get("allowed_domains", w.get("categories", [])),
+                "metrics_provenance": {
+                    "source": "frozen_scan",
+                    "scan_at": w.get("metrics_scan_at") or data.get("scan_time"),
+                    "method": w.get("metrics_method", "legacy_wallet_history_unverified"),
+                    "window": w.get("metrics_window"),
+                    "quality": w.get("metrics_quality", "legacy_unverified"),
+                    "fee_coverage": "unknown_public_cashflows",
+                    "status_meaning": "monitored_not_profit_validated",
+                },
             })
         return wallets
     except Exception:

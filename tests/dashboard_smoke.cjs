@@ -36,4 +36,14 @@ assert.match(element('riskContainer').innerHTML, /pending/);
 assert.match(element('riskContainer').innerHTML, /EDGE NON DIMOSTRATO/);
 assert.match(element('riskContainer').innerHTML, /-\$0\.52/);
 assert.match(element('riskContainer').innerHTML, /fee n\/d/);
+context.updateDashboard({ summary, bot_status: 'running', monitored_wallets: [{
+  name: '<wallet>', address: '0x1234567890123456789012345678901234567890',
+  status: 'active', roi: 0, profit: 0, volume: 1000, trades: 13, win_rate: 1,
+  metrics_provenance: { method: 'legacy_wallet_history_unverified', quality: 'legacy_unverified' },
+}] });
+assert.match(element('walletsContainer').innerHTML, /Statistiche storiche dello scan/);
+assert.match(element('walletsContainer').innerHTML, /ACTIVE · monitorato/);
+assert.match(element('walletsContainer').innerHTML, /legacy_unverified/);
+assert.match(element('walletsContainer').innerHTML, /Posizioni storiche/);
+assert.match(element('walletsContainer').innerHTML, /&lt;wallet&gt;/);
 console.log('Dashboard JS smoke: PASS');
