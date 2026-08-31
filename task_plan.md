@@ -689,7 +689,8 @@ Vedi `ARBITRAGE_LATENCY_PLAN.md` per Step 2/3 (scaling + diversificazione oracle
 - [completed] CZ1 — Salute feed live, runtime/provenienza e contabilità condivisa.
 - [completed] CZ2 — Preflight/API coerenti, attivazione transazionale e paper-report.
 - [completed] CZ3a — 117 test, lifecycle contabile, Flask/JS/Bash/compileall e documentazione.
-- [in_progress] CZ3b — Commit/push delle sole modifiche pertinenti.
+- [completed] CZ3b — Commit 47a38c9 pubblicato su origin/main; soli file pertinenti.
+- [external] Smoke VPS: restart conservativo, preflight --wait 120, paper-start.
 - Nessun tuning economico, scan o reset VPS. Solo paper; nessun denaro reale.
 - Errori patch CZ: intestazione Begin Patch assente e delete/add stesso path
   rifiutati senza modifiche. Risolto con singolo Update File atomico.

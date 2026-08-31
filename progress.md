@@ -1091,6 +1091,11 @@ OBSERVE di default, COPY unica candidata futura, nessun capitale reale.
 - Ripetizione finale: errore intermittente dello smoke Bash su Windows, non
   riprodotto nel test singolo. Harness aggiornato con wait dei processi stub
   prima della rimozione del TemporaryDirectory; nuova suite richiesta.
+- Nuova suite completa: 117/117 OK. Commit implementazione 47a38c9 pubblicato
+  su origin/main il 2026-08-31. Export/cartelle dati utente non inclusi.
+- Verifica live VPS non eseguita localmente: consegnati restart conservativo,
+  preflight --wait 120, paper-start e paper-report. Nessuna nuova attesa OBSERVE
+  a durata prefissata e nessuna autorizzazione a denaro reale.
 
 # 2026-08-24 — Avvio implementazione hardening post-audit
 
