@@ -28,8 +28,9 @@ RUN_FILES = (
     "shadow_state.json.bak", "shadow_journal.jsonl",
     "shadow_equity_curve.json", "shadow_equity_curve.json.bak",
     "monitored_wallets.json", "wallet_quality.json", "runtime_status.json",
+    "paper_activation.json", "deployment_history.jsonl", "paper_report.json",
 )
-PRESERVED_EVIDENCE_FILES = ("wallet_validation_registry.json", "scan_results.json")
+PRESERVED_EVIDENCE_FILES = ("wallet_validation_registry.json", "scan_results.json", "paper_transition.json")
 CLEAR_FILES = RUN_FILES + (
     "price_history.json", "whale_wallets.json", "latency_arb_signals.jsonl",
     "latency_arb_stats.json",
@@ -58,6 +59,7 @@ def current_run_id() -> str:
 
 
 def archive() -> Path:
+    import hashlib
     run_id = current_run_id()
     target = DATA / "runs" / run_id
     if target.exists():
@@ -70,9 +72,21 @@ def archive() -> Path:
     config = ROOT / "src" / "config.py"
     if config.exists():
         shutil.copy2(config, target / "config.py")
+    hashes = {}
+    for name in RUN_FILES + PRESERVED_EVIDENCE_FILES:
+        source = DATA / name
+        if source.is_file():
+            digest = hashlib.sha256(source.read_bytes()).hexdigest()
+            if hashlib.sha256((target / name).read_bytes()).hexdigest() != digest:
+                raise RuntimeError(f"archivio non verificato: {name}")
+            hashes[name] = digest
+    for name in ("bot.log", "dashboard.log"):
+        if (LOGS / name).is_file():
+            shutil.copy2(LOGS / name, target / name)
     (target / "archive_manifest.json").write_text(json.dumps({
         "run_id": run_id,
         "archived_at": datetime.now(timezone.utc).isoformat(),
+        "sha256": hashes,
     }, indent=2), encoding="utf-8")
     print(f"[ARCHIVE] Run preservato in {target}")
     return target
@@ -138,6 +152,8 @@ def validate_current() -> dict:
     errors = list(health["errors"])
     ledger = _read_json(DATA / "portfolio_state.json")
     monitored = _read_json(DATA / "monitored_wallets.json")
+    if (DATA / "portfolio_state.json").exists() and not ledger:
+        errors.append("ledger presente ma non leggibile: vietato ripartire da zero")
     if ledger and ledger.get("run_id") != manifest["run_id"]:
         errors.append("run_id del ledger diverso dal manifest")
     if ledger and ledger.get("execution_mode") != manifest["execution_mode"]:
@@ -148,6 +164,9 @@ def validate_current() -> dict:
     actual = [str(w.get("address", "")).lower() for w in monitored.get("wallets", []) if isinstance(w, dict)]
     if frozen != actual:
         errors.append("coorte monitored_wallets diversa dal manifest")
+    from paper_readiness import cohort_identity
+    if cohort_identity(manifest) != cohort_identity(monitored):
+        errors.append("domini/hash coorte monitored_wallets diversi dal manifest")
     if errors:
         raise SystemExit("; ".join(errors))
     print(

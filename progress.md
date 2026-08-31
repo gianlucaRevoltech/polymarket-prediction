@@ -1055,6 +1055,43 @@ OBSERVE di default, COPY unica candidata futura, nessun capitale reale.
 - Il movimento lordo ask→bid dei chiusi è già -$8,483044; fee complessive -$7,522576. EV/trade netto -$0,500176; bootstrap CI95 per evento circa [-$0,7281, -$0,2793].
 - Confermati tre difetti metodologici: stop sport misurato dall'entry economica inclusiva di fee invece che dal raw ask; domini intended ricavati post-hoc dai trade; assenza di quarantena cross-run per wallet già falliti.
 - Verdetto operativo: NO-GO. Nessuna modifica al bot o allo stato VPS effettuata durante questo audit.
+# 2026-08-31 — Implementazione CZ autorizzata
+
+- Piano approvato: sbloccare il paper, correggere contabilità e verifica startup.
+- Skill planning-with-files applicata; file utente non tracciati preservati.
+- Nessuna operazione VPS effettuata: sviluppo e test locali prima del push.
+- Aggiunti moduli read-only per contabilità e readiness; runtime v2 con commit,
+  identità processo e copertura snapshot consecutiva. Barriera aperture nel main.
+- Conservati pacing/backoff, parametri strategia e contatori storici.
+- Preflight condiviso con dashboard e attivazione pending/active/failed aggiunti;
+  controllore usa archivio verificato SHA-256 e ripresa senza reset.
+- Errori apply_patch (formato e delete/add stesso file) risolti con Update File.
+- Prima suite dopo integrazione: 85/87 verdi; due fixture obsolete dichiaravano
+  readiness sana senza runtime v2/copertura/coorte. Aggiornamento fixture e
+  nuove regressioni in corso, nessuna riduzione dei controlli di produzione.
+- Suite estesa: errore fixture PositionsFetchResult priva di wallet corretto;
+  eliminata ereditarietà che duplicava i test. Un hunk in ordine inverso è
+  stato rifiutato e riordinato (nessuna modifica parziale).
+- Aggiunti test startup, timeout e interruzione creazione; corretta fixture
+  inserita a metà test OBSERVE (NameError rows). Assert originali conservati.
+- Controllo sintassi Bash, compileall e diff check superati; config economica
+  invariata. Recupero transazione usa intento persistente + archivio verificato.
+- 109 test verdi e lifecycle isolato riconciliato anche tramite il nuovo report:
+  cash finale 300.4480099502488, fee 0.04950248756218858 (feed sintetico).
+- Smoke JavaScript iniziale: stub Canvas mancava createLinearGradient; aggiunto
+  al mock DOM, senza modificare il grafico di produzione.
+- Revisione diff: spostata validazione contatori dal primo try generico a
+  feed_readiness (hunk troppo generico identificato prima del commit).
+- Verificati anche ledger corrotto senza backup, drawdown persistente, report
+  solo run corrente e restart senza scanner: suite portata a 116 test verdi.
+- Suite finale estesa: 117/117 verdi, smoke JS eseguito con DOM mock, Flask
+  rendering e API verificati, Bash -n e compileall OK. Nessun cambio a config.py.
+- Prima attivazione del nuovo paper verifica esplicitamente cash/capitale $300
+  e zero esecuzioni. Rollout VPS ancora da eseguire a cura dell'utente.
+- Ripetizione finale: errore intermittente dello smoke Bash su Windows, non
+  riprodotto nel test singolo. Harness aggiornato con wait dei processi stub
+  prima della rimozione del TemporaryDirectory; nuova suite richiesta.
+
 # 2026-08-24 — Avvio implementazione hardening post-audit
 
 - Ricevuta autorizzazione esplicita: “vai implementa tutto quello che serve”.

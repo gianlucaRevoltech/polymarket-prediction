@@ -684,6 +684,17 @@ Vedi `ARBITRAGE_LATENCY_PLAN.md` per Step 2/3 (scaling + diversificazione oracle
   prospettici successivi sono negativi e COPY deve restare in OBSERVE.
 - Priorità: PRIMA fermare il sanguinamento (Phase CC), POI fixare la meccanica
   (Phase CD-CE), POI ridurre sizing (Phase CG), POI validare (Phase CH).
+# Phase CZ — Sblocco paper verificabile (2026-08-31)
+
+- [completed] CZ1 — Salute feed live, runtime/provenienza e contabilità condivisa.
+- [completed] CZ2 — Preflight/API coerenti, attivazione transazionale e paper-report.
+- [completed] CZ3a — 117 test, lifecycle contabile, Flask/JS/Bash/compileall e documentazione.
+- [in_progress] CZ3b — Commit/push delle sole modifiche pertinenti.
+- Nessun tuning economico, scan o reset VPS. Solo paper; nessun denaro reale.
+- Errori patch CZ: intestazione Begin Patch assente e delete/add stesso path
+  rifiutati senza modifiche. Risolto con singolo Update File atomico.
+- Preservare file utente non tracciati. Rollout: restart, preflight --wait 120, paper-start.
+
 # Phase CW — Hardening del campione prospettico (2026-08-24)
 
 Obiettivo: correggere i difetti emersi dal run OBSERVE/shadow di 14 giorni senza promuovere una strategia in perdita. Il rollout finale deve ripartire in `observe`, con un campione auditabile e non dominabile da un solo wallet.

@@ -59,6 +59,19 @@ class PolymarketPaperTradingBot:
         self.wallet_mgr = WalletManager(scanner=self.scanner)
         # Phase Z: hook copy close -> wallet manager tracking P&L per-wallet
         self.simulator.on_copy_close = self.wallet_mgr.record_copy_close
+        from runtime_contract import RUNTIME_VERSION, git_commit, record_deployment
+        from pathlib import Path
+        import uuid
+        self.runtime_identity = {
+            "runtime_version": RUNTIME_VERSION, "pid": os.getpid(),
+            "process_instance_id": uuid.uuid4().hex,
+            "running_commit": git_commit(Path(__file__).resolve().parents[1]),
+            "started_at": utc_now_iso(), "run_id": self.simulator.run_id,
+        }
+        record_deployment(DATA_DIR, self.runtime_identity)
+        self._completed_cycles = 0
+        self._healthy_cycles = 0
+        self.simulator.opening_guard = self._opening_guard
         self._cycle_count = 0
         self.runtime_status_file = DATA_DIR / "runtime_status.json"
         self.last_cycle_at: Optional[str] = None
@@ -76,12 +89,22 @@ class PolymarketPaperTradingBot:
         print("\n\n[BOT] Shutdown richiesto...")
         self.running = False
         self._write_runtime_status("stopping")
-        pid_file = DATA_DIR / "bot.pid"
-        if pid_file.exists():
-            pid_file.unlink()
 
     def _write_runtime_status(self, phase: str, error: str = "") -> None:
+        from paper_readiness import cohort_identity
+        from runtime_contract import activation
         payload = {
+            **self.runtime_identity,
+            "cohort_identity": cohort_identity({
+                "wallets": [{"address": address, "allowed_domains": sorted(
+                    self.simulator.wallet_allowed_domains.get(address, set()))}
+                    for address in self.monitored_addresses],
+                "intended_domains": self.simulator.run_intended_domains,
+                "cohort_source_sha256": self.simulator.run_manifest.get("cohort_source_sha256"),
+            }),
+            "completed_cycles": self._completed_cycles,
+            "consecutive_healthy_cycles": self._healthy_cycles,
+            "activation": activation(DATA_DIR, self.simulator.run_id),
             "run_id": self.simulator.run_id,
             "configured_mode": self.simulator.execution_mode,
             "runtime_mode": self.simulator.execution_mode,
@@ -106,6 +129,24 @@ class PolymarketPaperTradingBot:
             os.replace(tmp, self.runtime_status_file)
         except Exception as exc:
             print(f"[WARNING] runtime status: {exc}")
+
+    def _opening_guard(self) -> str:
+        from runtime_contract import activation, feed_readiness
+        if not self.running:
+            return "process_stopping"
+        if self._healthy_cycles < 2:
+            return "startup_verification_pending"
+        age = age_seconds(self.last_cycle_at)
+        if age is None or age > 60:
+            return "last_completed_cycle_stale"
+        status, reason = feed_readiness(self.fetcher.get_feed_health())
+        if status != "healthy":
+            return f"feed_{status}:{reason}"
+        if activation(DATA_DIR, self.simulator.run_id).get("status") != "active":
+            return "paper_activation_pending"
+        if getattr(self.simulator, "shadow_halt_reason", ""):
+            return f"shadow_halt:{self.simulator.shadow_halt_reason}"
+        return ""
 
     # ------------------------------------------------------------------
     # Selezione wallet da monitorare
@@ -589,6 +630,12 @@ class PolymarketPaperTradingBot:
                         monitored_wallets=set(self.monitored_addresses),
                         failed_wallets=set(snapshot.failed_wallets),
                     )
+                    self.simulator._save_state(strict=True)
+                    self._completed_cycles += 1
+                    self._healthy_cycles = (
+                        self._healthy_cycles + 1 if not snapshot.failed_wallets
+                        and set(snapshot.successful_wallets) == set(self.monitored_addresses) else 0
+                    )
                     self.last_cycle_at = utc_now_iso()
                     self._write_runtime_status("idle")
 
@@ -614,6 +661,7 @@ class PolymarketPaperTradingBot:
                             break
                         time.sleep(1)
                 except Exception as e:
+                    self._healthy_cycles = 0
                     print(f"[ERRORE] Ciclo fallito: {e}")
                     self._write_runtime_status("error", str(e))
                     import traceback
@@ -632,6 +680,10 @@ class PolymarketPaperTradingBot:
         try:
             self.run_mirror_loop()
         finally:
+            self._write_runtime_status("stopped")
+            pid_file = DATA_DIR / "bot.pid"
+            if pid_file.exists():
+                pid_file.unlink()
             print(f"\n{'='*60}")
             print(f"SESSIONE TERMINATA")
             print(f"{'='*60}")

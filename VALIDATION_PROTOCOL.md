@@ -95,59 +95,77 @@ Il gate shadow può autorizzare soltanto un nuovo run `paper_validation`
 indipendente. Anche con tutti i gate verdi, `real_money_authorized` resta sempre
 `false`; il repository non contiene un percorso di invio ordini reali.
 
-La modalità `paper_validation` richiede
-`POLYMARKET_EXECUTION_MODE=paper_validation`. Usa size fissa $5, massimo due
-posizioni, una per evento, wallet congelati per il run, Kelly/compounding e
-trailing disabilitati.
+## Paper sperimentale — procedura corrente (31 agosto 2026)
 
-COPY è promuovibile a un secondo run paper indipendente solo se, nello stesso
-run, supera tutti i criteri:
+La modalità è persistita nel run manifest: `restart` conserva modalità, coorte,
+domini e storico anche senza export o con ambiente discordante. Il commit
+origine resta immutabile; il runtime dichiara separatamente commit e identità
+del processo. Gli aggiornamenti tecnici sono registrati nella provenienza.
 
-- almeno 100 trade COPY chiusi, 30 eventi distinti e 14 giorni;
-- P&L netto positivo dopo i costi;
-- limite inferiore bootstrap CI95 dell'EV/trade maggiore di zero;
-- drawdown massimo non superiore al 3%;
-- nessun evento o wallet oltre il 20% del P&L positivo;
-- almeno 5 wallet sorgente distinti e nessun wallet oltre il 20% dei trade;
-- almeno 30 trade per ogni dominio che si intende abilitare.
+L'avvio sperimentale non richiede un edge già dimostrato: volume basso, zero
+candidati e campione economico piccolo sono warning, non autorizzazioni al reale.
+Preflight tecnico, coorte e circuit breaker restano obbligatori. Non si forzano
+aperture abbassando i filtri. Nessun nuovo periodo OBSERVE a durata prefissata.
 
-`src/validation.py` calcola il verdetto. Lo stesso protocollo deve essere
-superato prima dallo shadow e poi da un run paper indipendente. Nessun verdetto
-autorizza denaro reale: qualsiasi passaggio reale resta fuori scope.
-
-Operazioni VPS:
-
-```bash
-./start_all.sh restart        # conserva sempre stato e run
-./start_all.sh new-run        # archivia ledger/config, poi crea un nuovo run
-./start_all.sh new-run scan   # nuovo run + nuova selezione wallet (raccomandato)
-./start_all.sh reset --force  # archivia prima di cancellare; non riavvia
-```
-
-Rollout della validazione shadow (crea deliberatamente un nuovo campione):
+Dopo il deploy della patch, preservando l'OBSERVE corrente:
 
 ```bash
 git pull --ff-only
-export POLYMARKET_EXECUTION_MODE=observe
-unset LATENCY_ARB_ENABLED
-./start_all.sh new-run scan
+./start_all.sh restart
+./start_all.sh preflight-paper --wait 120
+# Solo se READY:
+./start_all.sh paper-start
 ./start_all.sh status
+./start_all.sh paper-report
 ```
 
-Le prime 24 ore del nuovo OBSERVE sono soltanto uno smoke tecnico: devono essere
-prive di traceback, false riaperture, domini adattivi ed eligible senza sorgente.
-La promozione richiede comunque l'intero campione minimo di 100 chiuse, 30
-eventi e 14 giorni. Solo dopo tutti i gate verdi si crea un run paper separato:
+Non eseguire new-run, scan o reset per questo aggiornamento. I comandi
+operativi mutanti sono protetti da lock. I servizi non ereditano il lock.
 
-```bash
-export POLYMARKET_EXECUTION_MODE=paper_validation
-unset LATENCY_ARB_ENABLED
-./start_all.sh new-run
-./start_all.sh status
-```
+Il preflight richiede due snapshot completi consecutivi dell'intera coorte,
+due cicli riconciliati e salvati, ledger/heartbeat/ultimo ciclo entro 60 secondi,
+schema e commit runtime corretti, assenza di traceback e breaker, journal v6
+e contabilità validi. I contatori di errori storici non rappresentano un outage
+attuale. Due snapshot completamente falliti consecutivi o tre incompleti
+indicano outage; una risposta HTTP riuscita non prova il recupero della coorte.
 
-L'export va mantenuto nell'ambiente usato per i successivi restart del run paper;
-in sua assenza il default torna intenzionalmente a `observe`.
+`paper-start` verifica il run prima di fermarlo e dopo l'arresto, archivia con
+hash verificati, prepara un nuovo paper con la stessa coorte e capitale $300.
+Stati attivazione: pending, active, failed. Nessuna apertura prima della verifica
+di due cicli del nuovo processo (timeout 120 secondi). Errori lasciano i servizi
+fermi e lo stato conservato. Ripetere paper-start riprende una creazione/verifica
+incompleta senza azzerare il nuovo campione; un paper attivo non viene ricreato.
+Anche restart richiede due cicli sani prima di nuove aperture. Le posizioni
+esistenti restano gestite con feed validi; nessuna riattivazione automatica
+dei breaker economici.
+
+Rischio invariato: COPY soltanto, size $5, massimo due posizioni, una per evento,
+cap evento 3%, massimo 20 aperture per wallet; costo round-trip massimo 2,5%;
+halt giornaliero -$3, run -$6 e quarantena dopo tre perdite. Fee per-market,
+ask VWAP in ingresso e bid VWAP netto in uscita. Kelly, compounding, trailing,
+altre strategie e latency-arb restano disabilitati.
+
+`paper-report` salva data/paper_report.json e stampa la sintesi del solo run
+corrente. P&L realizzato/non realizzato, cash, equity e fee sono riconciliati;
+stime fee dei candidati non eseguiti sono escluse. Dati mancanti sono errori
+di qualità, non zeri. La concentrazione positiva senza vincite è non disponibile.
+Il massimo drawdown viene persistito nei nuovi snapshot anche oltre la finestra
+della curva equity.
+
+Controllo tecnico dopo 24 ore; prima revisione economica dopo sette giorni,
+senza tuning o sostituzioni della coorte. Nessun guadagno garantito.
+Per avanzare restano obbligatori, nello stesso run:
+
+- 100 chiusure COPY, 30 eventi distinti e almeno 14 giorni;
+- P&L netto positivo e limite inferiore bootstrap CI95 EV/trade > 0;
+- drawdown massimo <=3%;
+- nessun evento o wallet oltre il 20% del P&L positivo;
+- almeno cinque wallet sorgente, nessuno oltre il 20% delle chiusure;
+- almeno 30 trade per ogni dominio congelato.
+
+Serve comunque un secondo paper indipendente prima di discutere denaro reale.
+`real_money_authorized` resta sempre false. Nessun wallet reale, deposito o
+ordine reale rientra in questa fase.
 
 Il dashboard espone il riepilogo candidati e shadow in `/api/status`, le righe
 recenti in `/api/candidates?limit=50` e il lifecycle shadow in

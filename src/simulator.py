@@ -74,6 +74,9 @@ class PaperTradingSimulator:
         if self.mode_drift_warning:
             print(f"[WARNING] {self.mode_drift_warning}")
         self.state_saved_at: Optional[str] = None
+        self.max_drawdown = 0.0
+        # Production main supplies its process-local warmup + persistent activation barrier.
+        self.opening_guard = None
         self.halt_reason: str = ""
         self.blocked_conditions: Dict[str, Dict] = {}
         self.strategy_loss_streaks: Dict[str, int] = {}
@@ -219,6 +222,10 @@ class PaperTradingSimulator:
             return f"run_integrity:{self.run_integrity_error}"
         if self.execution_mode != "paper_validation":
             return "execution_mode=observe"
+        if self.opening_guard:
+            guard_reason = self.opening_guard()
+            if guard_reason:
+                return guard_reason
         cfg = STRATEGIES.get(strategy, {})
         if not cfg.get("paper_enabled", False):
             return f"{strategy}:paper_disabled"
@@ -293,6 +300,7 @@ class PaperTradingSimulator:
             "journal_version": 6,
             "run_id": self.run_id,
             "signal_id": resolved_signal_id,
+            "position_id": getattr(position, "position_id", None),
             "strategy": strategy,
             "wallet": wallet or info.get("source_wallet", "") or
                       getattr(position, "source_wallet", ""),
@@ -3358,6 +3366,7 @@ class PaperTradingSimulator:
             realized = sum(pos.pnl for pos in self.portfolio.closed_positions)
             point = {
                 "timestamp": utc_now_iso(),
+                "run_id": self.run_id,
                 "strategy": self.strategy_mode,
                 "equity": round(self.portfolio.total_value, 2),
                 "cash": round(self.portfolio.cash, 2),
@@ -3423,14 +3432,21 @@ class PaperTradingSimulator:
     # ------------------------------------------------------------------
     # Persistenza stato
     # ------------------------------------------------------------------
-    def _save_state(self):
+    def _save_state(self, strict=False):
         try:
+            if self.run_integrity_error:
+                raise ValueError(self.run_integrity_error)
             saved_at = utc_now_iso()
+            peak = max(getattr(self, "peak_equity", 0), self.portfolio.initial_capital,
+                       self.portfolio.total_value)
+            self.max_drawdown = max(self.max_drawdown,
+                                    (peak - self.portfolio.total_value) / peak if peak > 0 else 0)
             state = {
                 "state_version": 3,
                 "run_id": self.run_id,
                 "execution_mode": self.execution_mode,
                 "initial_capital": self.portfolio.initial_capital,
+                "max_drawdown": self.max_drawdown,
                 "cash": self.portfolio.cash,
                 "strategy_mode": self.strategy_mode,
                 "baseline_done": self.baseline_done,
@@ -3450,6 +3466,8 @@ class PaperTradingSimulator:
             self.state_saved_at = saved_at
         except Exception as e:
             print(f"[ERRORE] Salvataggio stato: {e}")
+            if strict:
+                raise
 
     def _atomic_write_json(self, filepath, data, create_backup=True):
         """Scrittura atomica: scrive su temp file, poi rinomina. Crea backup."""
@@ -3604,9 +3622,11 @@ class PaperTradingSimulator:
                     print(f"[OK] Stato ripristinato da backup ({len(state.get('closed_positions', []))} chiuse)")
                 except Exception as e2:
                     print(f"[ERRORE] Anche il backup e' corrotto: {e2}")
+                    self.run_integrity_error = "ledger e backup non leggibili"
                     return
             else:
-                print("[ERRORE] Nessun backup disponibile, parto da zero")
+                self.run_integrity_error = "ledger corrotto senza backup: aperture e salvataggio bloccati"
+                print(f"[ERRORE] {self.run_integrity_error}")
                 return
 
         try:
@@ -3638,6 +3658,7 @@ class PaperTradingSimulator:
                 self.execution_mode = str(stored_mode)
                 self.execution_mode_source = "ledger"
             self.portfolio.cash = state["cash"]
+            self.max_drawdown = float(state.get("max_drawdown", 0) or 0)
             self.baseline_done = state.get("baseline_done", False)
             self.baseline_assets = set(state.get("baseline_assets", []))
 
@@ -3691,6 +3712,7 @@ class PaperTradingSimulator:
 
         except Exception as e:
             print(f"[ERRORE] Caricamento stato: {e}")
+            self.run_integrity_error = f"caricamento ledger fallito: {e}"
 
 
 if __name__ == "__main__":

@@ -1581,6 +1581,24 @@ HARVEST, perché HARVEST resta disabilitata e non ha edge dimostrato.
   compileall e `git diff --check` puliti.
 # Audit shadow 2026-08-10 — riscontri documentazione ufficiale
 
+## Phase CZ — evidenza per la patch 2026-08-31
+
+- Preflight usa fully_failed_snapshot_cycles cumulativo: due outage storici
+  bloccano anche dopo recupero; occorre copertura consecutiva per snapshot.
+- Position serializzata non contiene pnl: preflight e breakdown dashboard
+  leggono quindi zero. Tre chiusure VPS sommano -0.524629 USD.
+- Dashboard somma anche fee preventivate dei candidati non eseguiti.
+- Commit origine manifest non deve coincidere per sempre col checkout:
+  occorre confrontare commit del processo in esecuzione e schema compatibile.
+- Avvio corrente attende 50s fissi, e cycle aumenta prima della riconciliazione.
+- Suite baseline: 87 test verdi; regressioni specifiche ancora da aggiungere.
+- Avvio nuovo run non ha ledger prima del primo snapshot: il wait post-start
+  deve ammettere questo stato transitorio, senza consentire aperture.
+- La curva equity è limitata a 10.000 punti; aggiunto massimo drawdown persistito
+  per non perdere drawdown precedenti nelle valutazioni dei nuovi paper.
+- L'intento di transizione viene preparato e salvato prima del clear: anche
+  un'interruzione durante creazione manifest/coorte può riprendere lo stesso run.
+
 ## Phase CY — contratti finali per il paper sperimentale
 
 - Il difetto operativo residuo era reale: il simulatore leggeva la modalità da

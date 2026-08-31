@@ -129,12 +129,14 @@ class DashboardApiTests(unittest.TestCase):
                 self.assertEqual(
                     payload["wallet_validation_registry"]["quarantined_count"], 1
                 )
-                self.assertTrue(payload["readiness"]["ready"])
+                # A stale optimistic report cannot override missing manifest,
+                # insufficient cohort and incomplete runtime/journal evidence.
+                self.assertFalse(payload["readiness"]["ready"])
                 self.assertFalse(payload["economic_status"]["edge_demonstrated"])
                 self.assertFalse(payload["economic_status"]["real_money_authorized"])
                 readiness_response = client.get("/api/readiness")
                 self.assertEqual(readiness_response.status_code, 200)
-                self.assertTrue(readiness_response.get_json()["ready"])
+                self.assertFalse(readiness_response.get_json()["ready"])
                 shadow_response = client.get("/api/shadow?limit=50")
                 self.assertIn("no-store", shadow_response.headers["Cache-Control"])
                 shadow_rows = shadow_response.get_json()

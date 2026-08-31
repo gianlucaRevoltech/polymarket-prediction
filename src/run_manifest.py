@@ -152,6 +152,9 @@ def validate_cohort(wallets: list[Dict[str, Any]], intended_domains: list[str]) 
         for domain in intended_domains
     }
     errors = []
+    addresses = [str(w.get("address") or "").strip().lower() for w in wallets]
+    if any(not address for address in addresses) or len(set(addresses)) != len(addresses):
+        errors.append("wallet assenti o duplicati nella coorte")
     if len(wallets) < minimum:
         errors.append(f"coorte insufficiente: {len(wallets)}/{minimum} wallet")
     if not intended_domains:

@@ -152,106 +152,17 @@ def get_preflight_report(run_id: str = ""):
 
 
 def get_economic_status(run_id: str, summary: dict):
-    rows = _candidate_rows(run_id)
-    total_fees = 0.0
-    for row in rows:
-        costs = row.get("costs", {}) if isinstance(row.get("costs"), dict) else {}
-        total_fees += float(costs.get("fee_usdc", 0) or 0)
-        total_fees += float(costs.get("exit_fee_usdc", 0) or 0)
-    wallet_pnl = Counter()
-    domain_pnl = Counter()
-    state = {}
-    try:
-        state = json.loads((DATA_DIR / "portfolio_state.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError, TypeError):
-        pass
-    for pos in state.get("closed_positions", []) if isinstance(state, dict) else []:
-        if not isinstance(pos, dict):
-            continue
-        pnl = float(pos.get("pnl", 0) or 0)
-        wallet_pnl[str(pos.get("source_wallet") or "unknown")] += pnl
-        domain_pnl[str(pos.get("category") or "other")] += pnl
-    positive = sum(value for value in wallet_pnl.values() if value > 0)
-    positive_domains = sum(value for value in domain_pnl.values() if value > 0)
-    return {
-        "paper_experimental": summary.get("execution_mode") == "paper_validation",
-        "edge_demonstrated": False,
-        "real_money_authorized": False,
-        "net_pnl": float(summary.get("total_pnl", 0) or 0),
-        "realized_pnl": float(summary.get("realized_pnl", 0) or 0),
-        "fees_usdc": total_fees,
-        "closed_trades": int(summary.get("closed_positions", 0) or 0),
-        "wallet_pnl": dict(wallet_pnl),
-        "domain_pnl": dict(domain_pnl),
-        "max_positive_wallet_share": (
-            max((value for value in wallet_pnl.values() if value > 0), default=0) / positive
-            if positive > 0 else 0.0
-        ),
-        "max_positive_domain_share": (
-            max((value for value in domain_pnl.values() if value > 0), default=0)
-            / positive_domains if positive_domains > 0 else 0.0
-        ),
-    }
+    from paper_accounting import economic_report, read_json
+    state = read_json(DATA_DIR / "portfolio_state.json")
+    manifest = load_run_manifest(DATA_DIR)
+    result = economic_report(state, _candidate_rows(run_id), manifest,
+                             max_drawdown=state.get("max_drawdown"))
+    return result
 
 
 def get_readiness(run_id: str = ""):
-    """Readiness salvata più overlay live, senza rieseguire lo smoke a ogni fetch."""
-    report = get_preflight_report(run_id)
-    if not report:
-        report = {
-            "ready": False,
-            "blockers": [{
-                "key": "preflight_missing", "severity": "red", "passed": False,
-                "message": "preflight non ancora eseguito",
-            }],
-            "warnings": [],
-        }
-    else:
-        report = dict(report)
-        report["blockers"] = list(report.get("blockers", []))
-        report["warnings"] = list(report.get("warnings", []))
-    runtime = get_runtime_status()
-    state = {}
-    try:
-        state = json.loads(
-            (DATA_DIR / "portfolio_state.json").read_text(encoding="utf-8")
-        )
-    except (OSError, ValueError, TypeError):
-        pass
-    live_failures = []
-    if get_bot_status() != "running":
-        live_failures.append(("bot_process_live", "processo bot fermo"))
-    latency_alive = False
-    try:
-        latency_pid = int(
-            (DATA_DIR / "latency_arb.pid").read_text(encoding="utf-8").strip()
-        )
-        os.kill(latency_pid, 0)
-        latency_alive = True
-    except (OSError, ValueError):
-        pass
-    if latency_alive:
-        live_failures.append(("latency_arb_live", "latency-arb non è in quarantena"))
-    state_age = age_seconds(state.get("saved_at"))
-    if state_age is None or state_age > 60:
-        live_failures.append(("ledger_fresh_live", "ledger realmente stale"))
-    runtime_age = age_seconds(runtime.get("updated_at"))
-    if runtime_age is None or runtime_age > 60:
-        live_failures.append(("heartbeat_fresh_live", "heartbeat realmente stale"))
-    manifest = load_run_manifest(DATA_DIR)
-    runtime_mode = runtime.get("runtime_mode") or state.get("execution_mode")
-    if manifest and runtime_mode != manifest.get("execution_mode"):
-        live_failures.append(("runtime_mode_live", "mode drift manifest/runtime"))
-    existing = {item.get("key") for item in report["blockers"] if isinstance(item, dict)}
-    for key, message in live_failures:
-        if key not in existing:
-            report["blockers"].append({
-                "key": key, "severity": "red", "passed": False,
-                "message": message,
-            })
-    report["ready"] = bool(report.get("ready")) and not live_failures
-    report["live_checked_at"] = utc_now_iso()
-    return report
+    from paper_readiness import build_readiness
+    return build_readiness(DATA_DIR, BASE_DIR / "logs", BASE_DIR)
 
 
 def get_bot_health(state_saved_at):
@@ -373,7 +284,9 @@ def get_portfolio_data():
             "halt_reason": summary.get("halt_reason"),
             "run_id": summary.get("run_id"),
             "state_saved_at": summary.get("state_saved_at"),
-            "deployed_commit": get_deployed_commit(),
+            "deployed_commit": runtime.get("running_commit"),
+            "run_origin_commit": manifest.get("deployed_commit"),
+            "paper_activation": readiness.get("activation", {}),
             "state_age_seconds": age_seconds(summary.get("state_saved_at")),
             "bot_health": get_bot_health(summary.get("state_saved_at")),
             "feed_health": runtime.get("feed_health", {}),

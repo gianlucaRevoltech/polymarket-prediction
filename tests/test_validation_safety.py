@@ -149,6 +149,58 @@ class SimulatorSafetyTests(unittest.TestCase):
         self.assertEqual(len(sim.shadow_positions), 1)
         self.assertTrue((self.data / "shadow_state.json").exists())
 
+    def test_paper_startup_guard_evaluates_but_never_opens(self):
+        sim = PaperTradingSimulator()
+        sim.opening_guard = lambda: "startup_verification_pending"
+        feed = FakeFetcher()
+        feed.books["asset-1"] = book()
+        self.assertFalse(sim.open_position("wallet-a", candidate(), fetcher=feed))
+        self.assertEqual(sim.portfolio.cash, 300)
+        self.assertEqual(sim.recent_opens, {})
+        row = json.loads(sim.candidate_journal.read_text().splitlines()[-1])
+        self.assertTrue(row["pretrade_eligible"])
+        self.assertEqual(row["reason"], "startup_verification_pending")
+
+    def test_strict_save_failure_does_not_claim_fresh_ledger(self):
+        sim = PaperTradingSimulator()
+        before = sim.state_saved_at
+        with mock.patch.object(sim, "_atomic_write_json", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                sim._save_state(strict=True)
+        self.assertEqual(sim.state_saved_at, before)
+
+    def test_corrupt_ledger_without_backup_is_never_reset(self):
+        path = self.data / "portfolio_state.json"
+        path.write_text("corrupt")
+        sim = PaperTradingSimulator()
+        self.assertTrue(sim.run_integrity_error)
+        with self.assertRaises(ValueError):
+            sim._save_state(strict=True)
+        self.assertEqual(path.read_text(), "corrupt")
+
+    def test_max_drawdown_survives_recovery_and_restart(self):
+        sim = PaperTradingSimulator()
+        sim.portfolio.cash = 297
+        sim._save_state(strict=True)
+        sim.portfolio.cash = 300
+        sim._save_state(strict=True)
+        restarted = PaperTradingSimulator()
+        self.assertAlmostEqual(restarted.max_drawdown, .01)
+
+    def test_take_profit_uses_net_bid_and_closes(self):
+        sim = PaperTradingSimulator()
+        feed = FakeFetcher()
+        info = candidate()
+        feed.books["asset-1"] = book()
+        self.assertTrue(sim.open_position("wallet-a", info, fetcher=feed))
+        sim.baseline_done = True
+        feed.books["asset-1"] = book(bid=.70, ask=.71)
+        sim.reconcile({"asset-1": {"info": info, "holders": {"wallet-a"}, "max_notional": 100}},
+                      1, feed, new_holdings=set(), monitored_wallets={"wallet-a"}, failed_wallets=set())
+        self.assertEqual(len(sim.portfolio.closed_positions), 1)
+        self.assertEqual(sim.portfolio.closed_positions[0].close_reason, "take_profit")
+        self.assertAlmostEqual(sim.portfolio.cash, 302.0)
+
     def test_source_notional_must_cover_fixed_paper_size(self):
         EXECUTION["mode"] = "observe"
         sim = PaperTradingSimulator()

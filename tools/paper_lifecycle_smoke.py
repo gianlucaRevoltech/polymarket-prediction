@@ -137,10 +137,18 @@ def run_smoke() -> dict:
             raise AssertionError("journal apertura/chiusura incompleto")
         if "smoke-transaction" not in restarted.seen_candidate_signal_ids:
             raise AssertionError("dedup signal_id perso al restart")
+        from paper_accounting import economic_report
+        state = json.loads((data_dir / "portfolio_state.json").read_text(encoding="utf-8"))
+        accounting = economic_report(state, rows, manifest)
+        if not accounting["reconciled"] or accounting["quality_errors"] or accounting["fee_quality_errors"]:
+            raise AssertionError(f"report non riconciliato: {accounting}")
+        if abs(accounting["realized_pnl"] - closed.pnl) > 1e-9:
+            raise AssertionError("P&L del report diverso dal ledger")
         return {
             "passed": True, "run_id": manifest["run_id"],
             "entry_price": opened.entry_price, "exit_price": closed.exit_price,
             "pnl": closed.pnl, "cash": restarted.portfolio.cash,
+            "fees_usdc": accounting["fees_usdc"], "accounting_reconciled": True,
             "journal_decisions": [row.get("decision") for row in rows],
         }
 

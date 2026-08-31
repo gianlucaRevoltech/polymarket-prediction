@@ -18,7 +18,8 @@
 #   status   mostra stato dei servizi
 #   logs     segue i log in tempo reale
 #
-#   Env: SCAN=1 forza scan | LATENCY_ARB_ENABLED=1 abilita il validator
+#   preflight-paper --wait 120 | paper-report
+#   Env: LATENCY_ARB_ENABLED ignorata; validator sempre fermo
 #
 #   Deploy VPS (dopo git pull / copia file):
 #     ./start_all.sh restart
@@ -63,9 +64,17 @@ kill_pidfile() {
     local pid
     pid="$(cat "$pidfile" 2>/dev/null || true)"
     if [ -n "${pid:-}" ] && kill -0 "$pid" 2>/dev/null; then
+      [[ "$pid" =~ ^[0-9]+$ ]] && [ "$pid" -gt 1 ] || { echo "[BLOCK] PID invalido"; return 2; }
+      [ "$(readlink -f "/proc/$pid/cwd")" = "$(pwd)" ] || { echo "[BLOCK] PID fuori progetto"; return 2; }
       kill "$pid" 2>/dev/null || true
-      sleep 1
-      kill -9 "$pid" 2>/dev/null || true
+      for _ in $(seq 1 30); do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 1
+      done
+      if kill -0 "$pid" 2>/dev/null; then
+        echo "[BLOCK] PID $pid non terminato: nessun reset/archivio consentito."
+        return 2
+      fi
     fi
     rm -f "$pidfile"
   fi
@@ -76,10 +85,6 @@ stop_services() {
   kill_pidfile "$DATA_DIR/bot.pid"
   kill_pidfile "$DATA_DIR/dashboard.pid"
   kill_pidfile "$DATA_DIR/latency_arb.pid"
-  # Fallback mirato (non tocca altri processi Python)
-  pkill -f "src/main.py" 2>/dev/null || true
-  pkill -f "src/dashboard.py" 2>/dev/null || true
-  pkill -f "src/latency_arb.py" 2>/dev/null || true
   echo "[STOP] Fatto."
 }
 
@@ -128,18 +133,20 @@ start_services() {
   local force_scan="${1:-0}"
   ensure_venv
   mkdir -p "$DATA_DIR" "$LOGS_DIR"
-  if [ "$force_scan" = "1" ] || [ ! -f "$SCAN_RESULTS" ]; then
+  if [ -f "$DATA_DIR/run_manifest.json" ]; then
+    [ "$force_scan" = "0" ] || { echo "[BLOCK] Coorte congelata: usare new-run scan."; return 2; }
+  elif [ ! -f "$DATA_DIR/monitored_wallets.json" ] && [ ! -f "$SCAN_RESULTS" ]; then
     run_wallet_scan
   fi
   PYTHONPATH=src "$(venv_py)" tools/run_state.py ensure-current
   stop_services
 
   echo "[START] Dashboard su http://localhost:$PORT ..."
-  PORT="$PORT" nohup "$(venv_py)" -u src/dashboard.py >"$LOGS_DIR/dashboard.log" 2>&1 &
+  PORT="$PORT" nohup "$(venv_py)" -u src/dashboard.py >"$LOGS_DIR/dashboard.log" 2>&1 9>&- &
   sleep 2
 
   echo "[START] Bot (mirroring copy/consenso) ..."
-  nohup "$(venv_py)" -u src/main.py >"$LOGS_DIR/bot.log" 2>&1 &
+  nohup "$(venv_py)" -u src/main.py >"$LOGS_DIR/bot.log" 2>&1 9>&- &
   sleep 3
 
   if [ "${LATENCY_ARB_ENABLED:-0}" = "1" ]; then
@@ -205,38 +212,12 @@ restart_services() {
 
 preflight_paper() {
   ensure_venv
-  PYTHONPATH=src "$(venv_py)" tools/paper_preflight.py
+  PYTHONPATH=src "$(venv_py)" tools/paper_preflight.py --wait "$WAIT_SECONDS"
 }
 
 paper_start() {
   ensure_venv
-  if ! preflight_paper; then
-    echo "[BLOCK] Preflight fallito: il run OBSERVE resta invariato."
-    return 2
-  fi
-  local cohort_tmp
-  cohort_tmp="$(mktemp)"
-  cp "$DATA_DIR/monitored_wallets.json" "$cohort_tmp"
-  stop_services
-  archive_run
-  clear_trading_state
-  if ! PYTHONPATH=src "$(venv_py)" tools/run_state.py create \
-      --mode paper_validation --cohort-file "$cohort_tmp"; then
-    rm -f "$cohort_tmp"
-    echo "[BLOCK] Creazione del run paper fallita; servizi lasciati fermi."
-    return 2
-  fi
-  rm -f "$cohort_tmp"
-  start_services 0
-  echo "[VERIFY] Attendo due cicli completi del nuovo run ..."
-  sleep 50
-  if ! PYTHONPATH=src "$(venv_py)" tools/paper_preflight.py \
-      --post-start --skip-synthetic; then
-    echo "[BLOCK] Verifica post-start fallita: arresto immediato dei servizi."
-    stop_services
-    return 2
-  fi
-  echo "[OK] PAPER EXPERIMENTAL attivo. Edge non ancora dimostrato; denaro reale disabilitato."
+  PYTHONPATH=src "$(venv_py)" tools/paper_control.py
 }
 
 show_status() {
@@ -251,6 +232,9 @@ show_status() {
       echo "  $svc: fermo"
     fi
   done
+  if [ -x "$(venv_py)" ]; then
+    "$(venv_py)" -c 'import json,pathlib; d=pathlib.Path("data"); m=json.loads((d/"run_manifest.json").read_text()) if (d/"run_manifest.json").exists() else {}; a=json.loads((d/"paper_activation.json").read_text()) if (d/"paper_activation.json").exists() else {}; print("  Run:",m.get("run_id"),"| Mode:",m.get("execution_mode"),"| Activation:",a.get("status","pending"))'
+  fi
   echo "  Dashboard: http://localhost:$PORT"
   echo "============================================="
 }
@@ -258,6 +242,7 @@ show_status() {
 ACTION="${1:-start}"
 shift $(( $# > 0 ? 1 : 0 )) || true
 
+WAIT_SECONDS=0
 FORCE_SCAN_FLAG=0
 FORCE_FLAG=0
 RUN_MODE="observe"
@@ -265,6 +250,12 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     scan) FORCE_SCAN_FLAG=1 ;;
     --force) FORCE_FLAG=1 ;;
+    --wait)
+      [ "$#" -ge 2 ] || { echo "--wait richiede secondi"; exit 2; }
+      WAIT_SECONDS="$2"
+      [[ "$WAIT_SECONDS" =~ ^[0-9]+$ ]] && [ "$WAIT_SECONDS" -le 120 ] || { echo "--wait: 0..120"; exit 2; }
+      shift
+      ;;
     --mode)
       [ "$#" -ge 2 ] || { echo "[ERRORE] --mode richiede observe o paper_validation"; exit 2; }
       RUN_MODE="$2"
@@ -288,6 +279,19 @@ if [ "$RUN_MODE" != "observe" ] && [ "$RUN_MODE" != "paper_validation" ]; then
 fi
 [ "${SCAN:-0}" = "1" ] || [ "${FORCE_SCAN:-0}" = "1" ] && FORCE_SCAN_FLAG=1
 
+# All state-changing commands share one lock; controller children inherit fd 9.
+case "$ACTION" in
+  start|stop|restart|new-run|paper-start|reset|scan|install|preflight-paper)
+    mkdir -p "$DATA_DIR"
+    lock_path="$(pwd)/$DATA_DIR/operations.lock"
+    if [ "${POLYMARKET_LOCK_FD:-}" != "9" ] || [ "$(readlink /proc/$$/fd/9 2>/dev/null || true)" != "$lock_path" ]; then
+      exec 9>"$lock_path"
+    fi
+    flock -n 9 || { echo "[BLOCK] Un'altra operazione e in corso."; exit 2; }
+    export POLYMARKET_LOCK_FD=9
+    ;;
+esac
+
 case "$ACTION" in
   start)   start_services "$FORCE_SCAN_FLAG" ;;
   stop)    stop_services ;;
@@ -301,6 +305,7 @@ case "$ACTION" in
   new-run) new_run "$RUN_MODE" "$FORCE_SCAN_FLAG" ;;
   preflight-paper) preflight_paper ;;
   paper-start) paper_start ;;
+  paper-report) ensure_venv; PYTHONPATH=src "$(venv_py)" tools/paper_report.py ;;
   install) ensure_venv; install_deps; run_wallet_scan ;;
   scan)    run_wallet_scan ;;
   reset)   reset_state "$FORCE_FLAG" ;;

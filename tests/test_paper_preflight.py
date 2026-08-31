@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 import paper_preflight
 from run_manifest import create_run_manifest
 from time_utils import utc_now_iso
+from paper_readiness import cohort_identity
 
 
 def cohort():
@@ -37,18 +38,33 @@ class PaperPreflightTests(unittest.TestCase):
         manifest = create_run_manifest("observe", cohort(), data_dir=data, root=ROOT)
         now = utc_now_iso()
         (data / "portfolio_state.json").write_text(json.dumps({
+            "state_version": 3, "initial_capital": 300.0,
             "run_id": manifest["run_id"], "execution_mode": "observe",
             "cash": 300.0, "positions": {}, "closed_positions": [], "saved_at": now,
         }), encoding="utf-8")
         (data / "runtime_status.json").write_text(json.dumps({
+            "runtime_version": 2, "running_commit": manifest["deployed_commit"],
+            "process_instance_id": "instance-1", "pid": 42,
+            "cohort_identity": cohort_identity(manifest),
+            "completed_cycles": 5, "consecutive_healthy_cycles": 5,
+            "last_cycle_at": now,
             "run_id": manifest["run_id"], "runtime_mode": "observe",
             "updated_at": now, "cycle": 5, "phase": "idle", "error": "",
-            "feed_health": {"consecutive_transient_errors": 0, "fully_failed_snapshot_cycles": 0},
+            "feed_health": {
+                "consecutive_transient_errors": 0, "fully_failed_snapshot_cycles": 2,
+                "last_snapshot_at": now, "last_snapshot_status": "complete",
+                "last_snapshot_wallets_ok": [w["address"] for w in manifest["wallets"]],
+                "last_snapshot_wallets_failed": [], "consecutive_complete_snapshots": 5,
+                "consecutive_incomplete_snapshots": 0, "consecutive_failed_snapshots": 0,
+                "backoff_remaining_seconds": 0,
+            },
         }), encoding="utf-8")
         (data / "shadow_state.json").write_text(json.dumps({
+            "shadow_version": 3, "initial_capital": 300.0, "cash": 300.0, "positions": {},
             "run_id": manifest["run_id"], "halt_reason": "", "closed_positions": [],
         }), encoding="utf-8")
         (logs / "bot.log").write_text("ciclo completato\n", encoding="utf-8")
+        (data / "bot.pid").write_text("42")
         return data, logs, manifest
 
     def test_zero_candidates_is_warning_but_preflight_is_ready(self):

@@ -881,6 +881,9 @@
             const stale = Boolean(health.stale);
             const banner = document.getElementById('safetyBanner');
             const bannerParts = [];
+            const accountingErrors = ((data.economic_status || {}).quality_errors || [])
+                .concat((data.economic_status || {}).fee_quality_errors || []);
+            if (accountingErrors.length) bannerParts.push('CONTABILITÀ NON VERIFICATA: ' + accountingErrors.join('; '));
             const realHalt = haltReason && mode !== 'OBSERVE';
             if (realHalt) bannerParts.push(haltReason);
             if ((data.bot_status || health.process_status) !== 'running') {
@@ -1343,15 +1346,19 @@
             const blockerCount = ((readiness || {}).blockers || []).length;
             const configuredMode = ((manifest || {}).execution_mode || mode).toUpperCase();
             const runtimeModeLabel = String(runtimeMode || mode).toUpperCase();
-            const fees = Number((economic || {}).fees_usdc || 0);
-            const maxWalletShare = Number((economic || {}).max_positive_wallet_share || 0) * 100;
-            const maxDomainShare = Number((economic || {}).max_positive_domain_share || 0) * 100;
+            const fees = (economic || {}).fees_usdc;
+            const shareLabel = value => value == null ? 'n/d' : (Number(value) * 100).toFixed(1) + '%';
+            const maxWalletShare = shareLabel((economic || {}).max_positive_wallet_share);
+            const maxDomainShare = shareLabel((economic || {}).max_positive_domain_share);
+            const activation = (readiness || {}).activation || {};
             let html = '<div class="strat-summary">';
             html += `<div class="strat-card" style="border-left-color:${configuredMode===runtimeModeLabel?'#34d399':'#ef4444'}"><div class="label">Modalità Persistente</div><div class="val">${escapeHtml(configuredMode)}</div><div class="label" style="margin-top:4px">runtime: ${escapeHtml(runtimeModeLabel)} · ${escapeHtml(halt || 'nessun halt')}</div></div>`;
             html += `<div class="strat-card" style="border-left-color:#60a5fa"><div class="label">Paper Size</div><div class="val">$5</div><div class="label" style="margin-top:4px">Run: ${escapeHtml((summary.run_id||'').slice(0,24))}</div></div>`;
             html += `<div class="strat-card" style="border-left-color:${preflightReady?'#34d399':'#ef4444'}"><div class="label">Ultimo Preflight</div><div class="val ${preflightReady?'positive':'negative'}">${preflightReady?'READY':'NON READY'}</div><div class="label" style="margin-top:4px">${blockerCount} blocchi · ${escapeHtml(preflightAt || 'mai eseguito')}</div></div>`;
-            html += `<div class="strat-card" style="border-left-color:#fbbf24"><div class="label">Stato Economico</div><div class="val">EDGE NON DIMOSTRATO</div><div class="label" style="margin-top:4px">P&L netto ${formatMoney((economic||{}).net_pnl||0)} · fee ${formatMoney(fees)} · ${Number((economic||{}).closed_trades||0)} chiusure</div></div>`;
-            html += `<div class="strat-card" style="border-left-color:#fbbf24"><div class="label">Concentrazione Profitto</div><div class="val">${maxWalletShare.toFixed(1)}% / ${maxDomainShare.toFixed(1)}%</div><div class="label" style="margin-top:4px">quota max wallet / dominio · solo paper</div></div>`;
+            html += `<div class="strat-card" style="border-left-color:#fbbf24"><div class="label">Stato Economico</div><div class="val">EDGE NON DIMOSTRATO</div><div class="label" style="margin-top:4px">P&L netto ${(economic||{}).net_pnl == null ? 'n/d' : formatMoney(economic.net_pnl)} · fee ${fees == null ? 'n/d' : formatMoney(fees)} · ${Number((economic||{}).closed_trades||0)} chiusure</div></div>`;
+            html += `<div class="strat-card" style="border-left-color:#fbbf24"><div class="label">Concentrazione Profitto</div><div class="val">${maxWalletShare} / ${maxDomainShare}</div><div class="label" style="margin-top:4px">quota max wallet / dominio · solo paper</div></div>`;
+            html += `<div class="strat-card"><div class="label">Attivazione Paper</div><div class="val">${escapeHtml(mode === 'OBSERVE' ? 'OBSERVE' : activation.status || 'pending')}</div><div class="label">${escapeHtml(activation.reason || '')}</div></div>`;
+            html += `<div class="strat-card"><div class="label">Versioni Codice</div><div class="label">origine: ${escapeHtml(String((manifest||{}).deployed_commit||'').slice(0,12))}<br>verificato: ${escapeHtml(String((readiness||{}).checked_commit||'').slice(0,12))}</div></div>`;
             html += `<div class="strat-card" style="border-left-color:#fbbf24"><div class="label">Peak Equity</div><div class="val">$${(summary.peak_equity||0).toFixed(2)}</div><div class="label" style="margin-top:4px">Drawdown: <span class="${ddClass}">${dd.toFixed(1)}%</span></div></div>`;
             html += `<div class="strat-card" style="border-left-color:#34d399"><div class="label">Deployed / Cash</div><div class="val">$${deployed.toFixed(0)} / $${avail.toFixed(0)}</div><div class="label" style="margin-top:4px">Reserve: $${reserve.toFixed(0)}</div></div>`;
             html += `<div class="strat-card" style="border-left-color:${rf<=0?'#f87171':rf<1?'#fbbf24':'#34d399'}"><div class="label">Risk Factor</div><div class="val ${rfClass}">${rfLabel}</div><div class="label" style="margin-top:4px">Trailing: ${summary.trailing_stop_enabled?'ON':'OFF'} | Kelly: ${summary.kelly_enabled?'ON':'OFF'}</div></div>`;

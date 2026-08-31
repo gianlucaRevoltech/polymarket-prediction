@@ -12,6 +12,8 @@ logs/
 *.log
 data/*.json
 data/*.pid
+data/*.jsonl
+data/*.lock
 .env
 .env.*
 

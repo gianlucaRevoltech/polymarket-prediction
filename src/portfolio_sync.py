@@ -80,6 +80,13 @@ class PolymarketPositionFetcher:
             "last_error_at": None,
             "last_error": "",
             "backoff_seconds": 0.0,
+            "last_snapshot_at": None,
+            "last_snapshot_status": "unknown",
+            "last_snapshot_wallets_ok": [],
+            "last_snapshot_wallets_failed": [],
+            "consecutive_complete_snapshots": 0,
+            "consecutive_incomplete_snapshots": 0,
+            "consecutive_failed_snapshots": 0,
         }
 
     def _wait_for_data_api_slot(self) -> None:
@@ -699,6 +706,17 @@ class PolymarketPositionFetcher:
             self._feed_health["partial_snapshot_cycles"] += 1
         if wallet_addresses and not successful_wallets:
             self._feed_health["fully_failed_snapshot_cycles"] += 1
+        complete = bool(wallet_addresses) and not failed_wallets
+        failed = bool(wallet_addresses) and not successful_wallets
+        self._feed_health.update({
+            "last_snapshot_at": utc_now_iso(),
+            "last_snapshot_status": "complete" if complete else ("failed" if failed else "partial"),
+            "last_snapshot_wallets_ok": sorted(successful_wallets),
+            "last_snapshot_wallets_failed": sorted(failed_wallets),
+            "consecutive_complete_snapshots": self._feed_health["consecutive_complete_snapshots"] + 1 if complete else 0,
+            "consecutive_incomplete_snapshots": self._feed_health["consecutive_incomplete_snapshots"] + 1 if not complete else 0,
+            "consecutive_failed_snapshots": self._feed_health["consecutive_failed_snapshots"] + 1 if failed else 0,
+        })
         return WalletSnapshotResult(
             aggregate=aggregate,
             successful_wallets=successful_wallets,
